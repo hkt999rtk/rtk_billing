@@ -26,6 +26,25 @@ PREFIXES = (
     "/v1/payment-webhooks/",
 )
 
+OPERATION_MAPPINGS = {
+    "getBillingAccess": ("FEAT-BILL-SERVICE-001", ["REQ-BILL-ACCESS-001"]),
+    "putBillingAccess": ("FEAT-BILL-SERVICE-001", ["REQ-BILL-ACCESS-001"]),
+    "createBillingPricingVersion": ("FEAT-AM-INVOICE-001", ["REQ-AM-PRICING-VERSION-001"]),
+    "activateBillingPricingVersion": ("FEAT-AM-INVOICE-001", ["REQ-AM-PRICING-VERSION-001"]),
+    "putBillingUsageFact": ("FEAT-AM-INVOICE-001", ["REQ-AM-INVOICE-LIFECYCLE-001", "REQ-AM-INVOICE-ARITHMETIC-001"]),
+    "closeBillingPeriod": ("FEAT-AM-INVOICE-001", ["REQ-AM-INVOICE-LIFECYCLE-001", "REQ-AM-INVOICE-ARITHMETIC-001"]),
+    "listBillingInvoices": ("FEAT-AM-INVOICE-001", ["REQ-AM-INVOICE-LIFECYCLE-001"]),
+    "getBillingInvoice": ("FEAT-AM-INVOICE-001", ["REQ-AM-INVOICE-LIFECYCLE-001"]),
+    "downloadBillingInvoicePdf": ("FEAT-AM-INVOICE-001", ["REQ-AM-INVOICE-DOCUMENT-001"]),
+    "getBillingSummary": ("FEAT-AM-INVOICE-001", ["REQ-AM-BILLING-SUMMARY-001"]),
+    "getBillingUsage": ("FEAT-AM-INVOICE-001", ["REQ-AM-BILLING-SUMMARY-001"]),
+    "getBillingProfile": ("FEAT-AM-INVOICE-001", ["REQ-AM-BILLING-PROFILE-001"]),
+    "putBillingProfile": ("FEAT-AM-INVOICE-001", ["REQ-AM-BILLING-PROFILE-001"]),
+    "exportBillingStatement": ("FEAT-AM-INVOICE-001", ["REQ-AM-INVOICE-DOCUMENT-001"]),
+    "listBillingActivity": ("FEAT-AM-BILLING-ACTIVITY-001", ["REQ-AM-BILLING-ACTIVITY-001", "REQ-AM-BILLING-ACTIVITY-002", "REQ-AM-BILLING-ACTIVITY-003"]),
+    "getBillingActivity": ("FEAT-AM-BILLING-ACTIVITY-001", ["REQ-AM-BILLING-ACTIVITY-001", "REQ-AM-BILLING-ACTIVITY-002", "REQ-AM-BILLING-ACTIVITY-003"]),
+}
+
 
 def component_refs(value: object) -> set[tuple[str, str]]:
     refs: set[tuple[str, str]] = set()
@@ -81,6 +100,11 @@ def main() -> None:
             if method.lower() not in {"get", "put", "post", "patch", "delete"}:
                 continue
             operation["security"] = [] if "payment-webhooks" in path or "payment-simulator/setup-callback" in path else [{"billingServiceAuth": []}]
+            operation_id = operation.get("operationId")
+            if operation_id in OPERATION_MAPPINGS:
+                feature_id, requirement_ids = OPERATION_MAPPINGS[operation_id]
+                operation["x-rtk-feature-id"] = feature_id
+                operation["x-rtk-requirement-ids"] = requirement_ids
 
     components: dict[str, dict[str, object]] = {"securitySchemes": {
         "billingServiceAuth": {
@@ -103,6 +127,7 @@ def main() -> None:
 
     document = {
         "openapi": "3.1.0",
+        "x-rtk-spec": {"id": "SPEC-BILLING-OPENAPI", "status": "normative", "owner": "rtk_billing"},
         "info": {"title": "RTK Billing API", "version": "1.0.0", "description": "Provider-neutral pricing, wallet, payment, invoice, and billing access service."},
         "paths": paths,
         "components": components,

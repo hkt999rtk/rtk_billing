@@ -1,4 +1,8 @@
 openapi: 3.1.0
+x-rtk-spec:
+  id: SPEC-BILLING-OPENAPI
+  status: normative
+  owner: rtk_billing
 info:
   title: RTK Billing API
   version: 1.0.0
@@ -25,6 +29,9 @@ paths:
           description: Pricing version created.
         '409':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PRICING-VERSION-001
   /v1/internal/billing/pricing-versions/{pricingVersionId}/activate:
     post:
       tags:
@@ -44,6 +51,9 @@ paths:
           description: Pricing version activated.
         '404':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PRICING-VERSION-001
   /v1/internal/billing/usage-facts:
     post:
       tags:
@@ -66,6 +76,10 @@ paths:
           description: Usage fact created.
         '409':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
+      - REQ-AM-INVOICE-ARITHMETIC-001
   /v1/internal/billing/periods/close:
     post:
       tags:
@@ -86,6 +100,10 @@ paths:
           description: Existing or newly closed invoice result.
         '422':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
+      - REQ-AM-INVOICE-ARITHMETIC-001
   /v1/orgs/{orgId}/billing/summary:
     get:
       tags:
@@ -105,6 +123,9 @@ paths:
           description: Tenant billing summary.
         '403':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-SUMMARY-001
   /v1/orgs/{orgId}/billing/usage:
     get:
       tags:
@@ -124,6 +145,9 @@ paths:
           description: Priced usage lines.
         '403':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-SUMMARY-001
   /v1/orgs/{orgId}/billing/invoices:
     get:
       tags:
@@ -143,6 +167,9 @@ paths:
           description: Invoice page.
         '403':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
   /v1/orgs/{orgId}/billing/invoices/{invoiceId}:
     get:
       tags:
@@ -167,6 +194,9 @@ paths:
           description: Invoice detail.
         '404':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
   /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf:
     get:
       tags:
@@ -196,6 +226,9 @@ paths:
                 format: binary
         '404':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-DOCUMENT-001
   /v1/orgs/{orgId}/billing/activity:
     get:
       tags:
@@ -215,6 +248,11 @@ paths:
           description: Billing activity page.
         '403':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-BILLING-ACTIVITY-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-ACTIVITY-001
+      - REQ-AM-BILLING-ACTIVITY-002
+      - REQ-AM-BILLING-ACTIVITY-003
   /v1/orgs/{orgId}/billing/activity/{activityId}:
     get:
       tags:
@@ -239,6 +277,11 @@ paths:
           description: Billing activity detail.
         '404':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-BILLING-ACTIVITY-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-ACTIVITY-001
+      - REQ-AM-BILLING-ACTIVITY-002
+      - REQ-AM-BILLING-ACTIVITY-003
   /v1/orgs/{orgId}/billing/profile:
     get:
       tags:
@@ -256,6 +299,9 @@ paths:
       responses:
         '200':
           description: Billing profile.
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-PROFILE-001
     put:
       tags:
       - Billing and Payments
@@ -286,6 +332,9 @@ paths:
           description: Updated billing profile.
         '412':
           $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-PROFILE-001
   /v1/orgs/{orgId}/billing/statements:
     get:
       tags:
@@ -307,6 +356,9 @@ paths:
             text/csv:
               schema:
                 type: string
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-DOCUMENT-001
   /v1/orgs/{orgId}/billing/account:
     get:
       tags:
@@ -860,6 +912,9 @@ paths:
                         type: string
                         format: date-time
                     additionalProperties: false
+      x-rtk-feature-id: FEAT-BILL-SERVICE-001
+      x-rtk-requirement-ids:
+      - REQ-BILL-ACCESS-001
     put:
       operationId: putBillingAccess
       summary: Update commercial access using optimistic concurrency
@@ -893,6 +948,9 @@ paths:
           description: Updated access state
         '409':
           description: Version conflict
+      x-rtk-feature-id: FEAT-BILL-SERVICE-001
+      x-rtk-requirement-ids:
+      - REQ-BILL-ACCESS-001
 components:
   securitySchemes:
     billingServiceAuth:
@@ -901,56 +959,56 @@ components:
       bearerFormat: service-token
       description: Dedicated Cloud Admin or trusted billing-worker service credential.
   schemas:
-    BillingLedgerResponse:
-      type: object
-      required:
-      - ledger_entries
-      - pagination
-      properties:
-        ledger_entries:
-          type: array
-          items:
-            $ref: '#/components/schemas/BillingLedgerEntry'
-        pagination:
-          $ref: '#/components/schemas/Pagination'
-    InternalBillingDebitRequest:
+    PutAutoTopUpRequest:
       type: object
       additionalProperties: false
       required:
-      - organization_id
-      - amount_minor
+      - enabled
+      - threshold_minor
+      - top_up_amount_minor
       - currency
-      - reason
-      - external_id
+      - payment_method_id
+      - daily_attempt_limit
+      - daily_amount_limit_minor
+      - cooldown_seconds
+      - consent
       properties:
-        organization_id:
-          type: string
-          format: uuid
-        amount_minor:
+        enabled:
+          type: boolean
+        threshold_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        top_up_amount_minor:
           $ref: '#/components/schemas/MoneyMinor'
         currency:
           $ref: '#/components/schemas/Currency'
-        reason:
+        payment_method_id:
           type: string
-          enum:
-          - invoice_debit
-          - usage_adjustment_debit
-        external_id:
-          type: string
-          minLength: 1
-          maxLength: 200
-          description: Immutable invoice or usage-adjustment reference owned by the
-            authenticated billing source.
-    PaymentMutationReasonRequest:
+          format: uuid
+        daily_attempt_limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+        daily_amount_limit_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        cooldown_seconds:
+          type: integer
+          format: int64
+          minimum: 300
+        consent:
+          $ref: '#/components/schemas/PaymentConsentAcceptance'
+    RevokePaymentMethodResponse:
       type: object
-      additionalProperties: false
       required:
-      - reason
+      - payment_method
+      - policy_disabled
+      - duplicate
       properties:
-        reason:
-          type: string
-          minLength: 3
-          maxLength: 500
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+        policy_disabled:
+          type: boolean
+        duplicate:
+          type: boolean
     PaymentSimulatorSetupCallback:
       type: object
       additionalProperties: false
@@ -994,6 +1052,46 @@ components:
           type: integer
           minimum: 2000
           maximum: 9999
+    PaymentIntentsResponse:
+      type: object
+      required:
+      - payment_intents
+      - pagination
+      properties:
+        payment_intents:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentIntent'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    ErrorResponse:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+              description: Optional machine-readable hint for Claim Token resolve
+                failures.
+            resolution_action:
+              type: string
+              description: Optional client action hint for Claim Token resolve failures.
+    MoneyMinor:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Currency-unit integer. For zero-decimal TWD, one amount_minor unit
+        is NT$1.
     AutoTopUpResponse:
       type: object
       required:
@@ -1003,12 +1101,6 @@ components:
           allOf:
           - $ref: '#/components/schemas/AutoTopUpPolicy'
           nullable: true
-    MoneyMinor:
-      type: integer
-      format: int64
-      minimum: 1
-      description: Currency-unit integer. For zero-decimal TWD, one amount_minor unit
-        is NT$1.
     ManualTopUpResponse:
       type: object
       required:
@@ -1019,85 +1111,56 @@ components:
           $ref: '#/components/schemas/PaymentIntent'
         duplicate:
           type: boolean
-    PaymentIntentDetailResponse:
+    InternalBillingDebitResponse:
       type: object
       required:
-      - payment_intent
-      - attempts
-      properties:
-        payment_intent:
-          $ref: '#/components/schemas/PaymentIntent'
-        attempts:
-          type: array
-          items:
-            $ref: '#/components/schemas/PaymentAttempt'
-    PutAutoTopUpRequest:
-      type: object
-      additionalProperties: false
-      required:
-      - enabled
-      - threshold_minor
-      - top_up_amount_minor
+      - account_id
+      - ledger_entry_id
+      - balance_after_minor
       - currency
-      - payment_method_id
-      - daily_attempt_limit
-      - daily_amount_limit_minor
-      - cooldown_seconds
-      - consent
+      - duplicate
       properties:
-        enabled:
-          type: boolean
-        threshold_minor:
-          $ref: '#/components/schemas/MoneyMinor'
-        top_up_amount_minor:
-          $ref: '#/components/schemas/MoneyMinor'
-        currency:
-          $ref: '#/components/schemas/Currency'
-        payment_method_id:
+        account_id:
           type: string
           format: uuid
-        daily_attempt_limit:
-          type: integer
-          minimum: 1
-          maximum: 10
-        daily_amount_limit_minor:
-          $ref: '#/components/schemas/MoneyMinor'
-        cooldown_seconds:
+        ledger_entry_id:
+          type: string
+          format: uuid
+        balance_after_minor:
           type: integer
           format: int64
-          minimum: 300
-        consent:
-          $ref: '#/components/schemas/PaymentConsentAcceptance'
-    BillingAccountResponse:
-      type: object
-      required:
-      - account
-      - auto_topup
-      - payment_providers
-      properties:
-        account:
-          $ref: '#/components/schemas/CommercialAccount'
-        auto_topup:
-          allOf:
-          - $ref: '#/components/schemas/AutoTopUpPolicy'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        duplicate:
+          type: boolean
+        payment_intent_id:
+          type: string
+          format: uuid
           nullable: true
-        payment_providers:
-          type: array
-          items:
-            $ref: '#/components/schemas/PaymentProviderSummary'
-    PaymentMethodSetupRequest:
+    PaymentConsentAcceptance:
       type: object
       additionalProperties: false
       required:
-      - provider
-      - consent
+      - accepted
+      - text_version
+      - text_sha256
+      - locale
       properties:
-        provider:
+        accepted:
+          type: boolean
+          enum:
+          - true
+        text_version:
           type: string
-          pattern: ^[a-z0-9_]{1,32}$
-        consent:
-          $ref: '#/components/schemas/PaymentConsentAcceptance'
-      description: Card number, CVV/CVC, expiry, and magnetic-stripe data are forbidden.
+          minLength: 1
+          maxLength: 128
+        text_sha256:
+          type: string
+          pattern: ^[0-9a-fA-F]{64}$
+        locale:
+          type: string
+          minLength: 2
+          maxLength: 35
     PaymentMethodSetupResponse:
       type: object
       required:
@@ -1114,35 +1177,58 @@ components:
             audit payloads.
         duplicate:
           type: boolean
-    Currency:
-      type: string
-      enum:
-      - TWD
-    PaymentIntentsResponse:
+    BillingLedgerResponse:
       type: object
       required:
-      - payment_intents
+      - ledger_entries
       - pagination
       properties:
-        payment_intents:
+        ledger_entries:
           type: array
           items:
-            $ref: '#/components/schemas/PaymentIntent'
+            $ref: '#/components/schemas/BillingLedgerEntry'
         pagination:
           $ref: '#/components/schemas/Pagination'
-    Pagination:
+    PaymentIntentDetailResponse:
       type: object
       required:
-      - limit
-      - offset
-      - total
+      - payment_intent
+      - attempts
       properties:
-        limit:
-          type: integer
-        offset:
-          type: integer
-        total:
-          type: integer
+        payment_intent:
+          $ref: '#/components/schemas/PaymentIntent'
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentAttempt'
+    InternalBillingDebitRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - organization_id
+      - amount_minor
+      - currency
+      - reason
+      - external_id
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reason:
+          type: string
+          enum:
+          - invoice_debit
+          - usage_adjustment_debit
+        external_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Immutable invoice or usage-adjustment reference owned by the
+            authenticated billing source.
     PaymentIntent:
       type: object
       description: Customer-safe normalized intent; provider order and transaction
@@ -1203,85 +1289,6 @@ components:
           type: string
           format: date-time
           nullable: true
-    RevokePaymentMethodResponse:
-      type: object
-      required:
-      - payment_method
-      - policy_disabled
-      - duplicate
-      properties:
-        payment_method:
-          $ref: '#/components/schemas/PaymentMethod'
-        policy_disabled:
-          type: boolean
-        duplicate:
-          type: boolean
-    PaymentWebhookResponse:
-      type: object
-      required:
-      - accepted
-      - duplicate
-      properties:
-        accepted:
-          type: boolean
-        duplicate:
-          type: boolean
-    BillingLedgerEntry:
-      type: object
-      required:
-      - id
-      - direction
-      - amount_minor
-      - currency
-      - reason
-      - balance_after_minor
-      - created_at
-      properties:
-        id:
-          type: string
-          format: uuid
-        direction:
-          type: string
-          enum:
-          - credit
-          - debit
-        amount_minor:
-          $ref: '#/components/schemas/MoneyMinor'
-        currency:
-          $ref: '#/components/schemas/Currency'
-        reason:
-          type: string
-          enum:
-          - invoice_debit
-          - usage_adjustment_debit
-          - manual_adjustment_debit
-          - payment_top_up_credit
-          - manual_adjustment_credit
-          - refund_debit
-          - chargeback_debit
-        balance_after_minor:
-          type: integer
-          format: int64
-        created_at:
-          type: string
-          format: date-time
-    PaymentProviderSummary:
-      type: object
-      required:
-      - name
-      - environment
-      - capabilities
-      properties:
-        name:
-          type: string
-          pattern: ^[a-z0-9_-]+$
-        environment:
-          type: string
-          enum:
-          - simulated
-          - external
-        capabilities:
-          $ref: '#/components/schemas/PaymentProviderCapabilities'
     ManualTopUpRequest:
       type: object
       additionalProperties: false
@@ -1297,6 +1304,46 @@ components:
         payment_method_id:
           type: string
           format: uuid
+    PaymentMethodSetupRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - provider
+      - consent
+      properties:
+        provider:
+          type: string
+          pattern: ^[a-z0-9_]{1,32}$
+        consent:
+          $ref: '#/components/schemas/PaymentConsentAcceptance'
+      description: Card number, CVV/CVC, expiry, and magnetic-stripe data are forbidden.
+    BillingAccountResponse:
+      type: object
+      required:
+      - account
+      - auto_topup
+      - payment_providers
+      properties:
+        account:
+          $ref: '#/components/schemas/CommercialAccount'
+        auto_topup:
+          allOf:
+          - $ref: '#/components/schemas/AutoTopUpPolicy'
+          nullable: true
+        payment_providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentProviderSummary'
+    PaymentMutationReasonRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - reason
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
     PaymentAttempt:
       type: object
       required:
@@ -1345,44 +1392,6 @@ components:
         next_reconciliation_at:
           type: string
           format: date-time
-          nullable: true
-    PaymentMethodsResponse:
-      type: object
-      required:
-      - payment_methods
-      - pagination
-      properties:
-        payment_methods:
-          type: array
-          items:
-            $ref: '#/components/schemas/PaymentMethod'
-        pagination:
-          $ref: '#/components/schemas/Pagination'
-    InternalBillingDebitResponse:
-      type: object
-      required:
-      - account_id
-      - ledger_entry_id
-      - balance_after_minor
-      - currency
-      - duplicate
-      properties:
-        account_id:
-          type: string
-          format: uuid
-        ledger_entry_id:
-          type: string
-          format: uuid
-        balance_after_minor:
-          type: integer
-          format: int64
-        currency:
-          $ref: '#/components/schemas/Currency'
-        duplicate:
-          type: boolean
-        payment_intent_id:
-          type: string
-          format: uuid
           nullable: true
     AutoTopUpPolicy:
       type: object
@@ -1463,30 +1472,18 @@ components:
         updated_at:
           type: string
           format: date-time
-    PaymentConsentAcceptance:
+    PaymentMethodsResponse:
       type: object
-      additionalProperties: false
       required:
-      - accepted
-      - text_version
-      - text_sha256
-      - locale
+      - payment_methods
+      - pagination
       properties:
-        accepted:
-          type: boolean
-          enum:
-          - true
-        text_version:
-          type: string
-          minLength: 1
-          maxLength: 128
-        text_sha256:
-          type: string
-          pattern: ^[0-9a-fA-F]{64}$
-        locale:
-          type: string
-          minLength: 2
-          maxLength: 35
+        payment_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentMethod'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
     CommercialAccount:
       type: object
       required:
@@ -1527,6 +1524,23 @@ components:
         updated_at:
           type: string
           format: date-time
+    PaymentProviderSummary:
+      type: object
+      required:
+      - name
+      - environment
+      - capabilities
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z0-9_-]+$
+        environment:
+          type: string
+          enum:
+          - simulated
+          - external
+        capabilities:
+          $ref: '#/components/schemas/PaymentProviderCapabilities'
     PaymentMethod:
       type: object
       description: Customer-safe display metadata. Provider customer/method references
@@ -1581,28 +1595,58 @@ components:
         updated_at:
           type: string
           format: date-time
-    ErrorResponse:
+    Pagination:
       type: object
       required:
-      - error
+      - limit
+      - offset
+      - total
       properties:
-        error:
-          type: object
-          required:
-          - code
-          - message
-          properties:
-            code:
-              type: string
-            message:
-              type: string
-            retryable:
-              type: boolean
-              description: Optional machine-readable hint for Claim Token resolve
-                failures.
-            resolution_action:
-              type: string
-              description: Optional client action hint for Claim Token resolve failures.
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+    BillingLedgerEntry:
+      type: object
+      required:
+      - id
+      - direction
+      - amount_minor
+      - currency
+      - reason
+      - balance_after_minor
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum:
+          - credit
+          - debit
+        amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reason:
+          type: string
+          enum:
+          - invoice_debit
+          - usage_adjustment_debit
+          - manual_adjustment_debit
+          - payment_top_up_credit
+          - manual_adjustment_credit
+          - refund_debit
+          - chargeback_debit
+        balance_after_minor:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
     PaymentProviderCapabilities:
       type: object
       required:
@@ -1628,14 +1672,21 @@ components:
           type: boolean
         requires_customer_action:
           type: boolean
+    Currency:
+      type: string
+      enum:
+      - TWD
+    PaymentWebhookResponse:
+      type: object
+      required:
+      - accepted
+      - duplicate
+      properties:
+        accepted:
+          type: boolean
+        duplicate:
+          type: boolean
   parameters:
-    PaymentIntentId:
-      name: intentId
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
     OrgId:
       name: orgId
       in: path
@@ -1643,13 +1694,6 @@ components:
       schema:
         type: string
         format: uuid
-    PaymentProvider:
-      name: provider
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: ^[a-z0-9_]{1,32}$
     Offset:
       name: offset
       in: query
@@ -1658,23 +1702,6 @@ components:
         type: integer
         default: 0
         minimum: 0
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: Stable client key used to safely replay a mutation.
-      schema:
-        type: string
-        minLength: 1
-    IfMatchVersion:
-      name: If-Match
-      in: header
-      required: true
-      description: Quoted or unquoted numeric automatic top-up policy version; use
-        0 to create the first policy.
-      schema:
-        type: string
-        pattern: ^"?[0-9]+"?$
     Limit:
       name: limit
       in: query
@@ -1691,6 +1718,37 @@ components:
       schema:
         type: string
         format: uuid
+    PaymentProvider:
+      name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-z0-9_]{1,32}$
+    IfMatchVersion:
+      name: If-Match
+      in: header
+      required: true
+      description: Quoted or unquoted numeric automatic top-up policy version; use
+        0 to create the first policy.
+      schema:
+        type: string
+        pattern: ^"?[0-9]+"?$
+    PaymentIntentId:
+      name: intentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable client key used to safely replay a mutation.
+      schema:
+        type: string
+        minLength: 1
   responses:
     Error:
       description: Error response.
