@@ -11,5 +11,6 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/rtk-billing /rtk-billing
 COPY --from=build /out/rtk-billing-payment-worker /rtk-billing-payment-worker
 COPY --from=build /out/rtk-billing-payment-simulator /rtk-billing-payment-simulator
+COPY --from=build /src/migrations /migrations
 EXPOSE 8080
 ENTRYPOINT ["/rtk-billing"]
