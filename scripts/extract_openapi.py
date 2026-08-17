@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
+import copy
 from pathlib import Path
 
 import yaml
@@ -71,7 +72,7 @@ def main() -> None:
         "put": {
             "operationId": "putBillingAccess", "summary": "Update commercial access using optimistic concurrency",
             "security": [{"billingServiceAuth": []}],
-            "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["state", "version"], "properties": {"state": access_schema["properties"]["state"], "reason_code": {"type": "string"}, "version": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}}},
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["state", "version"], "properties": {"state": copy.deepcopy(access_schema["properties"]["state"]), "reason_code": {"type": "string"}, "version": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}}},
             "responses": {"200": {"description": "Updated access state"}, "409": {"description": "Version conflict"}},
         },
     }
