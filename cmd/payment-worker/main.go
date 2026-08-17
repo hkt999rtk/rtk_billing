@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hkt999rtk/rtk_billing/internal/config"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentcrypto"
@@ -22,6 +23,12 @@ func main() {
 	if !truthy(os.Getenv("PAYMENT_WORKER_ENABLED")) {
 		log.Print("payment worker disabled")
 		return
+	}
+	if !truthy(os.Getenv("PAYMENT_SIMULATOR_ENABLED")) {
+		log.Fatal("payment worker has no enabled provider")
+	}
+	if err := config.ValidateSimulatorEnvironment(env("ENVIRONMENT", "development")); err != nil {
+		log.Fatal(err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

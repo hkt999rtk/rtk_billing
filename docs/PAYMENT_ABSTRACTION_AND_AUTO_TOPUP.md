@@ -2,26 +2,29 @@
 
 Status: implemented foundation with guarded rollout. Provider-neutral money,
 ledger, policy, intent, durable worker/reconciliation, safe customer HTTP APIs,
-and verified webhook ingestion are implemented. A durable hosted-setup path is
-qualified with the deterministic in-process fake provider. The next approved
-provider is the non-production payment simulator defined by workspace
-`docs/payment-simulator.md`; NewebPay hosted setup and merchant-initiated
+and verified webhook ingestion are implemented. Durable hosted setup, charge,
+query, refund, reconciliation, and failure behavior are qualified with both the
+deterministic in-process fake provider and the non-production payment simulator
+defined by workspace `docs/payment-simulator.md`; NewebPay hosted setup and merchant-initiated
 charging remain disabled until written capability approval and sandbox
 qualification are available.
 
-Owner: `rtk_account_manager`.
+Owner: `rtk_billing`.
 
 Contract source of truth:
 
-- `docs/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md` after the contracts
-  submodule is advanced to the reviewed contract commit.
+- `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md`
+- `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md`
+- `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md`
+- `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md`
 
 ## Decision Summary
 
-Account Manager will own the phase-one commercial settlement domain because it
-already owns Brand Cloud identity, membership, authorization, and audit. The
-domain is kept separate from existing identity, registry, and provisioning
-packages and can later be extracted to a Billing Service.
+The independent Billing service owns commercial settlement in its own process,
+repository, and PostgreSQL schema. Account Manager owns organization identity,
+membership, and RBAC only. Cloud Admin resolves that authorization and calls
+Billing through a dedicated tenant credential and explicit actor, organization,
+permission, and request context.
 
 The design provides:
 
@@ -32,29 +35,30 @@ The design provides:
 - a provider adapter registry whose first qualification adapters are the
   deterministic fake and hosted simulator, followed by guarded NewebPay;
 - durable reconciliation and an emergency provider-disable control.
+- versioned pricing, immutable usage facts, period close, invoice snapshots,
+  digest-anchored PDF documents, billing activity, and access state.
 
-It does not make Account Manager a usage meter. Video Cloud and other services
-continue to emit immutable usage facts. Pricing and invoice calculation are a
-separate missing dependency. Account Manager now exposes a dedicated,
-fail-closed authenticated idempotent debit-ingestion boundary; a separately
-owned pricing/invoice component must call it before usage affects the balance.
+It does not make Billing the source of raw service telemetry. Video Cloud and
+other services continue to produce usage facts; trusted producers submit those
+facts through the Billing internal API. Billing applies versioned prices,
+closes a period, issues an immutable invoice, and posts the corresponding debit
+without coupling usage producers to a payment provider.
 
 ## Implemented Baseline And Remaining Gap
 
 The repository now contains commercial accounts, an immutable monetary ledger,
 payment consent and safe method metadata, automatic top-up policy state,
-payment intents/attempts, a webhook inbox, durable reconciliation jobs, HTTP
-APIs, permissions, a dedicated internal billing-debit credential, and a
-dedicated payment worker. Existing organization `tier` fields still do not
-represent money or payment status.
+payment intents/attempts, a webhook inbox, durable reconciliation jobs,
+pricing, invoice/document/activity stores, HTTP APIs, three isolated service
+credential boundaries, a non-production simulator, and a dedicated payment
+worker. Account Manager organization `tier` fields do not represent money or
+payment status.
 
-The next delivery dependency is the hosted non-production simulator. Remaining
-production dependencies are the NewebPay mapping for approved
+Remaining production dependencies are the NewebPay mapping for approved
 hosted payment-method setup, written approval for unattended merchant-initiated
-charging, sandbox credentials and qualification evidence, plus a separately
-owned pricing/invoice debit producer. Until those dependencies are met, the
-NewebPay adapter reports unsupported capabilities and the charging worker stays
-disabled.
+charging, sandbox credentials and qualification evidence, and finance/legal/
+security approval. Until those dependencies are met, the NewebPay adapter
+reports unsupported capabilities and production charging stays disabled.
 
 The workspace already has durable patterns that can be reused:
 
@@ -72,8 +76,9 @@ payment correctness to the provisioning outbox or Redis.
 ```text
 Cloud Admin UI/BFF
        |
+       | Account Manager identity/RBAC context
        v
-Account Manager payment HTTP API
+RTK Billing tenant HTTP API
        |
        v
 payment application service
@@ -83,15 +88,16 @@ ledger   policy      payment orchestrator
   |        |             |
   +--------+-------------+
            |
-       PostgreSQL
+ isolated Billing PostgreSQL
            |
            v
  payment worker/reconciler ---> PaymentProvider interface ---> simulator / NewebPay
            ^                                                    |
            +---------------- verified webhook inbox <-----------+
 
-usage facts ---> pricing/invoice owner ---> POST /v1/internal/billing/debits
-                                             (dedicated service credential)
+usage producers ---> Billing usage/pricing/period-close API ---> invoice + debit
+external debit producer -----------------> POST /v1/internal/billing/debits
+                                             (dedicated debit credential)
 ```
 
 HTTP handlers validate transport and authorization. They do not implement
@@ -168,7 +174,7 @@ Implementation rules:
   redacted provider code for support;
 - `unknown` is mandatory when a request may have reached the provider;
 - orchestration persists intent and attempt state before and after the call;
-- no adapter writes Account Manager tables directly.
+- no adapter writes Billing tables directly.
 
 `Refund` may initially return unsupported. It is included because refund and
 chargeback behavior changes the ledger and must not later bypass the
@@ -370,14 +376,14 @@ configuration may impose a stricter platform maximum than the customer policy.
 
 ## API Behavior
 
-The contract document reserves the route families. Exact request/response
-schemas and errors are declared in Account Manager `openapi.yaml` and exercised
-by integration route-conformance tests.
+The contract document defines the route families. Exact request/response
+schemas, security schemes, and errors are declared in `rtk_billing/openapi.yaml`
+and exercised by integration route-conformance tests.
 
 Common rules:
 
-- organization ID is resolved through existing membership and permission
-  checks;
+- Cloud Admin resolves organization membership and permission, then Billing
+  requires one exact trusted permission plus its own access-state gate;
 - create/update requests require `Idempotency-Key` where a side effect may
   occur;
 - money is encoded as an integer `amount_minor` plus ISO currency;
@@ -389,8 +395,9 @@ Common rules:
 - optimistic update uses policy `version`/ETag to prevent stale changes.
 
 `POST /v1/internal/billing/debits` is disabled unless both
-`ACCOUNT_MANAGER_BILLING_DEBIT_TOKEN` and
-`ACCOUNT_MANAGER_BILLING_DEBIT_SOURCE` are configured. It accepts only
+`BILLING_DEBIT_TOKEN` and `BILLING_DEBIT_SOURCE` are configured. The debit
+token must differ from `BILLING_SERVICE_TOKEN` and `BILLING_INTERNAL_TOKEN`.
+It accepts only
 `invoice_debit` and `usage_adjustment_debit`, requires an immutable external
 reference and `Idempotency-Key`, and records the configured source as the
 ledger actor. It cannot create credits, refunds, chargebacks, manual
@@ -436,7 +443,7 @@ mapping proposal:
 | Platform support | Redacted read with audited scope | No | No | No |
 | Payment worker service | Required internal subset | No customer policy writes | Execute existing intent only | Yes |
 
-Every mutation writes the existing Account Manager audit envelope with payment
+Every customer payment mutation writes the Billing audit envelope with payment
 resource type and request correlation. Support tooling must not display provider
 credentials, full provider payloads, hosted-session tokens, card data, or
 unredacted customer identifiers.
@@ -527,7 +534,7 @@ required capability. Until then the adapter reports
 ## Security And Compliance Controls
 
 - Prefer provider-hosted or embedded-tokenized setup. Never proxy raw card
-  fields through Account Manager or Cloud Admin.
+  fields through Billing, Account Manager, or Cloud Admin.
 - Never store CVV/CVC under any condition.
 - Encrypt opaque provider method/customer references at rest when they permit
   charging; keys live outside PostgreSQL.
@@ -552,13 +559,13 @@ Metrics use low-cardinality provider/environment/status labels and never account
 or transaction IDs as labels. Initial metrics:
 
 ```text
-account_manager_payment_intents_total
-account_manager_payment_attempts_total
-account_manager_payment_reconciliation_backlog
-account_manager_payment_unknown_age_seconds
-account_manager_payment_webhooks_total
-account_manager_auto_topup_triggers_total
-account_manager_balance_reconciliation_mismatches_total
+rtk_billing_payment_intents_total
+rtk_billing_payment_attempts_total
+rtk_billing_payment_reconciliation_backlog
+rtk_billing_payment_unknown_age_seconds
+rtk_billing_payment_webhooks_total
+rtk_billing_auto_topup_triggers_total
+rtk_billing_balance_reconciliation_mismatches_total
 ```
 
 Structured logs include request/correlation ID, internal intent ID, provider,

@@ -113,6 +113,9 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 		if len(options.BillingDebitToken) < 32 {
 			return fmt.Errorf("billing debit token must contain at least 32 characters")
 		}
+		if options.BillingDebitToken == s.serviceToken || options.BillingDebitToken == s.internalToken {
+			return fmt.Errorf("billing debit token must be distinct from service and internal credentials")
+		}
 		if !validBillingDebitSource(options.BillingDebitSource) {
 			return fmt.Errorf("billing debit source must use lowercase letters, digits, dots, underscores, or hyphens")
 		}

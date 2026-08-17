@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Generate the standalone Billing OpenAPI from the compatibility source.
+"""Import Billing paths from a compatibility OpenAPI while preserving RTK Billing boundaries.
 
-This is temporary migration tooling. Once Account Manager removes its legacy
-surface, the generated file in this repository becomes the editing source.
+The checked-in ``openapi.yaml`` is authoritative. This migration helper remains
+for reviewing older compatibility documents and must never collapse tenant,
+internal, and debit credentials into one security scheme.
 """
 
 from __future__ import annotations
@@ -99,7 +100,14 @@ def main() -> None:
         for method, operation in item.items():
             if method.lower() not in {"get", "put", "post", "patch", "delete"}:
                 continue
-            operation["security"] = [] if "payment-webhooks" in path or "payment-simulator/setup-callback" in path else [{"billingServiceAuth": []}]
+            if "payment-webhooks" in path or "payment-simulator/setup-callback" in path:
+                operation["security"] = []
+            elif path == "/v1/internal/billing/debits":
+                operation["security"] = [{"billingDebitAuth": []}]
+            elif path.startswith("/v1/internal/billing/"):
+                operation["security"] = [{"billingInternalAuth": []}]
+            else:
+                operation["security"] = [{"billingServiceAuth": []}]
             operation_id = operation.get("operationId")
             if operation_id in OPERATION_MAPPINGS:
                 feature_id, requirement_ids = OPERATION_MAPPINGS[operation_id]
@@ -109,8 +117,16 @@ def main() -> None:
     components: dict[str, dict[str, object]] = {"securitySchemes": {
         "billingServiceAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "service-token",
-            "description": "Dedicated Cloud Admin or trusted billing-worker service credential.",
-        }
+            "description": "Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=brand_cloud_user, X-Billing-Actor-ID, X-Billing-Permissions, and X-Request-ID.",
+        },
+        "billingInternalAuth": {
+            "type": "http", "scheme": "bearer", "bearerFormat": "internal-service-token",
+            "description": "Dedicated trusted usage, pricing, period-close, and access-control credential.",
+        },
+        "billingDebitAuth": {
+            "type": "http", "scheme": "bearer", "bearerFormat": "debit-source-token",
+            "description": "Dedicated debit producer credential, distinct from tenant and other internal credentials.",
+        },
     }}
     pending = component_refs(paths)
     copied: set[tuple[str, str]] = set()

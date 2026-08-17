@@ -35,7 +35,7 @@ func main() {
 	}
 
 	audit := auditstore.New(db)
-	server, err := api.New(api.Options{ServiceToken: cfg.ServiceToken, Audit: api.AuditAdapter{Store: audit}, Access: accessstore.New(db)})
+	server, err := api.New(api.Options{ServiceToken: cfg.ServiceToken, InternalToken: cfg.InternalToken, Audit: api.AuditAdapter{Store: audit}, Access: accessstore.New(db)})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	if err := server.ConfigurePayments(api.PaymentAPIOptions{Store: paymentStore, Providers: providers, ReferenceProtector: protector, BillingDebitToken: cfg.ServiceToken, BillingDebitSource: "rtk_billing", SimulatorCallbackSecret: cfg.SimulatorCallbackSecret}); err != nil {
+	if err := server.ConfigurePayments(api.PaymentAPIOptions{Store: paymentStore, Providers: providers, ReferenceProtector: protector, BillingDebitToken: cfg.BillingDebitToken, BillingDebitSource: cfg.BillingDebitSource, SimulatorCallbackSecret: cfg.SimulatorCallbackSecret}); err != nil {
 		log.Fatal(err)
 	}
 	billingStore := billingstore.New(db)

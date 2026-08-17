@@ -29,26 +29,30 @@ type accessPersistence interface {
 }
 
 type Server struct {
-	router       *gin.Engine
-	serviceToken string
-	audit        auditPersistence
-	access       accessPersistence
-	payments     *paymentRuntime
-	billing      *billingRuntime
+	router        *gin.Engine
+	serviceToken  string
+	internalToken string
+	audit         auditPersistence
+	access        accessPersistence
+	payments      *paymentRuntime
+	billing       *billingRuntime
 }
 
 type Options struct {
-	ServiceToken string
-	Audit        auditPersistence
-	Access       accessPersistence
+	ServiceToken  string
+	InternalToken string
+	Audit         auditPersistence
+	Access        accessPersistence
 }
 
 func New(options Options) (*Server, error) {
 	options.ServiceToken = strings.TrimSpace(options.ServiceToken)
-	if len(options.ServiceToken) < 32 || options.Audit == nil || options.Access == nil {
+	options.InternalToken = strings.TrimSpace(options.InternalToken)
+	if len(options.ServiceToken) < 32 || len(options.InternalToken) < 32 ||
+		options.ServiceToken == options.InternalToken || options.Audit == nil || options.Access == nil {
 		return nil, ErrInvalidServerOptions
 	}
-	s := &Server{serviceToken: options.ServiceToken, audit: options.Audit, access: options.Access}
+	s := &Server{serviceToken: options.ServiceToken, internalToken: options.InternalToken, audit: options.Audit, access: options.Access}
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
@@ -56,11 +60,10 @@ func New(options Options) (*Server, error) {
 	r.POST("/v1/payment-webhooks/:provider", s.handlePaymentWebhook)
 	r.POST("/v1/internal/payment-simulator/setup-callback", s.handlePaymentSimulatorSetupCallback)
 
-	v1 := r.Group("/v1", s.requireServiceToken())
-	org := v1.Group("/orgs/:orgId", s.requireBillingAccess())
+	org := r.Group("/v1/orgs/:orgId", s.requireServiceToken(), s.requireTenantContext(), s.requireBillingAccess())
 	s.registerTenantRoutes(org)
-	internal := v1.Group("/internal")
-	internal.POST("/billing/debits", s.handleInternalBillingDebit)
+	r.POST("/v1/internal/billing/debits", s.handleInternalBillingDebit)
+	internal := r.Group("/v1/internal", s.requireInternalToken())
 	internal.POST("/billing/pricing-versions", s.createBillingPricingVersion)
 	internal.POST("/billing/pricing-versions/:pricingVersionId/activate", s.activateBillingPricingVersion)
 	internal.POST("/billing/usage-facts", s.putBillingUsageFact)
@@ -71,7 +74,7 @@ func New(options Options) (*Server, error) {
 	return s, nil
 }
 
-var ErrInvalidServerOptions = &serverError{"service token, audit store, and access store are required"}
+var ErrInvalidServerOptions = &serverError{"distinct service/internal tokens plus audit and access stores are required"}
 
 type serverError struct{ message string }
 
@@ -104,8 +107,16 @@ func (s *Server) registerTenantRoutes(org *gin.RouterGroup) {
 }
 
 func (s *Server) requireServiceToken() gin.HandlerFunc {
+	return requireBearerToken(s.serviceToken)
+}
+
+func (s *Server) requireInternalToken() gin.HandlerFunc {
+	return requireBearerToken(s.internalToken)
+}
+
+func requireBearerToken(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		provided, expected := strings.TrimSpace(c.GetHeader("Authorization")), "Bearer "+s.serviceToken
+		provided, expected := strings.TrimSpace(c.GetHeader("Authorization")), "Bearer "+token
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 			writeError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 			c.Abort()
@@ -113,6 +124,32 @@ func (s *Server) requireServiceToken() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func (s *Server) requireTenantContext() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		actorType := strings.TrimSpace(c.GetHeader("X-Billing-Actor-Type"))
+		actorID := strings.TrimSpace(c.GetHeader("X-Billing-Actor-ID"))
+		requestID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
+		if actorType != "brand_cloud_user" || !validContextValue(actorID, 200) || !validContextValue(requestID, 128) {
+			writeError(c, http.StatusBadRequest, "BILLING_CONTEXT_REQUIRED", "Trusted billing actor and request context are required")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func validContextValue(value string, maximum int) bool {
+	if value == "" || len(value) > maximum {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) requirePermission(permission string) gin.HandlerFunc {
@@ -144,8 +181,6 @@ func (s *Server) requireBillingAccess() gin.HandlerFunc {
 		c.Next()
 	}
 }
-
-func (s *Server) requireInternalAuthToken(c *gin.Context) bool { return true }
 
 func (s *Server) getBillingAccess(c *gin.Context) {
 	state, err := s.access.GetOrCreate(c.Request.Context(), c.Param("orgId"))

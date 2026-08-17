@@ -484,7 +484,7 @@ func (s *Server) closeBillingPeriod(c *gin.Context) {
 }
 
 func (s *Server) requireInternalBilling(c *gin.Context) bool {
-	return s.requireInternalAuthToken(c) && s.requireBilling(c)
+	return s.requireBilling(c)
 }
 
 func optionalBillingTime(value string) (*time.Time, error) {

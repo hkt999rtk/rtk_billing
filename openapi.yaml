@@ -16,7 +16,7 @@ paths:
       summary: Create a draft pricing version and immutable rate set
       operationId: createBillingPricingVersion
       security:
-      - billingServiceAuth: []
+      - billingInternalAuth: []
       requestBody:
         required: true
         content:
@@ -39,7 +39,7 @@ paths:
       summary: Activate one pricing version and retire the prior version
       operationId: activateBillingPricingVersion
       security:
-      - billingServiceAuth: []
+      - billingInternalAuth: []
       parameters:
       - name: pricingVersionId
         in: path
@@ -61,7 +61,7 @@ paths:
       summary: Idempotently ingest a digest-anchored usage fact
       operationId: putBillingUsageFact
       security:
-      - billingServiceAuth: []
+      - billingInternalAuth: []
       requestBody:
         required: true
         content:
@@ -87,7 +87,7 @@ paths:
       summary: Close, price, issue, settle, and render one billing period
       operationId: closeBillingPeriod
       security:
-      - billingServiceAuth: []
+      - billingInternalAuth: []
       requestBody:
         required: true
         content:
@@ -749,7 +749,7 @@ paths:
       - REQ-AM-BILLING-DEBIT-001
       - REQ-AM-BALANCE-LEDGER-001
       security:
-      - billingServiceAuth: []
+      - billingDebitAuth: []
       summary: Post one authenticated idempotent invoice or usage-adjustment debit.
       description: Uses a dedicated billing-source credential. It does not calculate
         prices or invoices and cannot post credits, manual adjustments, refunds, or
@@ -869,7 +869,7 @@ paths:
       operationId: getBillingAccess
       summary: Read the Billing-owned commercial access state
       security:
-      - billingServiceAuth: []
+      - billingInternalAuth: []
       responses:
         '200':
           description: Current access state
@@ -919,7 +919,7 @@ paths:
       operationId: putBillingAccess
       summary: Update commercial access using optimistic concurrency
       security:
-      - billingServiceAuth: []
+      - billingInternalAuth: []
       requestBody:
         required: true
         content:
@@ -957,7 +957,17 @@ components:
       type: http
       scheme: bearer
       bearerFormat: service-token
-      description: Dedicated Cloud Admin or trusted billing-worker service credential.
+      description: Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=brand_cloud_user, X-Billing-Actor-ID, X-Billing-Permissions, and X-Request-ID.
+    billingInternalAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: internal-service-token
+      description: Dedicated trusted usage, pricing, period-close, and access-control credential.
+    billingDebitAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: debit-source-token
+      description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
     PutAutoTopUpRequest:
       type: object

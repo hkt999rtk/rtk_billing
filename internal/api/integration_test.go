@@ -3,8 +3,10 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +20,8 @@ import (
 
 	"github.com/hkt999rtk/rtk_billing/internal/accessstore"
 	"github.com/hkt999rtk/rtk_billing/internal/auditstore"
+	"github.com/hkt999rtk/rtk_billing/internal/billingservice"
+	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentcrypto"
@@ -28,7 +32,11 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/testutil"
 )
 
-const integrationServiceToken = "billing-integration-service-token-0001"
+const (
+	integrationServiceToken  = "billing-integration-service-token-0001"
+	integrationInternalToken = "billing-integration-internal-token-001"
+	integrationDebitToken    = "billing-integration-debit-token-000001"
+)
 
 type integrationAPI struct {
 	server *Server
@@ -55,6 +63,16 @@ func newIntegrationAPI(t *testing.T, providers ...payment.PaymentProvider) integ
 		TRUNCATE
 			billing_audit_events,
 			billing_access_states,
+			billing_activity_events,
+			invoice_settlement_links,
+			billing_invoice_documents,
+			billing_invoice_lines,
+			billing_invoices,
+			billing_periods,
+			billing_usage_facts,
+			pricing_rates,
+			pricing_plan_versions,
+			billing_profiles,
 			payment_simulator_operations,
 			payment_simulator_setup_sessions,
 			payment_reconciliation_jobs,
@@ -72,9 +90,10 @@ func newIntegrationAPI(t *testing.T, providers ...payment.PaymentProvider) integ
 		t.Fatal(err)
 	}
 	server, err := New(Options{
-		ServiceToken: integrationServiceToken,
-		Audit:        AuditAdapter{Store: auditstore.New(db)},
-		Access:       accessstore.New(db),
+		ServiceToken:  integrationServiceToken,
+		InternalToken: integrationInternalToken,
+		Audit:         AuditAdapter{Store: auditstore.New(db)},
+		Access:        accessstore.New(db),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,11 +107,25 @@ func newIntegrationAPI(t *testing.T, providers ...payment.PaymentProvider) integ
 		Store:              paymentstore.New(db),
 		Providers:          providers,
 		ReferenceProtector: protector,
-		BillingDebitToken:  integrationServiceToken,
+		BillingDebitToken:  integrationDebitToken,
 		BillingDebitSource: "rtk_billing",
 		Now: func() time.Time {
 			return time.Date(2026, 8, 17, 9, 30, 0, 0, time.UTC)
 		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	billingStore := billingstore.New(db)
+	billingService, err := billingservice.New(billingservice.Options{
+		Store: billingStore, PaymentStore: paymentstore.New(db),
+		Now: func() time.Time { return time.Date(2026, 8, 17, 9, 30, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.ConfigureBilling(BillingAPIOptions{
+		Store: billingStore, Service: billingService,
+		Now: func() time.Time { return time.Date(2026, 8, 17, 9, 30, 0, 0, time.UTC) },
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -111,9 +144,15 @@ func (a integrationAPI) request(t *testing.T, method, path, permission, idempote
 	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(encoded))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+integrationServiceToken)
+	token := integrationServiceToken
+	if strings.HasPrefix(path, "/v1/internal/billing/debits") {
+		token = integrationDebitToken
+	} else if strings.HasPrefix(path, "/v1/internal/") {
+		token = integrationInternalToken
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Billing-Permissions", permission)
-	req.Header.Set("X-Billing-Actor-Type", "user")
+	req.Header.Set("X-Billing-Actor-Type", "brand_cloud_user")
 	req.Header.Set("X-Billing-Actor-ID", "integration-admin")
 	req.Header.Set("X-Request-Id", "integration-request")
 	if idempotencyKey != "" {
@@ -126,6 +165,11 @@ func (a integrationAPI) request(t *testing.T, method, path, permission, idempote
 
 func TestIntegrationInternalBillingDebitAuthenticationAndIdempotency(t *testing.T) {
 	env := newIntegrationAPI(t)
+	if err := env.server.ConfigurePayments(PaymentAPIOptions{
+		Store: paymentstore.New(env.db), BillingDebitToken: integrationServiceToken, BillingDebitSource: "reused-credential",
+	}); err == nil || !strings.Contains(err.Error(), "must be distinct") {
+		t.Fatalf("reused debit credential error = %v", err)
+	}
 	organizationID := testutil.OrganizationID("billing-api-debit")
 	path := "/v1/internal/billing/debits"
 	body := map[string]any{
@@ -142,6 +186,14 @@ func TestIntegrationInternalBillingDebitAuthenticationAndIdempotency(t *testing.
 	env.server.Router().ServeHTTP(unauthorizedResponse, unauthorized)
 	if unauthorizedResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status=%d body=%s", unauthorizedResponse.Code, unauthorizedResponse.Body.String())
+	}
+	sharedCredential := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(`{}`))
+	sharedCredential.Header.Set("Content-Type", "application/json")
+	sharedCredential.Header.Set("Authorization", "Bearer "+integrationServiceToken)
+	sharedCredentialResponse := httptest.NewRecorder()
+	env.server.Router().ServeHTTP(sharedCredentialResponse, sharedCredential)
+	if sharedCredentialResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("tenant credential crossed debit boundary: status=%d body=%s", sharedCredentialResponse.Code, sharedCredentialResponse.Body.String())
 	}
 
 	created := env.request(t, http.MethodPost, path, "", "invoice-debit-001", body)
@@ -171,6 +223,89 @@ func TestIntegrationInternalBillingDebitAuthenticationAndIdempotency(t *testing.
 	}
 	if entries != 1 || accounts != 1 {
 		t.Fatalf("expected one account and one immutable debit, accounts=%d entries=%d", accounts, entries)
+	}
+}
+
+func TestIntegrationBillingHTTPPricingInvoiceAndTenantReadLifecycle(t *testing.T) {
+	env := newIntegrationAPI(t)
+	organizationID := testutil.OrganizationID("billing-api-invoice")
+	periodStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+
+	pricingBody := map[string]any{
+		"plan_key": "default", "version": 1, "currency": "TWD", "effective_from": periodStart,
+		"rates": []map[string]any{{
+			"service_code": "video", "metric_code": "relay_minutes", "description": "Video relay",
+			"unit": "minute", "unit_price_minor": 2, "unit_price_scale": 0,
+			"rounding_mode": "half_up", "tax_rate_basis_points": 0,
+		}},
+	}
+	createdPricing := env.request(t, http.MethodPost, "/v1/internal/billing/pricing-versions", "", "", pricingBody)
+	if createdPricing.Code != http.StatusCreated {
+		t.Fatalf("create pricing status=%d body=%s", createdPricing.Code, createdPricing.Body.String())
+	}
+	var pricingResponse struct {
+		PricingVersion struct {
+			ID string `json:"id"`
+		} `json:"pricing_version"`
+	}
+	if err := json.Unmarshal(createdPricing.Body.Bytes(), &pricingResponse); err != nil || pricingResponse.PricingVersion.ID == "" {
+		t.Fatalf("pricing response=%s err=%v", createdPricing.Body.String(), err)
+	}
+	activated := env.request(t, http.MethodPost, "/v1/internal/billing/pricing-versions/"+pricingResponse.PricingVersion.ID+"/activate", "", "", nil)
+	if activated.Code != http.StatusOK {
+		t.Fatalf("activate pricing status=%d body=%s", activated.Code, activated.Body.String())
+	}
+
+	digest := sha256.Sum256([]byte("billing-api-usage"))
+	usageBody := map[string]any{
+		"usage_id": "billing-api-usage", "organization_id": organizationID,
+		"service_code": "video", "metric_code": "relay_minutes", "quantity": 100,
+		"quantity_scale": 0, "unit": "minute", "window_start": periodStart,
+		"window_end": periodStart.Add(24 * time.Hour), "source": "integration-test",
+		"source_sha256": fmt.Sprintf("%x", digest),
+	}
+	usage := env.request(t, http.MethodPost, "/v1/internal/billing/usage-facts", "", "", usageBody)
+	if usage.Code != http.StatusCreated {
+		t.Fatalf("usage status=%d body=%s", usage.Code, usage.Body.String())
+	}
+	closed := env.request(t, http.MethodPost, "/v1/internal/billing/periods/close", "", "", map[string]any{
+		"organization_id": organizationID, "period_start": periodStart, "period_end": periodEnd,
+		"due_at": periodEnd.Add(15 * 24 * time.Hour),
+	})
+	if closed.Code != http.StatusOK || !strings.Contains(closed.Body.String(), `"state":"settled"`) || !strings.Contains(closed.Body.String(), `"total_minor":200`) {
+		t.Fatalf("close status=%d body=%s", closed.Code, closed.Body.String())
+	}
+
+	invoices := env.request(t, http.MethodGet, "/v1/orgs/"+organizationID+"/billing/invoices", "invoice.read", "", nil)
+	var invoicePage struct {
+		Invoices []struct {
+			ID string `json:"id"`
+		} `json:"invoices"`
+	}
+	if invoices.Code != http.StatusOK || json.Unmarshal(invoices.Body.Bytes(), &invoicePage) != nil || len(invoicePage.Invoices) != 1 {
+		t.Fatalf("invoice list status=%d body=%s", invoices.Code, invoices.Body.String())
+	}
+	invoiceID := invoicePage.Invoices[0].ID
+	pdf := env.request(t, http.MethodGet, "/v1/orgs/"+organizationID+"/billing/invoices/"+invoiceID+"/pdf", "invoice_document.read", "", nil)
+	if pdf.Code != http.StatusOK || !bytes.HasPrefix(pdf.Body.Bytes(), []byte("%PDF")) || pdf.Header().Get("Digest") == "" {
+		t.Fatalf("invoice PDF status=%d digest=%q body=%q", pdf.Code, pdf.Header().Get("Digest"), pdf.Body.String())
+	}
+	summary := env.request(t, http.MethodGet, "/v1/orgs/"+organizationID+"/billing/summary", "billing_summary.read", "", nil)
+	if summary.Code != http.StatusOK || !strings.Contains(summary.Body.String(), `"available_balance_minor":-200`) {
+		t.Fatalf("summary status=%d body=%s", summary.Code, summary.Body.String())
+	}
+	activity := env.request(t, http.MethodGet, "/v1/orgs/"+organizationID+"/billing/activity", "billing_activity.read", "", nil)
+	if activity.Code != http.StatusOK || !strings.Contains(activity.Body.String(), `"type":"invoice"`) || !strings.Contains(activity.Body.String(), `"state":"completed"`) {
+		t.Fatalf("activity status=%d body=%s", activity.Code, activity.Body.String())
+	}
+
+	tenantCredential := httptest.NewRequest(http.MethodPost, "/v1/internal/billing/pricing-versions", bytes.NewBufferString(`{}`))
+	tenantCredential.Header.Set("Authorization", "Bearer "+integrationServiceToken)
+	tenantCredentialResponse := httptest.NewRecorder()
+	env.server.Router().ServeHTTP(tenantCredentialResponse, tenantCredential)
+	if tenantCredentialResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("tenant credential crossed pricing boundary: %d", tenantCredentialResponse.Code)
 	}
 }
 
@@ -275,7 +410,7 @@ func TestIntegrationPaymentSimulatorHostedSetupActivatesMethodWithoutPersistingR
 	}
 	if err := env.server.ConfigurePayments(PaymentAPIOptions{
 		Store: paymentstore.New(env.db), Providers: []payment.PaymentProvider{provider},
-		ReferenceProtector: protector, BillingDebitToken: integrationServiceToken,
+		ReferenceProtector: protector, BillingDebitToken: integrationDebitToken,
 		BillingDebitSource: "rtk_billing", SimulatorCallbackSecret: callbackSecret,
 		Now: func() time.Time { return now },
 	}); err != nil {

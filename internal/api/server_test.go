@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,7 +34,7 @@ func (a *testAccess) Put(_ context.Context, organizationID, state, reason, actor
 
 func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 	access := &testAccess{}
-	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), Audit: testAudit{}, Access: access})
+	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: access})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +43,9 @@ func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 		if permission != "unauthenticated" {
 			req.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 32))
 			req.Header.Set("X-Billing-Permissions", permission)
+			req.Header.Set("X-Billing-Actor-Type", "brand_cloud_user")
+			req.Header.Set("X-Billing-Actor-ID", "test-user")
+			req.Header.Set("X-Request-ID", "test-request")
 		}
 		res := httptest.NewRecorder()
 		server.Router().ServeHTTP(res, req)
@@ -48,6 +53,14 @@ func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 	}
 	if got := request("GET", "/v1/orgs/00000000-0000-0000-0000-000000000001/billing/account", "unauthenticated").Code; got != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status=%d", got)
+	}
+	missingContext := httptest.NewRequest("GET", "/v1/orgs/00000000-0000-0000-0000-000000000001/billing/account", nil)
+	missingContext.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 32))
+	missingContext.Header.Set("X-Billing-Permissions", "billing_account.read")
+	missingContextResponse := httptest.NewRecorder()
+	server.Router().ServeHTTP(missingContextResponse, missingContext)
+	if missingContextResponse.Code != http.StatusBadRequest {
+		t.Fatalf("missing tenant context status=%d", missingContextResponse.Code)
 	}
 	if got := request("GET", "/v1/orgs/00000000-0000-0000-0000-000000000001/billing/account", "invoice.read").Code; got != http.StatusForbidden {
 		t.Fatalf("wrong permission status=%d", got)
@@ -64,15 +77,74 @@ func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 
 func TestInternalAccessStateIsOwnedByBilling(t *testing.T) {
 	access := &testAccess{}
-	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), Audit: testAudit{}, Access: access})
+	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: access})
 	if err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("GET", "/v1/internal/billing/access/00000000-0000-0000-0000-000000000001", nil)
-	req.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 32))
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("i", 32))
 	res := httptest.NewRecorder()
 	server.Router().ServeHTTP(res, req)
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"state":"active"`) {
 		t.Fatalf("access response=%d %s", res.Code, res.Body.String())
+	}
+	tenantCredential := httptest.NewRequest("GET", "/v1/internal/billing/access/00000000-0000-0000-0000-000000000001", nil)
+	tenantCredential.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 32))
+	tenantCredentialResponse := httptest.NewRecorder()
+	server.Router().ServeHTTP(tenantCredentialResponse, tenantCredential)
+	if tenantCredentialResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("tenant credential crossed internal boundary: %d", tenantCredentialResponse.Code)
+	}
+	internalCredential := httptest.NewRequest("GET", "/v1/orgs/00000000-0000-0000-0000-000000000001/billing/account", nil)
+	internalCredential.Header.Set("Authorization", "Bearer "+strings.Repeat("i", 32))
+	internalCredential.Header.Set("X-Billing-Permissions", "billing_account.read")
+	internalCredential.Header.Set("X-Billing-Actor-Type", "brand_cloud_user")
+	internalCredential.Header.Set("X-Billing-Actor-ID", "test-user")
+	internalCredential.Header.Set("X-Request-ID", "test-request")
+	internalCredentialResponse := httptest.NewRecorder()
+	server.Router().ServeHTTP(internalCredentialResponse, internalCredential)
+	if internalCredentialResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("internal credential crossed tenant boundary: %d", internalCredentialResponse.Code)
+	}
+}
+
+func TestServerRejectsMissingOrReusedCredentialBoundaries(t *testing.T) {
+	base := Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: &testAccess{}}
+	if _, err := New(base); err != nil {
+		t.Fatal(err)
+	}
+	base.InternalToken = ""
+	if _, err := New(base); err == nil {
+		t.Fatal("missing internal credential passed")
+	}
+	base.InternalToken = base.ServiceToken
+	if _, err := New(base); err == nil {
+		t.Fatal("reused tenant/internal credential passed")
+	}
+}
+
+func TestOpenAPIPreservesTenantInternalAndDebitSecuritySchemes(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := string(raw)
+	for operation, scheme := range map[string]string{
+		"getBillingAccount":           "billingServiceAuth",
+		"createBillingPricingVersion": "billingInternalAuth",
+		"getBillingAccess":            "billingInternalAuth",
+		"postInternalBillingDebit":    "billingDebitAuth",
+	} {
+		start := strings.Index(document, "operationId: "+operation)
+		if start < 0 {
+			t.Fatalf("OpenAPI operation %s is missing", operation)
+		}
+		end := start + 500
+		if end > len(document) {
+			end = len(document)
+		}
+		if !strings.Contains(document[start:end], "- "+scheme+": []") {
+			t.Fatalf("OpenAPI operation %s does not use %s", operation, scheme)
+		}
 	}
 }
