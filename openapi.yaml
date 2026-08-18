@@ -1,0 +1,1821 @@
+openapi: 3.1.0
+x-rtk-spec:
+  id: SPEC-BILLING-OPENAPI
+  status: normative
+  owner: rtk_billing
+info:
+  title: RTK Billing API
+  version: 1.0.0
+  description: Provider-neutral pricing, wallet, payment, invoice, and billing access
+    service.
+paths:
+  /v1/internal/billing/pricing-versions:
+    post:
+      tags:
+      - Internal Billing
+      summary: Create a draft pricing version and immutable rate set
+      operationId: createBillingPricingVersion
+      security:
+      - billingInternalAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '201':
+          description: Pricing version created.
+        '409':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PRICING-VERSION-001
+  /v1/internal/billing/pricing-versions/{pricingVersionId}/activate:
+    post:
+      tags:
+      - Internal Billing
+      summary: Activate one pricing version and retire the prior version
+      operationId: activateBillingPricingVersion
+      security:
+      - billingInternalAuth: []
+      parameters:
+      - name: pricingVersionId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Pricing version activated.
+        '404':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PRICING-VERSION-001
+  /v1/internal/billing/usage-facts:
+    post:
+      tags:
+      - Internal Billing
+      summary: Idempotently ingest a digest-anchored usage fact
+      operationId: putBillingUsageFact
+      security:
+      - billingInternalAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Existing identical fact.
+        '201':
+          description: Usage fact created.
+        '409':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
+      - REQ-AM-INVOICE-ARITHMETIC-001
+  /v1/internal/billing/periods/close:
+    post:
+      tags:
+      - Internal Billing
+      summary: Close, price, issue, settle, and render one billing period
+      operationId: closeBillingPeriod
+      security:
+      - billingInternalAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Existing or newly closed invoice result.
+        '422':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
+      - REQ-AM-INVOICE-ARITHMETIC-001
+  /v1/orgs/{orgId}/billing/summary:
+    get:
+      tags:
+      - Billing and Payments
+      summary: Return tenant balance current cost runway and top-up health
+      operationId: getBillingSummary
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Tenant billing summary.
+        '403':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-SUMMARY-001
+  /v1/orgs/{orgId}/billing/usage:
+    get:
+      tags:
+      - Billing and Payments
+      summary: Return server-priced usage for the active billing period
+      operationId: getBillingUsage
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Priced usage lines.
+        '403':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-SUMMARY-001
+  /v1/orgs/{orgId}/billing/invoices:
+    get:
+      tags:
+      - Billing and Payments
+      summary: List tenant invoices with bounded filters
+      operationId: listBillingInvoices
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Invoice page.
+        '403':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
+  /v1/orgs/{orgId}/billing/invoices/{invoiceId}:
+    get:
+      tags:
+      - Billing and Payments
+      summary: Get one tenant invoice and settlement links
+      operationId: getBillingInvoice
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: invoiceId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Invoice detail.
+        '404':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
+  /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf:
+    get:
+      tags:
+      - Billing and Payments
+      summary: Download an immutable issued invoice PDF
+      operationId: downloadBillingInvoicePdf
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: invoiceId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Immutable invoice document
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-DOCUMENT-001
+  /v1/orgs/{orgId}/billing/activity:
+    get:
+      tags:
+      - Billing and Payments
+      summary: List normalized customer-safe billing activity
+      operationId: listBillingActivity
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Billing activity page.
+        '403':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-BILLING-ACTIVITY-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-ACTIVITY-001
+      - REQ-AM-BILLING-ACTIVITY-002
+      - REQ-AM-BILLING-ACTIVITY-003
+  /v1/orgs/{orgId}/billing/activity/{activityId}:
+    get:
+      tags:
+      - Billing and Payments
+      summary: Get one customer-safe billing activity timeline
+      operationId: getBillingActivity
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: activityId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Billing activity detail.
+        '404':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-BILLING-ACTIVITY-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-ACTIVITY-001
+      - REQ-AM-BILLING-ACTIVITY-002
+      - REQ-AM-BILLING-ACTIVITY-003
+  /v1/orgs/{orgId}/billing/profile:
+    get:
+      tags:
+      - Billing and Payments
+      summary: Get the prospective billing recipient profile
+      operationId: getBillingProfile
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Billing profile.
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-PROFILE-001
+    put:
+      tags:
+      - Billing and Payments
+      summary: Replace the prospective billing recipient profile
+      operationId: putBillingProfile
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated billing profile.
+        '412':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-PROFILE-001
+  /v1/orgs/{orgId}/billing/statements:
+    get:
+      tags:
+      - Billing and Payments
+      summary: Export tenant billing activity as UTF-8 CSV
+      operationId: exportBillingStatement
+      security:
+      - billingServiceAuth: []
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: CSV statement
+          content:
+            text/csv:
+              schema:
+                type: string
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-DOCUMENT-001
+  /v1/orgs/{orgId}/billing/account:
+    get:
+      tags:
+      - Billing and Payments
+      operationId: getBillingAccount
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BALANCE-LEDGER-001
+      - REQ-AM-PAYMENT-AUTHZ-001
+      security:
+      - billingServiceAuth: []
+      summary: Read the organization commercial account and automatic top-up summary.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      responses:
+        '200':
+          description: Customer-safe commercial account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingAccountResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/billing/ledger:
+    get:
+      tags:
+      - Billing and Payments
+      operationId: listBillingLedger
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BALANCE-LEDGER-001
+      - REQ-AM-PAYMENT-AUTHZ-001
+      security:
+      - billingServiceAuth: []
+      summary: List immutable customer-safe balance ledger entries.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Ledger page ordered newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingLedgerResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/payment-methods:
+    get:
+      tags:
+      - Billing and Payments
+      operationId: listPaymentMethods
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-METHOD-001
+      - REQ-AM-PAYMENT-AUTHZ-001
+      security:
+      - billingServiceAuth: []
+      summary: List redacted organization payment methods.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Payment method page without provider references or card credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethodsResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/payment-methods/setup:
+    post:
+      tags:
+      - Billing and Payments
+      operationId: setupPaymentMethod
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-METHOD-001
+      - REQ-AM-PAYMENT-PROVIDER-001
+      security:
+      - billingServiceAuth: []
+      summary: Request a provider-hosted payment method setup session.
+      description: Consent, a pending method, and setup idempotency are persisted
+        before provider I/O. The request never accepts PAN, CVV, expiry, or other
+        card credentials. Non-production may use the isolated hosted simulator; external
+        adapters remain capability-gated.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMethodSetupRequest'
+      responses:
+        '202':
+          description: Hosted setup session accepted by a qualified provider.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethodSetupResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/payment-methods/{methodId}:
+    delete:
+      tags:
+      - Billing and Payments
+      operationId: revokePaymentMethod
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-METHOD-001
+      - REQ-AM-PAYMENT-AUDIT-001
+      security:
+      - billingServiceAuth: []
+      summary: Revoke a payment method and disable its active automatic top-up policy.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/PaymentMethodId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMutationReasonRequest'
+      responses:
+        '200':
+          description: Method revoked or an identical revocation replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevokePaymentMethodResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/auto-topup:
+    get:
+      tags:
+      - Billing and Payments
+      operationId: getAutoTopUpPolicy
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-AUTO-TOPUP-001
+      - REQ-AM-PAYMENT-AUTHZ-001
+      security:
+      - billingServiceAuth: []
+      summary: Read the automatic top-up policy and Asia/Taipei safety-limit reset.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      responses:
+        '200':
+          description: Policy response; auto_topup is null when no policy exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTopUpResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    put:
+      tags:
+      - Billing and Payments
+      operationId: replaceAutoTopUpPolicy
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-AUTO-TOPUP-001
+      - REQ-AM-PAYMENT-METHOD-001
+      - REQ-AM-PAYMENT-AUDIT-001
+      security:
+      - billingServiceAuth: []
+      summary: Replace the automatic top-up policy using optimistic concurrency and
+        explicit consent.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutAutoTopUpRequest'
+      responses:
+        '200':
+          description: Policy replaced with a new generation and version.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTopUpResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '428':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags:
+      - Billing and Payments
+      operationId: disableAutoTopUpPolicy
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-AUTO-TOPUP-001
+      - REQ-AM-PAYMENT-AUDIT-001
+      security:
+      - billingServiceAuth: []
+      summary: Disable automatic top-up and advance the policy generation.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMutationReasonRequest'
+      responses:
+        '200':
+          description: Disabled policy.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTopUpResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '428':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/topups:
+    post:
+      tags:
+      - Billing and Payments
+      operationId: createManualTopUp
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-INTENT-001
+      - REQ-AM-PAYMENT-AUDIT-001
+      security:
+      - billingServiceAuth: []
+      summary: Create an idempotent manual top-up payment intent.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualTopUpRequest'
+      responses:
+        '200':
+          description: Existing identical intent returned for a replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualTopUpResponse'
+        '202':
+          description: New intent persisted before provider execution.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualTopUpResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/payment-intents:
+    get:
+      tags:
+      - Billing and Payments
+      operationId: listPaymentIntents
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-INTENT-001
+      - REQ-AM-PAYMENT-AUTHZ-001
+      security:
+      - billingServiceAuth: []
+      summary: List customer-safe payment intent history.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Payment intent page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntentsResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/payment-intents/{intentId}:
+    get:
+      tags:
+      - Billing and Payments
+      operationId: getPaymentIntent
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-INTENT-001
+      - REQ-AM-PAYMENT-AUTHZ-001
+      security:
+      - billingServiceAuth: []
+      summary: Read one customer-safe payment intent and its normalized attempts.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/PaymentIntentId'
+      responses:
+        '200':
+          description: Intent detail without provider transaction references or evidence
+            digests.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntentDetailResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/internal/billing/debits:
+    post:
+      tags:
+      - Internal Billing
+      operationId: postInternalBillingDebit
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-BILLING-DEBIT-001
+      - REQ-AM-BALANCE-LEDGER-001
+      security:
+      - billingDebitAuth: []
+      summary: Post one authenticated idempotent invoice or usage-adjustment debit.
+      description: Uses a dedicated billing-source credential. It does not calculate
+        prices or invoices and cannot post credits, manual adjustments, refunds, or
+        chargebacks.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalBillingDebitRequest'
+      responses:
+        '201':
+          description: Debit and balance projection committed atomically.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalBillingDebitResponse'
+        '200':
+          description: Semantically identical idempotent replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalBillingDebitResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /v1/internal/payment-simulator/setup-callback:
+    post:
+      tags:
+      - Internal Billing
+      operationId: completeSimulatedPaymentMethodSetup
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-METHOD-001
+      - REQ-AM-PAYMENT-SIMULATOR-001
+      summary: Complete a non-production simulator hosted setup using an HMAC-authenticated
+        callback.
+      parameters:
+      - name: X-Payment-Simulator-Signature
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentSimulatorSetupCallback'
+      responses:
+        '200':
+          description: Callback accepted or replayed idempotently.
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security: []
+  /v1/payment-webhooks/{provider}:
+    post:
+      tags:
+      - Payment Webhooks
+      operationId: ingestPaymentWebhook
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-WEBHOOK-001
+      summary: Verify, deduplicate, and enqueue a payment provider callback.
+      parameters:
+      - $ref: '#/components/parameters/PaymentProvider'
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: string
+              format: binary
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Verified callback accepted or replay deduplicated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentWebhookResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      security: []
+  /v1/internal/billing/access/{orgId}:
+    parameters:
+    - name: orgId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getBillingAccess
+      summary: Read the Billing-owned commercial access state
+      security:
+      - billingInternalAuth: []
+      responses:
+        '200':
+          description: Current access state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access:
+                    type: object
+                    required:
+                    - organization_id
+                    - state
+                    - version
+                    - updated_by
+                    - created_at
+                    - updated_at
+                    properties:
+                      organization_id:
+                        type: string
+                        format: uuid
+                      state:
+                        type: string
+                        enum:
+                        - active
+                        - read_only
+                        - suspended
+                        - closed
+                      reason_code:
+                        type: string
+                      version:
+                        type: integer
+                        minimum: 1
+                      updated_by:
+                        type: string
+                      created_at:
+                        type: string
+                        format: date-time
+                      updated_at:
+                        type: string
+                        format: date-time
+                    additionalProperties: false
+      x-rtk-feature-id: FEAT-BILL-SERVICE-001
+      x-rtk-requirement-ids:
+      - REQ-BILL-ACCESS-001
+    put:
+      operationId: putBillingAccess
+      summary: Update commercial access using optimistic concurrency
+      security:
+      - billingInternalAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - state
+              - version
+              properties:
+                state:
+                  type: string
+                  enum:
+                  - active
+                  - read_only
+                  - suspended
+                  - closed
+                reason_code:
+                  type: string
+                version:
+                  type: integer
+                  minimum: 1
+              additionalProperties: false
+      responses:
+        '200':
+          description: Updated access state
+        '409':
+          description: Version conflict
+      x-rtk-feature-id: FEAT-BILL-SERVICE-001
+      x-rtk-requirement-ids:
+      - REQ-BILL-ACCESS-001
+components:
+  securitySchemes:
+    billingServiceAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: service-token
+      description: Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=brand_cloud_user, X-Billing-Actor-ID, X-Billing-Permissions, and X-Request-ID.
+    billingInternalAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: internal-service-token
+      description: Dedicated trusted usage, pricing, period-close, and access-control credential.
+    billingDebitAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: debit-source-token
+      description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
+  schemas:
+    PutAutoTopUpRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - enabled
+      - threshold_minor
+      - top_up_amount_minor
+      - currency
+      - payment_method_id
+      - daily_attempt_limit
+      - daily_amount_limit_minor
+      - cooldown_seconds
+      - consent
+      properties:
+        enabled:
+          type: boolean
+        threshold_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        top_up_amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        payment_method_id:
+          type: string
+          format: uuid
+        daily_attempt_limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+        daily_amount_limit_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        cooldown_seconds:
+          type: integer
+          format: int64
+          minimum: 300
+        consent:
+          $ref: '#/components/schemas/PaymentConsentAcceptance'
+    RevokePaymentMethodResponse:
+      type: object
+      required:
+      - payment_method
+      - policy_disabled
+      - duplicate
+      properties:
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+        policy_disabled:
+          type: boolean
+        duplicate:
+          type: boolean
+    PaymentSimulatorSetupCallback:
+      type: object
+      additionalProperties: false
+      required:
+      - account_id
+      - setup_session_id
+      - state
+      - provider_code
+      - hosted_url
+      properties:
+        account_id:
+          type: string
+          format: uuid
+        setup_session_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - succeeded
+          - failed
+        provider_code:
+          type: string
+        hosted_url:
+          type: string
+          format: uri
+        provider_customer_ref:
+          type: string
+        provider_method_ref:
+          type: string
+        card_brand:
+          type: string
+        last_four:
+          type: string
+          pattern: ^[0-9]{4}$
+        expiry_month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        expiry_year:
+          type: integer
+          minimum: 2000
+          maximum: 9999
+    PaymentIntentsResponse:
+      type: object
+      required:
+      - payment_intents
+      - pagination
+      properties:
+        payment_intents:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentIntent'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    ErrorResponse:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+              description: Optional machine-readable hint for Claim Token resolve
+                failures.
+            resolution_action:
+              type: string
+              description: Optional client action hint for Claim Token resolve failures.
+    MoneyMinor:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Currency-unit integer. For zero-decimal TWD, one amount_minor unit
+        is NT$1.
+    AutoTopUpResponse:
+      type: object
+      required:
+      - auto_topup
+      properties:
+        auto_topup:
+          allOf:
+          - $ref: '#/components/schemas/AutoTopUpPolicy'
+          nullable: true
+    ManualTopUpResponse:
+      type: object
+      required:
+      - payment_intent
+      - duplicate
+      properties:
+        payment_intent:
+          $ref: '#/components/schemas/PaymentIntent'
+        duplicate:
+          type: boolean
+    InternalBillingDebitResponse:
+      type: object
+      required:
+      - account_id
+      - ledger_entry_id
+      - balance_after_minor
+      - currency
+      - duplicate
+      properties:
+        account_id:
+          type: string
+          format: uuid
+        ledger_entry_id:
+          type: string
+          format: uuid
+        balance_after_minor:
+          type: integer
+          format: int64
+        currency:
+          $ref: '#/components/schemas/Currency'
+        duplicate:
+          type: boolean
+        payment_intent_id:
+          type: string
+          format: uuid
+          nullable: true
+    PaymentConsentAcceptance:
+      type: object
+      additionalProperties: false
+      required:
+      - accepted
+      - text_version
+      - text_sha256
+      - locale
+      properties:
+        accepted:
+          type: boolean
+          enum:
+          - true
+        text_version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        text_sha256:
+          type: string
+          pattern: ^[0-9a-fA-F]{64}$
+        locale:
+          type: string
+          minLength: 2
+          maxLength: 35
+    PaymentMethodSetupResponse:
+      type: object
+      required:
+      - payment_method
+      - hosted_url
+      - duplicate
+      properties:
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+        hosted_url:
+          type: string
+          format: uri
+          description: Short-lived provider-hosted URL; never logged or stored in
+            audit payloads.
+        duplicate:
+          type: boolean
+    BillingLedgerResponse:
+      type: object
+      required:
+      - ledger_entries
+      - pagination
+      properties:
+        ledger_entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/BillingLedgerEntry'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    PaymentIntentDetailResponse:
+      type: object
+      required:
+      - payment_intent
+      - attempts
+      properties:
+        payment_intent:
+          $ref: '#/components/schemas/PaymentIntent'
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentAttempt'
+    InternalBillingDebitRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - organization_id
+      - amount_minor
+      - currency
+      - reason
+      - external_id
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reason:
+          type: string
+          enum:
+          - invoice_debit
+          - usage_adjustment_debit
+        external_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Immutable invoice or usage-adjustment reference owned by the
+            authenticated billing source.
+    PaymentIntent:
+      type: object
+      description: Customer-safe normalized intent; provider order and transaction
+        references are intentionally absent.
+      required:
+      - id
+      - amount_minor
+      - currency
+      - reason
+      - provider
+      - payment_method_id
+      - state
+      - requires_customer_action
+      - correlation_id
+      - created_at
+      - updated_at
+      - completed_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reason:
+          type: string
+          enum:
+          - manual_top_up
+          - auto_top_up
+        provider:
+          type: string
+        payment_method_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - created
+          - processing
+          - authorized
+          - requires_action
+          - unknown
+          - succeeded
+          - failed
+          - canceled
+        requires_customer_action:
+          type: boolean
+        correlation_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+    ManualTopUpRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - amount_minor
+      - currency
+      - payment_method_id
+      properties:
+        amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        payment_method_id:
+          type: string
+          format: uuid
+    PaymentMethodSetupRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - provider
+      - consent
+      properties:
+        provider:
+          type: string
+          pattern: ^[a-z0-9_]{1,32}$
+        consent:
+          $ref: '#/components/schemas/PaymentConsentAcceptance'
+      description: Card number, CVV/CVC, expiry, and magnetic-stripe data are forbidden.
+    BillingAccountResponse:
+      type: object
+      required:
+      - account
+      - auto_topup
+      - payment_providers
+      properties:
+        account:
+          $ref: '#/components/schemas/CommercialAccount'
+        auto_topup:
+          allOf:
+          - $ref: '#/components/schemas/AutoTopUpPolicy'
+          nullable: true
+        payment_providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentProviderSummary'
+    PaymentMutationReasonRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - reason
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+    PaymentAttempt:
+      type: object
+      required:
+      - id
+      - operation
+      - attempt_number
+      - started_at
+      - completed_at
+      - status
+      - provider_code
+      - next_reconciliation_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        operation:
+          type: string
+          enum:
+          - setup
+          - charge
+          - query
+          - cancel
+          - refund
+        attempt_number:
+          type: integer
+          minimum: 1
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum:
+          - started
+          - authorized
+          - requires_action
+          - unknown
+          - succeeded
+          - failed
+          - canceled
+        provider_code:
+          type: string
+        next_reconciliation_at:
+          type: string
+          format: date-time
+          nullable: true
+    AutoTopUpPolicy:
+      type: object
+      required:
+      - id
+      - enabled
+      - threshold_minor
+      - top_up_amount_minor
+      - currency
+      - payment_method_id
+      - daily_attempt_limit
+      - daily_amount_limit_minor
+      - cooldown_seconds
+      - generation
+      - version
+      - armed
+      - consecutive_failure_count
+      - limit_timezone
+      - limit_reset_at
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        threshold_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        top_up_amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        payment_method_id:
+          type: string
+          format: uuid
+        daily_attempt_limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+        daily_amount_limit_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        cooldown_seconds:
+          type: integer
+          format: int64
+          minimum: 300
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        armed:
+          type: boolean
+        last_triggered_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_succeeded_at:
+          type: string
+          format: date-time
+          nullable: true
+        consecutive_failure_count:
+          type: integer
+          minimum: 0
+        limit_timezone:
+          type: string
+          enum:
+          - Asia/Taipei
+        limit_reset_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PaymentMethodsResponse:
+      type: object
+      required:
+      - payment_methods
+      - pagination
+      properties:
+        payment_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentMethod'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    CommercialAccount:
+      type: object
+      required:
+      - id
+      - organization_id
+      - currency
+      - available_balance_minor
+      - state
+      - version
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        currency:
+          $ref: '#/components/schemas/Currency'
+        available_balance_minor:
+          type: integer
+          format: int64
+        state:
+          type: string
+          enum:
+          - active
+          - attention_required
+          - suspended
+          - closed
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PaymentProviderSummary:
+      type: object
+      required:
+      - name
+      - environment
+      - capabilities
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z0-9_-]+$
+        environment:
+          type: string
+          enum:
+          - simulated
+          - external
+        capabilities:
+          $ref: '#/components/schemas/PaymentProviderCapabilities'
+    PaymentMethod:
+      type: object
+      description: Customer-safe display metadata. Provider customer/method references
+        and card credentials are never returned.
+      required:
+      - id
+      - account_id
+      - provider
+      - status
+      - capabilities
+      - consent_id
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        status:
+          type: string
+          enum:
+          - pending
+          - active
+          - expired
+          - revoked
+          - failed
+        card_brand:
+          type: string
+        last_four:
+          type: string
+          pattern: ^[0-9]{4}$
+        expiry_month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        expiry_year:
+          type: integer
+          minimum: 2000
+          maximum: 9999
+        capabilities:
+          $ref: '#/components/schemas/PaymentProviderCapabilities'
+        consent_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Pagination:
+      type: object
+      required:
+      - limit
+      - offset
+      - total
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+    BillingLedgerEntry:
+      type: object
+      required:
+      - id
+      - direction
+      - amount_minor
+      - currency
+      - reason
+      - balance_after_minor
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum:
+          - credit
+          - debit
+        amount_minor:
+          $ref: '#/components/schemas/MoneyMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reason:
+          type: string
+          enum:
+          - invoice_debit
+          - usage_adjustment_debit
+          - manual_adjustment_debit
+          - payment_top_up_credit
+          - manual_adjustment_credit
+          - refund_debit
+          - chargeback_debit
+        balance_after_minor:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    PaymentProviderCapabilities:
+      type: object
+      required:
+      - hosted_setup
+      - vaulted_method
+      - merchant_initiated_charge
+      - status_query
+      - webhook
+      - refund
+      - requires_customer_action
+      properties:
+        hosted_setup:
+          type: boolean
+        vaulted_method:
+          type: boolean
+        merchant_initiated_charge:
+          type: boolean
+        status_query:
+          type: boolean
+        webhook:
+          type: boolean
+        refund:
+          type: boolean
+        requires_customer_action:
+          type: boolean
+    Currency:
+      type: string
+      enum:
+      - TWD
+    PaymentWebhookResponse:
+      type: object
+      required:
+      - accepted
+      - duplicate
+      properties:
+        accepted:
+          type: boolean
+        duplicate:
+          type: boolean
+  parameters:
+    OrgId:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 200
+    PaymentMethodId:
+      name: methodId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PaymentProvider:
+      name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-z0-9_]{1,32}$
+    IfMatchVersion:
+      name: If-Match
+      in: header
+      required: true
+      description: Quoted or unquoted numeric automatic top-up policy version; use
+        0 to create the first policy.
+      schema:
+        type: string
+        pattern: ^"?[0-9]+"?$
+    PaymentIntentId:
+      name: intentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable client key used to safely replay a mutation.
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            invalid_claim_token:
+              summary: Non-retryable Claim Token error.
+              value:
+                error:
+                  code: invalid_claim_token
+                  message: Invalid claim token
+                  retryable: false
+                  resolution_action: scan_or_enter_a_valid_claim_token
+            claim_service_unavailable:
+              summary: Retryable Claim Token service error.
+              value:
+                error:
+                  code: service_unavailable
+                  message: Claim resolve is temporarily unavailable
+                  retryable: true
+                  resolution_action: retry_later
+            oidc_user_not_provisioned:
+              summary: Unknown SSO user.
+              value:
+                error:
+                  code: user_not_provisioned
+                  message: SSO user is not provisioned in account manager
+            oidc_disabled:
+              summary: OIDC login disabled.
+              value:
+                error:
+                  code: oidc_disabled
+                  message: OIDC authentication is disabled
+            invalid_oidc_state:
+              summary: Invalid or replayed OIDC state.
+              value:
+                error:
+                  code: invalid_oidc_state
+                  message: Invalid OIDC login state
+            invalid_oidc_token:
+              summary: Invalid OIDC token.
+              value:
+                error:
+                  code: invalid_oidc_token
+                  message: Invalid OIDC token
+            unverified_oidc_email:
+              summary: Unverified OIDC email.
+              value:
+                error:
+                  code: unverified_oidc_email
+                  message: OIDC email is not verified
+            oidc_provider_misconfigured:
+              summary: OIDC provider misconfigured.
+              value:
+                error:
+                  code: oidc_provider_misconfigured
+                  message: OIDC provider is misconfigured
