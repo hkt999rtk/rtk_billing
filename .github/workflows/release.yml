@@ -1,0 +1,109 @@
+name: Release Bundle
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional additional image tag."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-image:
+    name: Publish LKE image
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Select image tags
+        id: image
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY}/billing"
+          short_sha="${GITHUB_SHA::12}"
+          tags=("$image:sha-$short_sha")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tags+=("$image:$GITHUB_REF_NAME")
+          elif [[ -n "${INPUT_VERSION:-}" ]]; then
+            tags+=("$image:$INPUT_VERSION")
+          fi
+          {
+            printf 'image=%s\n' "$image"
+            printf 'short_sha=%s\n' "$short_sha"
+            printf 'tags<<EOF\n'
+            printf '%s\n' "${tags[@]}"
+            printf 'EOF\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build smoke image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t "${{ steps.image.outputs.image }}:local-smoke" -f Dockerfile .
+          container_id="$(docker create "${{ steps.image.outputs.image }}:local-smoke")"
+          trap 'docker rm -f "$container_id" >/dev/null' EXIT
+          docker export "$container_id" > /tmp/billing-image.tar
+          tar -tf /tmp/billing-image.tar > /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing' /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing-payment-worker' /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing-payment-simulator' /tmp/billing-image-files.txt
+          grep -q '^migrations/' /tmp/billing-image-files.txt
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Write image manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/lke-image
+          cat > .artifacts/lke-image/image-manifest.json <<JSON
+          {
+            "schema": "rtk-service-image/v1",
+            "repository": "${GITHUB_REPOSITORY}",
+            "image": "${{ steps.image.outputs.image }}",
+            "source_commit": "${GITHUB_SHA}",
+            "primary_tag": "sha-${{ steps.image.outputs.short_sha }}"
+          }
+          JSON
+          cat .artifacts/lke-image/image-manifest.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload image manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-manifest
+          path: .artifacts/lke-image/image-manifest.json
+          if-no-files-found: error

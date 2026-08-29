@@ -1,0 +1,69 @@
+name: Image CI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/image-ci.yml"
+      - ".github/workflows/release.yml"
+      - "Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "migrations/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build deployable image
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local image
+        run: docker build --pull -t local/billing:ci -f Dockerfile .
+
+      - name: Smoke test image
+        run: |
+          set -euo pipefail
+          container_id="$(docker create local/billing:ci)"
+          trap 'docker rm -f "$container_id" >/dev/null' EXIT
+          docker export "$container_id" > /tmp/billing-image.tar
+          tar -tf /tmp/billing-image.tar > /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing' /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing-payment-worker' /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing-payment-simulator' /tmp/billing-image-files.txt
+          grep -q '^migrations/' /tmp/billing-image-files.txt
+
+      - name: Write image build metadata
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/image-ci
+          cat > .artifacts/image-ci/image-build.json <<JSON
+          {
+            "schema": "rtk-image-build/v1",
+            "service": "billing",
+            "repository": "${GITHUB_REPOSITORY}",
+            "source_commit": "${GITHUB_SHA}",
+            "dockerfile": "Dockerfile",
+            "local_image": "local/billing:ci",
+            "platform": "linux/amd64",
+            "smoke_test": "passed"
+          }
+          JSON
+          cat .artifacts/image-ci/image-build.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload image build metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-build-metadata
+          path: .artifacts/image-ci/
+          if-no-files-found: error
