@@ -29,8 +29,4 @@ jobs:
       TEST_DATABASE_URL: postgres://billing:billing@127.0.0.1:5432/billing_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
       - run: go test ./...
