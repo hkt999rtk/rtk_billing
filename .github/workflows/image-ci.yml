@@ -37,10 +37,11 @@ jobs:
           container_id="$(docker create local/billing:ci)"
           trap 'docker rm -f "$container_id" >/dev/null' EXIT
           docker export "$container_id" > /tmp/billing-image.tar
-          tar -tf /tmp/billing-image.tar | grep -qx 'rtk-billing'
-          tar -tf /tmp/billing-image.tar | grep -qx 'rtk-billing-payment-worker'
-          tar -tf /tmp/billing-image.tar | grep -qx 'rtk-billing-payment-simulator'
-          tar -tf /tmp/billing-image.tar | grep -q '^migrations/'
+          tar -tf /tmp/billing-image.tar > /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing' /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing-payment-worker' /tmp/billing-image-files.txt
+          grep -qx 'rtk-billing-payment-simulator' /tmp/billing-image-files.txt
+          grep -q '^migrations/' /tmp/billing-image-files.txt
 
       - name: Write image build metadata
         run: |
