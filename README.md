@@ -38,6 +38,18 @@ internal pricing/access and debit routes use their separate credentials.
 Provider webhook and simulator callback routes authenticate their signed
 payloads instead of accepting a bearer token.
 
+For local/staging NewebPay wire-contract testing, `cmd/payment-simulator`
+optionally exposes synthetic MPG and Query endpoints when
+`NEWEBPAY_MERCHANT_ID`, `NEWEBPAY_HASH_KEY`, `NEWEBPAY_HASH_IV`, and a
+fixed `PAYMENT_SIMULATOR_NEWEBPAY_NOTIFY_URL`, plus a 32-character
+`PAYMENT_SIMULATOR_ADMIN_TOKEN` are configured. It includes Cancel and Close
+operations and a protected `/admin/newebpay` console. Billing may point the
+real NewebPay adapter at that process with `NEWEBPAY_SIMULATOR_BASE_URL`.
+The override is rejected for production, and the simulator never moves money.
+When NewebPay is enabled, `NEWEBPAY_NOTIFY_URL` and `NEWEBPAY_RETURN_URL` are
+fixed server configuration. The customer UI receives only an encrypted hosted
+POST action; PAN, expiry, and CVV are entered solely on the provider page.
+
 ## Test
 
 ```sh

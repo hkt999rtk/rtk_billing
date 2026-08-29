@@ -44,6 +44,10 @@ type integrationAPI struct {
 }
 
 func newIntegrationAPI(t *testing.T, providers ...payment.PaymentProvider) integrationAPI {
+	return newIntegrationAPIWithOptions(t, nil, providers...)
+}
+
+func newIntegrationAPIWithOptions(t *testing.T, configure func(*PaymentAPIOptions), providers ...payment.PaymentProvider) integrationAPI {
 	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if databaseURL == "" {
@@ -74,6 +78,7 @@ func newIntegrationAPI(t *testing.T, providers ...payment.PaymentProvider) integ
 			pricing_plan_versions,
 			billing_profiles,
 			payment_simulator_operations,
+			payment_simulator_newebpay_transactions,
 			payment_simulator_setup_sessions,
 			payment_reconciliation_jobs,
 			payment_webhook_inbox,
@@ -103,7 +108,7 @@ func newIntegrationAPI(t *testing.T, providers ...payment.PaymentProvider) integ
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := server.ConfigurePayments(PaymentAPIOptions{
+	paymentOptions := PaymentAPIOptions{
 		Store:              paymentstore.New(db),
 		Providers:          providers,
 		ReferenceProtector: protector,
@@ -112,7 +117,11 @@ func newIntegrationAPI(t *testing.T, providers ...payment.PaymentProvider) integ
 		Now: func() time.Time {
 			return time.Date(2026, 8, 17, 9, 30, 0, 0, time.UTC)
 		},
-	}); err != nil {
+	}
+	if configure != nil {
+		configure(&paymentOptions)
+	}
+	if err := server.ConfigurePayments(paymentOptions); err != nil {
 		t.Fatal(err)
 	}
 	billingStore := billingstore.New(db)

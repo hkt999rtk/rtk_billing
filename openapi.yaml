@@ -121,6 +121,14 @@ paths:
       responses:
         '200':
           description: Tenant billing summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  forecast:
+                    $ref: '#/components/schemas/BillingForecast'
         '403':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
@@ -143,6 +151,14 @@ paths:
       responses:
         '200':
           description: Priced usage lines.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  fact_count: { type: integer, minimum: 0 }
+                  usage_through: { type: string, format: date-time, nullable: true }
         '403':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
@@ -681,6 +697,36 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/topups/checkout:
+    post:
+      tags: [Billing and Payments]
+      operationId: createHostedTopUp
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PAYMENT-INTENT-001
+      - REQ-AM-PAYMENT-PROVIDER-001
+      - REQ-AM-PAYMENT-AUTHZ-001
+      security: [{ billingServiceAuth: [] }]
+      summary: Persist a manual top-up intent and return a provider-hosted POST action.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HostedTopUpRequest' }
+      responses:
+        '200':
+          description: Existing identical intent and a refreshed payment action.
+          content: { application/json: { schema: { $ref: '#/components/schemas/HostedTopUpResponse' } } }
+        '202':
+          description: Intent persisted before returning the hosted payment action.
+          content: { application/json: { schema: { $ref: '#/components/schemas/HostedTopUpResponse' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /v1/orgs/{orgId}/payment-intents:
     get:
       tags:
@@ -969,6 +1015,18 @@ components:
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    BillingForecast:
+      type: object
+      required: [state, observation_days, confidence, calculated_at]
+      properties:
+        state: { type: string, enum: [available, unavailable] }
+        projected_period_total_minor: { type: integer, format: int64, nullable: true }
+        projected_remaining_minor: { type: integer, format: int64, nullable: true }
+        average_daily_cost_minor: { type: integer, format: int64, nullable: true }
+        observation_days: { type: integer, minimum: 0 }
+        usage_through: { type: string, format: date-time, nullable: true }
+        confidence: { type: string, enum: [low, medium] }
+        calculated_at: { type: string, format: date-time }
     PutAutoTopUpRequest:
       type: object
       additionalProperties: false
@@ -1121,6 +1179,22 @@ components:
           $ref: '#/components/schemas/PaymentIntent'
         duplicate:
           type: boolean
+    HostedTopUpResponse:
+      allOf:
+      - $ref: '#/components/schemas/ManualTopUpResponse'
+      - type: object
+        required: [payment_action]
+        properties:
+          payment_action:
+            type: object
+            additionalProperties: false
+            required: [method, url, fields]
+            properties:
+              method: { type: string, const: POST }
+              url: { type: string, format: uri }
+              fields:
+                type: object
+                additionalProperties: { type: string }
     InternalBillingDebitResponse:
       type: object
       required:
@@ -1314,6 +1388,14 @@ components:
         payment_method_id:
           type: string
           format: uuid
+    HostedTopUpRequest:
+      type: object
+      additionalProperties: false
+      required: [amount_minor, currency, provider]
+      properties:
+        amount_minor: { $ref: '#/components/schemas/MoneyMinor' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        provider: { type: string, pattern: '^[a-z0-9_]{1,32}$' }
     PaymentMethodSetupRequest:
       type: object
       additionalProperties: false
@@ -1661,6 +1743,7 @@ components:
       type: object
       required:
       - hosted_setup
+      - hosted_charge
       - vaulted_method
       - merchant_initiated_charge
       - status_query
@@ -1669,6 +1752,8 @@ components:
       - requires_customer_action
       properties:
         hosted_setup:
+          type: boolean
+        hosted_charge:
           type: boolean
         vaulted_method:
           type: boolean

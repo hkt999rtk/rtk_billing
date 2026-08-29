@@ -65,6 +65,7 @@ type LedgerEntry struct {
 
 type ProviderCapabilities struct {
 	HostedSetup             bool `json:"hosted_setup"`
+	HostedCharge            bool `json:"hosted_charge"`
 	VaultedMethod           bool `json:"vaulted_method"`
 	MerchantInitiatedCharge bool `json:"merchant_initiated_charge"`
 	StatusQuery             bool `json:"status_query"`

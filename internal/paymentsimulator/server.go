@@ -25,26 +25,38 @@ import (
 const signatureHeader = "X-Payment-Simulator-Signature"
 
 type Config struct {
-	Environment    string
-	PublicBaseURL  string
-	CallbackURL    string
-	SharedSecret   string
-	CallbackSecret string
-	Retention      time.Duration
-	HTTPClient     *http.Client
-	Now            func() time.Time
+	Environment        string
+	PublicBaseURL      string
+	CallbackURL        string
+	SharedSecret       string
+	CallbackSecret     string
+	Retention          time.Duration
+	HTTPClient         *http.Client
+	Now                func() time.Time
+	RunID              string
+	NewebPayMerchantID string
+	NewebPayHashKey    string
+	NewebPayHashIV     string
+	NewebPayNotifyURL  string
+	AdminToken         string
 }
 
 type Server struct {
-	db             *pgxpool.Pool
-	publicBaseURL  string
-	callbackURL    string
-	sharedSecret   []byte
-	callbackSecret []byte
-	retention      time.Duration
-	http           *http.Client
-	now            func() time.Time
-	mux            *http.ServeMux
+	db                 *pgxpool.Pool
+	publicBaseURL      string
+	callbackURL        string
+	sharedSecret       []byte
+	callbackSecret     []byte
+	retention          time.Duration
+	http               *http.Client
+	now                func() time.Time
+	mux                *http.ServeMux
+	runID              string
+	newebPayMerchantID string
+	newebPayHashKey    string
+	newebPayHashIV     string
+	newebPayNotifyURL  string
+	adminToken         string
 }
 
 type setupRequest struct {
@@ -130,6 +142,20 @@ func New(db *pgxpool.Pool, config Config) (*Server, error) {
 		db: db, publicBaseURL: publicURL, callbackURL: callbackURL,
 		sharedSecret: []byte(strings.TrimSpace(config.SharedSecret)), callbackSecret: []byte(strings.TrimSpace(config.CallbackSecret)),
 		retention: config.Retention, http: config.HTTPClient, now: config.Now, mux: http.NewServeMux(),
+		runID: strings.TrimSpace(config.RunID), newebPayMerchantID: strings.TrimSpace(config.NewebPayMerchantID),
+		newebPayHashKey: config.NewebPayHashKey, newebPayHashIV: config.NewebPayHashIV, adminToken: strings.TrimSpace(config.AdminToken),
+		newebPayNotifyURL: strings.TrimSpace(config.NewebPayNotifyURL),
+	}
+	if s.runID == "" {
+		s.runID = "local"
+	}
+	if s.newebPayMerchantID != "" && (len(s.newebPayHashKey) != 32 || len(s.newebPayHashIV) != 16 || len(s.adminToken) < 32 || s.newebPayNotifyURL == "") {
+		return nil, errors.New("NewebPay simulator requires a fixed NotifyURL, 32-byte HashKey, 16-byte HashIV, and 32-character admin token")
+	}
+	if s.newebPayMerchantID != "" {
+		if _, err := validBaseURL(s.newebPayNotifyURL); err != nil {
+			return nil, fmt.Errorf("NewebPay simulator NotifyURL: %w", err)
+		}
 	}
 	s.routes()
 	return s, nil
@@ -147,6 +173,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /internal/v1/refunds", s.authenticated(http.HandlerFunc(s.refund)))
 	s.mux.HandleFunc("GET /setup/{token}", s.showSetup)
 	s.mux.HandleFunc("POST /setup/{token}/complete", s.completeSetup)
+	if s.newebPayMerchantID != "" {
+		s.newebPayRoutes()
+	}
 }
 
 func (s *Server) authenticated(next http.Handler) http.Handler {

@@ -60,3 +60,30 @@ func TestCompletionPageContainsNoPaymentFields(t *testing.T) {
 		t.Fatalf("unsafe completion page: %s", body)
 	}
 }
+
+func TestNewebPaySimulatorAdminRequiresConstantTimeBearerToken(t *testing.T) {
+	s := &Server{adminToken: strings.Repeat("a", 32)}
+	handler := s.newebPayAdmin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	for _, token := range []string{"", strings.Repeat("b", 32), strings.Repeat("a", 31)} {
+		request := httptest.NewRequest(http.MethodGet, "/internal/admin/newebpay/transactions", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("token length=%d status=%d", len(token), response.Code)
+		}
+	}
+}
+
+func TestNewebPayHostedAndAdminPagesAreExplicitlySyntheticAndCardSafe(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := newebPayPaymentPage.Execute(&rendered, map[string]any{"Action": "/test", "Order": "order", "Amount": 30}); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"hosted": rendered.String(), "admin": newebPayAdminHTML} {
+		lower := strings.ToLower(body)
+		if !strings.Contains(body, "TEST") || strings.Contains(lower, "autocomplete=\"cc-number\"") || strings.Contains(lower, "cvv") {
+			t.Fatalf("%s page is not safely marked: %s", name, body)
+		}
+	}
+}

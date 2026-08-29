@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -70,14 +71,27 @@ func (s *Server) requireBilling(c *gin.Context) bool {
 }
 
 type billingUsageResponse struct {
-	PeriodStart time.Time             `json:"period_start"`
-	PeriodEnd   time.Time             `json:"period_end"`
-	Currency    billing.Currency      `json:"currency"`
-	Subtotal    int64                 `json:"subtotal_minor"`
-	Tax         int64                 `json:"tax_minor"`
-	Total       int64                 `json:"total_minor"`
-	Lines       []billing.InvoiceLine `json:"lines"`
-	Estimated   bool                  `json:"estimated"`
+	PeriodStart  time.Time             `json:"period_start"`
+	PeriodEnd    time.Time             `json:"period_end"`
+	Currency     billing.Currency      `json:"currency"`
+	Subtotal     int64                 `json:"subtotal_minor"`
+	Tax          int64                 `json:"tax_minor"`
+	Total        int64                 `json:"total_minor"`
+	Lines        []billing.InvoiceLine `json:"lines"`
+	Estimated    bool                  `json:"estimated"`
+	FactCount    int                   `json:"fact_count"`
+	UsageThrough *time.Time            `json:"usage_through,omitempty"`
+}
+
+type billingForecast struct {
+	State                     string     `json:"state"`
+	ProjectedPeriodTotalMinor *int64     `json:"projected_period_total_minor"`
+	ProjectedRemainingMinor   *int64     `json:"projected_remaining_minor"`
+	AverageDailyCostMinor     *int64     `json:"average_daily_cost_minor"`
+	ObservationDays           int        `json:"observation_days"`
+	UsageThrough              *time.Time `json:"usage_through,omitempty"`
+	Confidence                string     `json:"confidence"`
+	CalculatedAt              time.Time  `json:"calculated_at"`
 }
 
 func billingUsageContractLines(usage billingUsageResponse, pricingVersionID string) []gin.H {
@@ -124,6 +138,13 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	if err != nil {
 		return billingUsageResponse{}, err
 	}
+	var usageThrough *time.Time
+	for _, fact := range facts {
+		if usageThrough == nil || fact.WindowEnd.After(*usageThrough) {
+			value := fact.WindowEnd.UTC()
+			usageThrough = &value
+		}
+	}
 	draft, err := billing.BuildDraftInvoice(billing.Invoice{
 		OrganizationID: organizationID, PricingVersionID: pricing.ID, Currency: billing.CurrencyTWD,
 		PeriodStart: start, PeriodEnd: end, Recipient: profile,
@@ -132,7 +153,45 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 		return billingUsageResponse{}, err
 	}
 	return billingUsageResponse{PeriodStart: start, PeriodEnd: end, Currency: draft.Currency,
-		Subtotal: draft.SubtotalMinor, Tax: draft.TaxMinor, Total: draft.TotalMinor, Lines: draft.Lines, Estimated: true}, nil
+		Subtotal: draft.SubtotalMinor, Tax: draft.TaxMinor, Total: draft.TotalMinor, Lines: draft.Lines, Estimated: true,
+		FactCount: len(facts), UsageThrough: usageThrough}, nil
+}
+
+func forecastBillingUsage(usage billingUsageResponse, calculatedAt time.Time) billingForecast {
+	out := billingForecast{State: "unavailable", UsageThrough: usage.UsageThrough, Confidence: "low", CalculatedAt: calculatedAt.UTC()}
+	if usage.UsageThrough == nil || usage.FactCount == 0 || usage.Total <= 0 || usage.UsageThrough.After(calculatedAt) {
+		return out
+	}
+	elapsed := usage.UsageThrough.Sub(usage.PeriodStart)
+	period := usage.PeriodEnd.Sub(usage.PeriodStart)
+	if elapsed < 24*time.Hour || period <= 0 || elapsed > period {
+		return out
+	}
+	observationDays := int(elapsed / (24 * time.Hour))
+	projected, ok := checkedRatio(usage.Total, int64(period), int64(elapsed))
+	if !ok || projected < usage.Total {
+		return out
+	}
+	remaining := projected - usage.Total
+	average, ok := checkedRatio(usage.Total, int64(24*time.Hour), int64(elapsed))
+	if !ok || average <= 0 {
+		return out
+	}
+	out.State, out.ObservationDays = "available", observationDays
+	out.ProjectedPeriodTotalMinor, out.ProjectedRemainingMinor, out.AverageDailyCostMinor = &projected, &remaining, &average
+	if observationDays >= 7 {
+		out.Confidence = "medium"
+	}
+	return out
+}
+
+func checkedRatio(value, numerator, denominator int64) (int64, bool) {
+	if value < 0 || numerator < 0 || denominator <= 0 {
+		return 0, false
+	}
+	result := new(big.Int).Mul(big.NewInt(value), big.NewInt(numerator))
+	result.Quo(result, big.NewInt(denominator))
+	return result.Int64(), result.IsInt64()
 }
 
 func (s *Server) getBillingSummary(c *gin.Context) {
@@ -157,15 +216,12 @@ func (s *Server) getBillingSummary(c *gin.Context) {
 	if len(page.Invoices) > 0 {
 		latest = page.Invoices[0]
 	}
-	runway := billing.Runway{State: "unavailable", LookbackDays: 30, Confidence: "low", CalculatedAt: s.billing.now().UTC()}
-	days := int64(s.billing.now().UTC().Sub(usage.PeriodStart).Hours()/24) + 1
-	if usage.Total > 0 && days > 0 {
-		average := usage.Total / days
-		if average > 0 {
-			projected := account.AvailableBalanceMinor / average
-			runway.State, runway.ProjectedDays, runway.AverageDailyCostMinor = "available", &projected, &average
-			runway.Confidence = "low"
-		}
+	generatedAt := s.billing.now().UTC()
+	forecast := forecastBillingUsage(usage, generatedAt)
+	runway := billing.Runway{State: "unavailable", LookbackDays: forecast.ObservationDays, Confidence: forecast.Confidence, CalculatedAt: generatedAt}
+	if forecast.State == "available" && forecast.AverageDailyCostMinor != nil && *forecast.AverageDailyCostMinor > 0 {
+		projected := account.AvailableBalanceMinor / *forecast.AverageDailyCostMinor
+		runway.State, runway.ProjectedDays, runway.AverageDailyCostMinor = "available", &projected, forecast.AverageDailyCostMinor
 	}
 	autoTopUp := gin.H{"state": "unconfigured"}
 	if policy, err := s.payments.store.GetAutoTopUpPolicy(c.Request.Context(), account.ID); err == nil {
@@ -180,9 +236,8 @@ func (s *Server) getBillingSummary(c *gin.Context) {
 		writeBillingError(c, err)
 		return
 	}
-	generatedAt := s.billing.now().UTC()
 	currentPeriod := gin.H{"period_start": usage.PeriodStart, "period_end": usage.PeriodEnd, "estimated_cost_minor": usage.Total, "amount_due_minor": 0, "next_invoice_at": usage.PeriodEnd, "currency": usage.Currency, "total_minor": usage.Total, "lines": usage.Lines, "estimated": true}
-	c.JSON(http.StatusOK, gin.H{"account": account, "current_period": currentPeriod, "auto_topup": autoTopUp, "runway": runway, "latest_invoice": latest, "generated_at": generatedAt, "calculated_at": generatedAt})
+	c.JSON(http.StatusOK, gin.H{"account": account, "current_period": currentPeriod, "forecast": forecast, "auto_topup": autoTopUp, "runway": runway, "latest_invoice": latest, "generated_at": generatedAt, "calculated_at": generatedAt})
 }
 
 func (s *Server) getBillingUsage(c *gin.Context) {
@@ -221,7 +276,7 @@ func (s *Server) getBillingUsage(c *gin.Context) {
 	if pricing, pricingErr := s.billing.store.ActivePricingVersion(c.Request.Context(), usage.PeriodStart, billing.CurrencyTWD); pricingErr == nil {
 		pricingVersionID = pricing.ID
 	}
-	c.JSON(http.StatusOK, gin.H{"usage": billingUsageContractLines(usage, pricingVersionID), "period_start": usage.PeriodStart, "period_end": usage.PeriodEnd, "currency": usage.Currency, "subtotal_minor": usage.Subtotal, "tax_minor": usage.Tax, "total_minor": usage.Total, "lines": usage.Lines, "estimated": usage.Estimated})
+	c.JSON(http.StatusOK, gin.H{"usage": billingUsageContractLines(usage, pricingVersionID), "period_start": usage.PeriodStart, "period_end": usage.PeriodEnd, "currency": usage.Currency, "subtotal_minor": usage.Subtotal, "tax_minor": usage.Tax, "total_minor": usage.Total, "lines": usage.Lines, "estimated": usage.Estimated, "fact_count": usage.FactCount, "usage_through": usage.UsageThrough})
 }
 
 func (s *Server) listBillingInvoices(c *gin.Context) {

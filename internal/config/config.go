@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -22,6 +23,14 @@ type Config struct {
 	SimulatorCallbackSecret       string
 	SimulatorRunID                string
 	SimulatorScenario             string
+	NewebPayEnabled               bool
+	NewebPayEnvironment           string
+	NewebPayMerchantID            string
+	NewebPayHashKey               string
+	NewebPayHashIV                string
+	NewebPayEndpointBaseURL       string
+	NewebPayNotifyURL             string
+	NewebPayReturnURL             string
 	RequestTimeout                time.Duration
 }
 
@@ -38,7 +47,12 @@ func Load() (Config, error) {
 		SimulatorSharedSecret:         strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_SHARED_SECRET")),
 		SimulatorCallbackSecret:       strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_CALLBACK_SECRET")),
 		SimulatorRunID:                env("PAYMENT_SIMULATOR_RUN_ID", "local"), SimulatorScenario: env("PAYMENT_SIMULATOR_SCENARIO", "success"),
-		RequestTimeout: 15 * time.Second,
+		NewebPayEnabled: strings.EqualFold(env("NEWEBPAY_ENABLED", "false"), "true"), NewebPayEnvironment: env("NEWEBPAY_ENVIRONMENT", "sandbox"),
+		NewebPayMerchantID: strings.TrimSpace(os.Getenv("NEWEBPAY_MERCHANT_ID")), NewebPayHashKey: os.Getenv("NEWEBPAY_HASH_KEY"), NewebPayHashIV: os.Getenv("NEWEBPAY_HASH_IV"),
+		NewebPayEndpointBaseURL: strings.TrimSpace(os.Getenv("NEWEBPAY_SIMULATOR_BASE_URL")),
+		NewebPayNotifyURL:       strings.TrimSpace(os.Getenv("NEWEBPAY_NOTIFY_URL")),
+		NewebPayReturnURL:       strings.TrimSpace(os.Getenv("NEWEBPAY_RETURN_URL")),
+		RequestTimeout:          15 * time.Second,
 	}
 	if cfg.DatabaseURL == "" || len(cfg.ServiceToken) < 32 || len(cfg.InternalToken) < 32 {
 		return Config{}, errors.New("DATABASE_URL plus BILLING_SERVICE_TOKEN and BILLING_INTERNAL_TOKEN of at least 32 characters are required")
@@ -60,7 +74,31 @@ func Load() (Config, error) {
 			return Config{}, errors.New("payment simulator requires base URL, reference encryption key, and 32-character shared and callback secrets")
 		}
 	}
+	if cfg.NewebPayEnabled {
+		if cfg.NewebPayMerchantID == "" || len(cfg.NewebPayHashKey) != 32 || len(cfg.NewebPayHashIV) != 16 {
+			return Config{}, errors.New("enabled NewebPay requires MerchantID, 32-byte HashKey, and 16-byte HashIV")
+		}
+		if cfg.NewebPayEndpointBaseURL != "" {
+			if err := ValidateSimulatorEnvironment(cfg.Environment); err != nil {
+				return Config{}, err
+			}
+			if strings.EqualFold(cfg.NewebPayEnvironment, "production") {
+				return Config{}, errors.New("NewebPay production endpoint override is forbidden")
+			}
+		}
+		if !validPaymentURL(cfg.NewebPayNotifyURL, cfg.Environment) || !validPaymentURL(cfg.NewebPayReturnURL, cfg.Environment) {
+			return Config{}, errors.New("enabled NewebPay requires fixed absolute notify and return URLs; production URLs must use HTTPS")
+		}
+	}
 	return cfg, nil
+}
+
+func validPaymentURL(value, environment string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	return !strings.EqualFold(environment, "production") && !strings.EqualFold(environment, "prod") || parsed.Scheme == "https"
 }
 
 func ValidateSimulatorEnvironment(value string) error {
