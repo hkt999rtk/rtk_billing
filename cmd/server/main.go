@@ -15,6 +15,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentcrypto"
+	"github.com/hkt999rtk/rtk_billing/internal/paymentprovider/newebpay"
 	paymentSimulator "github.com/hkt999rtk/rtk_billing/internal/paymentprovider/simulator"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
 )
@@ -41,9 +42,16 @@ func main() {
 	}
 
 	paymentStore := paymentstore.New(db)
-	providers := make([]payment.PaymentProvider, 0, 1)
+	providers := make([]payment.PaymentProvider, 0, 2)
 	if cfg.SimulatorEnabled {
 		provider, providerErr := paymentSimulator.New(paymentSimulator.Config{BaseURL: cfg.SimulatorBaseURL, SharedSecret: cfg.SimulatorSharedSecret, RunID: cfg.SimulatorRunID, Scenario: cfg.SimulatorScenario, Timeout: cfg.RequestTimeout})
+		if providerErr != nil {
+			log.Fatal(providerErr)
+		}
+		providers = append(providers, provider)
+	}
+	if cfg.NewebPayEnabled {
+		provider, providerErr := newebpay.New(newebpay.Config{Enabled: true, Environment: cfg.NewebPayEnvironment, MerchantID: cfg.NewebPayMerchantID, HashKey: cfg.NewebPayHashKey, HashIV: cfg.NewebPayHashIV, EndpointBaseURL: cfg.NewebPayEndpointBaseURL, Timeout: cfg.RequestTimeout})
 		if providerErr != nil {
 			log.Fatal(providerErr)
 		}
@@ -56,7 +64,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	if err := server.ConfigurePayments(api.PaymentAPIOptions{Store: paymentStore, Providers: providers, ReferenceProtector: protector, BillingDebitToken: cfg.BillingDebitToken, BillingDebitSource: cfg.BillingDebitSource, SimulatorCallbackSecret: cfg.SimulatorCallbackSecret}); err != nil {
+	if err := server.ConfigurePayments(api.PaymentAPIOptions{Store: paymentStore, Providers: providers, ReferenceProtector: protector, BillingDebitToken: cfg.BillingDebitToken, BillingDebitSource: cfg.BillingDebitSource, SimulatorCallbackSecret: cfg.SimulatorCallbackSecret, HostedChargeNotifyURL: cfg.NewebPayNotifyURL, HostedChargeReturnURL: cfg.NewebPayReturnURL}); err != nil {
 		log.Fatal(err)
 	}
 	billingStore := billingstore.New(db)

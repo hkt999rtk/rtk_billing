@@ -639,6 +639,101 @@ func TestCustomerPaymentReadsManualTopUpAndPolicyDisable(t *testing.T) {
 	}
 }
 
+func TestHostedTopUpPersistsIntentWithoutVaultedMethod(t *testing.T) {
+	env := newPaymentIntegrationEnv(t)
+	fixture := createPaymentFixture(t, env, "hosted-topup", 20000, 10000, 50000)
+	input := CreateHostedTopUpInput{
+		AccountID: fixture.account.ID, Provider: "newebpay", AmountMinor: 30000, Currency: payment.CurrencyTWD,
+		IdempotencyKey: "hosted-1", CorrelationID: "request-hosted-1", Now: testTime(15, 0),
+	}
+	created, err := env.store.CreateHostedTopUp(context.Background(), input)
+	if err != nil || created.Duplicate || created.Intent.PaymentMethodID != "" || created.Intent.State != payment.PaymentIntentStateProcessing || !strings.HasPrefix(created.Intent.MerchantOrderReference, "rtk_") || len(created.Intent.MerchantOrderReference) != 30 {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	duplicate, err := env.store.CreateHostedTopUp(context.Background(), input)
+	if err != nil || !duplicate.Duplicate || duplicate.Intent.ID != created.Intent.ID {
+		t.Fatalf("duplicate=%+v err=%v", duplicate, err)
+	}
+	conflicting := input
+	conflicting.AmountMinor++
+	if _, err := env.store.CreateHostedTopUp(context.Background(), conflicting); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("idempotency conflict err=%v", err)
+	}
+	invalid := input
+	invalid.IdempotencyKey = "hosted-invalid"
+	invalid.AmountMinor = 0
+	if _, err := env.store.CreateHostedTopUp(context.Background(), invalid); err == nil {
+		t.Fatal("invalid hosted amount passed")
+	}
+	var methodID *string
+	if err := env.db.QueryRow(context.Background(), `SELECT payment_method_id::text FROM payment_intents WHERE id=$1`, created.Intent.ID).Scan(&methodID); err != nil || methodID != nil {
+		t.Fatalf("payment_method_id=%v err=%v", methodID, err)
+	}
+	var jobs int
+	if err := env.db.QueryRow(context.Background(), `SELECT count(*)::int FROM payment_reconciliation_jobs WHERE intent_id=$1 AND reason='unknown'`, created.Intent.ID).Scan(&jobs); err != nil || jobs != 1 {
+		t.Fatalf("reconciliation jobs=%d err=%v", jobs, err)
+	}
+	if _, err := env.db.Exec(context.Background(), `UPDATE commercial_accounts SET state='closed' WHERE id=$1`, fixture.account.ID); err != nil {
+		t.Fatal(err)
+	}
+	closed := input
+	closed.IdempotencyKey = "hosted-closed"
+	closed.Now = time.Time{}
+	if _, err := env.store.CreateHostedTopUp(context.Background(), closed); !errors.Is(err, ErrAccountClosed) {
+		t.Fatalf("closed account err=%v", err)
+	}
+}
+
+func TestHostedTopUpRollsBackPersistenceFailures(t *testing.T) {
+	env := newPaymentIntegrationEnv(t)
+	fixture := createPaymentFixture(t, env, "hosted-persistence-failure", 20000, 10000, 50000)
+	ctx := context.Background()
+	if _, err := env.db.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION payment_test_reject_insert() RETURNS trigger
+		LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic insert failure'; END $$
+	`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = env.db.Exec(context.Background(), `DROP FUNCTION IF EXISTS payment_test_reject_insert() CASCADE`)
+	})
+	input := CreateHostedTopUpInput{
+		AccountID: fixture.account.ID, Provider: "newebpay", AmountMinor: 30000, Currency: payment.CurrencyTWD,
+		CorrelationID: "request-hosted-failure", Now: testTime(15, 0),
+	}
+	for _, target := range []struct {
+		name, table string
+	}{
+		{name: "intent", table: "payment_intents"},
+		{name: "job", table: "payment_reconciliation_jobs"},
+	} {
+		t.Run(target.name, func(t *testing.T) {
+			trigger := "payment_test_reject_" + target.name
+			if _, err := env.db.Exec(ctx, `CREATE TRIGGER `+trigger+` BEFORE INSERT ON `+target.table+` FOR EACH ROW EXECUTE FUNCTION payment_test_reject_insert()`); err != nil {
+				t.Fatal(err)
+			}
+			input.IdempotencyKey = "hosted-failure-" + target.name
+			if _, err := env.store.CreateHostedTopUp(ctx, input); err == nil {
+				t.Fatalf("%s persistence failure passed", target.name)
+			}
+			if _, err := env.db.Exec(ctx, `DROP TRIGGER `+trigger+` ON `+target.table); err != nil {
+				t.Fatal(err)
+			}
+			var intents int
+			if err := env.db.QueryRow(ctx, `SELECT count(*)::int FROM payment_intents WHERE idempotency_key=$1`, input.IdempotencyKey).Scan(&intents); err != nil || intents != 0 {
+				t.Fatalf("%s rollback intents=%d err=%v", target.name, intents, err)
+			}
+		})
+	}
+
+	missing := input
+	missing.AccountID = "00000000-0000-0000-0000-000000000000"
+	missing.IdempotencyKey = "hosted-missing-account"
+	if _, err := env.store.CreateHostedTopUp(ctx, missing); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing account err=%v", err)
+	}
+}
+
 func TestCustomerStoreRejectsInvalidInputsAndBoundsPages(t *testing.T) {
 	ctx := context.Background()
 	store := New(nil)
@@ -651,6 +746,7 @@ func TestCustomerStoreRejectsInvalidInputsAndBoundsPages(t *testing.T) {
 		{"revoke method", func() error { _, err := store.RevokePaymentMethod(ctx, RevokePaymentMethodInput{}); return err }},
 		{"disable policy", func() error { _, err := store.DisableAutoTopUpPolicy(ctx, DisableAutoTopUpPolicyInput{}); return err }},
 		{"manual topup", func() error { _, err := store.CreateManualTopUp(ctx, CreateManualTopUpInput{}); return err }},
+		{"hosted topup", func() error { _, err := store.CreateHostedTopUp(ctx, CreateHostedTopUpInput{}); return err }},
 		{"list intents", func() error { _, err := store.ListPaymentIntents(ctx, "", 0, 0); return err }},
 		{"get intent", func() error { _, err := store.GetPaymentIntentForAccount(ctx, "", ""); return err }},
 		{"list attempts", func() error { _, err := store.ListPaymentAttempts(ctx, ""); return err }},

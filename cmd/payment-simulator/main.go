@@ -31,6 +31,10 @@ func main() {
 		Environment: env("ENVIRONMENT", "development"), PublicBaseURL: strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_PUBLIC_BASE_URL")),
 		CallbackURL: strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_CALLBACK_URL")), SharedSecret: sharedSecret, CallbackSecret: callbackSecret,
 		Retention: 7 * 24 * time.Hour,
+		RunID:     env("PAYMENT_SIMULATOR_RUN_ID", "local"), NewebPayMerchantID: strings.TrimSpace(os.Getenv("NEWEBPAY_MERCHANT_ID")),
+		NewebPayHashKey: os.Getenv("NEWEBPAY_HASH_KEY"), NewebPayHashIV: os.Getenv("NEWEBPAY_HASH_IV"),
+		NewebPayNotifyURL: strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_NEWEBPAY_NOTIFY_URL")),
+		AdminToken:        strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_ADMIN_TOKEN")),
 	})
 	if err != nil {
 		log.Fatal(err)

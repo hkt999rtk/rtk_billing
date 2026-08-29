@@ -320,7 +320,7 @@ const ledgerColumns = `
 const intentColumns = `
 	id::text, account_id::text, amount_minor, currency, reason,
 	policy_generation, trigger_ledger_entry_id::text, provider,
-	payment_method_id::text, state, idempotency_key, merchant_order_reference,
+	COALESCE(payment_method_id::text, ''), state, idempotency_key, merchant_order_reference,
 	provider_transaction_reference, correlation_id, created_at, updated_at,
 	completed_at`
 

@@ -65,6 +65,22 @@ func TestLoadAllowsProviderDisabledServiceWithOptionalDebitBoundary(t *testing.T
 	}
 }
 
+func TestLoadNewebPayRequiresFixedCheckoutCallbacks(t *testing.T) {
+	setValidEnvironment(t)
+	t.Setenv("NEWEBPAY_ENABLED", "true")
+	t.Setenv("NEWEBPAY_MERCHANT_ID", "MS127874575")
+	t.Setenv("NEWEBPAY_HASH_KEY", strings.Repeat("k", 32))
+	t.Setenv("NEWEBPAY_HASH_IV", strings.Repeat("i", 16))
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "notify and return URLs") {
+		t.Fatalf("missing callbacks err=%v", err)
+	}
+	t.Setenv("NEWEBPAY_NOTIFY_URL", "https://billing.example/v1/payment-webhooks/newebpay")
+	t.Setenv("NEWEBPAY_RETURN_URL", "https://admin.example/console/billing/activity")
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateSimulatorEnvironmentRejectsUnknownValues(t *testing.T) {
 	for _, environment := range []string{"development", "dev", "test", "staging"} {
 		if err := ValidateSimulatorEnvironment(environment); err != nil {

@@ -40,6 +40,7 @@ type paymentPersistence interface {
 	PutAutoTopUpPolicy(context.Context, paymentstore.PutAutoTopUpPolicyInput) (payment.AutoTopUpPolicy, error)
 	DisableAutoTopUpPolicy(context.Context, paymentstore.DisableAutoTopUpPolicyInput) (payment.AutoTopUpPolicy, error)
 	CreateManualTopUp(context.Context, paymentstore.CreateManualTopUpInput) (paymentstore.CreateManualTopUpResult, error)
+	CreateHostedTopUp(context.Context, paymentstore.CreateHostedTopUpInput) (paymentstore.CreateManualTopUpResult, error)
 	ListPaymentIntents(context.Context, string, int, int) (paymentstore.PaymentIntentPage, error)
 	GetPaymentIntentForAccount(context.Context, string, string) (payment.PaymentIntent, error)
 	ListPaymentAttempts(context.Context, string) ([]payment.PaymentAttempt, error)
@@ -59,6 +60,8 @@ type PaymentAPIOptions struct {
 	BillingDebitToken       string
 	BillingDebitSource      string
 	SimulatorCallbackSecret string
+	HostedChargeNotifyURL   string
+	HostedChargeReturnURL   string
 	Now                     func() time.Time
 }
 
@@ -70,6 +73,8 @@ type paymentRuntime struct {
 	billingDebitToken       string
 	billingDebitSource      string
 	simulatorCallbackSecret []byte
+	hostedChargeNotifyURL   string
+	hostedChargeReturnURL   string
 	now                     func() time.Time
 }
 
@@ -106,6 +111,8 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 	options.BillingDebitToken = strings.TrimSpace(options.BillingDebitToken)
 	options.BillingDebitSource = strings.TrimSpace(options.BillingDebitSource)
 	options.SimulatorCallbackSecret = strings.TrimSpace(options.SimulatorCallbackSecret)
+	options.HostedChargeNotifyURL = strings.TrimSpace(options.HostedChargeNotifyURL)
+	options.HostedChargeReturnURL = strings.TrimSpace(options.HostedChargeReturnURL)
 	if (options.BillingDebitToken == "") != (options.BillingDebitSource == "") {
 		return fmt.Errorf("billing debit token and source must be configured together")
 	}
@@ -137,6 +144,8 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 		referenceProtector: options.ReferenceProtector,
 		billingDebitToken:  options.BillingDebitToken, billingDebitSource: options.BillingDebitSource,
 		simulatorCallbackSecret: []byte(options.SimulatorCallbackSecret),
+		hostedChargeNotifyURL:   options.HostedChargeNotifyURL,
+		hostedChargeReturnURL:   options.HostedChargeReturnURL,
 		now:                     options.Now,
 	}
 	return nil
@@ -581,6 +590,80 @@ func (s *Server) createManualTopUp(c *gin.Context) {
 		status = http.StatusOK
 	}
 	c.JSON(status, gin.H{"payment_intent": paymentIntentResponse(result.Intent), "duplicate": result.Duplicate})
+}
+
+type hostedTopUpRequest struct {
+	AmountMinor int64            `json:"amount_minor" binding:"required"`
+	Currency    payment.Currency `json:"currency" binding:"required"`
+	Provider    string           `json:"provider" binding:"required"`
+}
+
+func (s *Server) createHostedTopUp(c *gin.Context) {
+	var request hostedTopUpRequest
+	if !bindPaymentStrict(c, &request) {
+		return
+	}
+	idempotencyKey, ok := requiredIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	providerName := payment.NormalizeProvider(request.Provider)
+	provider, exists := s.payments.providers[providerName]
+	hosted, hostedOK := provider.(payment.HostedChargeProvider)
+	if !exists || !hostedOK || !provider.Capabilities(c.Request.Context()).HostedCharge || s.payments.hostedChargeNotifyURL == "" || s.payments.hostedChargeReturnURL == "" {
+		writeError(c, http.StatusConflict, "PAYMENT_CAPABILITY_UNSUPPORTED", "Hosted card checkout is unavailable")
+		return
+	}
+	account, ok := s.paymentAccount(c)
+	if !ok {
+		return
+	}
+	result, err := s.payments.store.CreateHostedTopUp(c.Request.Context(), paymentstore.CreateHostedTopUpInput{
+		AccountID: account.ID, Provider: providerName, AmountMinor: request.AmountMinor, Currency: request.Currency,
+		IdempotencyKey: idempotencyKey, CorrelationID: paymentRequestID(c, idempotencyKey), Now: s.payments.now(),
+	})
+	if err != nil {
+		writePaymentError(c, err)
+		return
+	}
+	action, err := hosted.CreateHostedCharge(c.Request.Context(), payment.HostedChargeRequest{
+		IntentID: result.Intent.ID, AmountMinor: result.Intent.AmountMinor, Currency: result.Intent.Currency,
+		MerchantOrderReference: result.Intent.MerchantOrderReference, NotifyURL: s.payments.hostedChargeNotifyURL,
+		ReturnURL: s.payments.hostedChargeReturnURL, ItemDescription: "RTK Cloud account top-up",
+	})
+	if err != nil {
+		writePaymentError(c, err)
+		return
+	}
+	if !validHostedChargeAction(action) {
+		writeError(c, http.StatusBadGateway, "PAYMENT_PROVIDER_RESPONSE_INVALID", "Payment provider returned an invalid hosted action")
+		return
+	}
+	if !s.writePaymentAudit(c, "hosted_topup_intent_created", "payment_intent", result.Intent.ID, gin.H{
+		"amount_minor": result.Intent.AmountMinor, "currency": result.Intent.Currency, "provider": providerName, "state": result.Intent.State, "duplicate": result.Duplicate,
+	}) {
+		return
+	}
+	status := http.StatusAccepted
+	if result.Duplicate {
+		status = http.StatusOK
+	}
+	c.JSON(status, gin.H{"payment_intent": paymentIntentResponse(result.Intent), "duplicate": result.Duplicate, "payment_action": gin.H{"method": "POST", "url": action.EndpointURL, "fields": action.Fields}})
+}
+
+func validHostedChargeAction(action payment.HostedChargeResult) bool {
+	parsed, err := url.Parse(action.EndpointURL)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Scheme != "https" && parsed.Scheme != "http") || len(action.Fields) == 0 || len(action.Fields) > 20 {
+		return false
+	}
+	for name, value := range action.Fields {
+		normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "_", ""), "-", ""))
+		if name == "" || len(name) > 64 || len(value) > 1<<20 || strings.Contains(normalized, "cardnumber") || normalized == "pan" || strings.Contains(normalized, "cvv") || strings.Contains(normalized, "cvc") || strings.Contains(normalized, "expiry") {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) listPaymentIntents(c *gin.Context) {

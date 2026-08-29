@@ -2,6 +2,8 @@ package paymentstore
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -200,6 +202,76 @@ type CreateManualTopUpInput struct {
 type CreateManualTopUpResult struct {
 	Intent    payment.PaymentIntent `json:"payment_intent"`
 	Duplicate bool                  `json:"duplicate"`
+}
+
+type CreateHostedTopUpInput struct {
+	AccountID, Provider, IdempotencyKey, CorrelationID string
+	AmountMinor                                        int64
+	Currency                                           payment.Currency
+	Now                                                time.Time
+}
+
+func (s *Store) CreateHostedTopUp(ctx context.Context, in CreateHostedTopUpInput) (CreateManualTopUpResult, error) {
+	in.Provider = payment.NormalizeProvider(in.Provider)
+	if !required(in.AccountID) || !required(in.Provider) || !required(in.IdempotencyKey) || !required(in.CorrelationID) {
+		return CreateManualTopUpResult{}, ErrConflict
+	}
+	if err := payment.ValidateChargeAmount(in.Currency, in.AmountMinor); err != nil {
+		return CreateManualTopUpResult{}, err
+	}
+	if in.Now.IsZero() {
+		in.Now = time.Now().UTC()
+	} else {
+		in.Now = in.Now.UTC()
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return CreateManualTopUpResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	account, err := getAccountForUpdate(ctx, tx, in.AccountID)
+	if err != nil {
+		return CreateManualTopUpResult{}, err
+	}
+	if account.State == payment.AccountStateClosed || account.State == payment.AccountStateSuspended {
+		return CreateManualTopUpResult{}, ErrAccountClosed
+	}
+	if account.Currency != in.Currency {
+		return CreateManualTopUpResult{}, ErrConflict
+	}
+	existing, existingErr := scanIntent(tx.QueryRow(ctx, `SELECT `+intentColumns+` FROM payment_intents WHERE account_id=$1 AND idempotency_key=$2 FOR UPDATE`, in.AccountID, strings.TrimSpace(in.IdempotencyKey)))
+	if existingErr == nil {
+		if existing.AmountMinor != in.AmountMinor || existing.Currency != in.Currency || existing.Provider != in.Provider || existing.PaymentMethodID != "" || existing.Reason != payment.PaymentIntentReasonManualTopUp {
+			return CreateManualTopUpResult{}, ErrIdempotencyConflict
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return CreateManualTopUpResult{}, err
+		}
+		return CreateManualTopUpResult{Intent: existing, Duplicate: true}, nil
+	}
+	if !errors.Is(existingErr, ErrNotFound) {
+		return CreateManualTopUpResult{}, existingErr
+	}
+	random := make([]byte, 13)
+	if _, err := rand.Read(random); err != nil {
+		return CreateManualTopUpResult{}, err
+	}
+	merchantOrderReference := "rtk_" + hex.EncodeToString(random)
+	intent, err := scanIntent(tx.QueryRow(ctx, `
+		INSERT INTO payment_intents (account_id,amount_minor,currency,reason,provider,payment_method_id,state,idempotency_key,merchant_order_reference,correlation_id,created_at,updated_at)
+		VALUES ($1,$2,$3,'manual_top_up',$4,NULL,'processing',$5,$6,$7,$8,$8)
+		RETURNING `+intentColumns,
+		in.AccountID, in.AmountMinor, in.Currency, in.Provider, strings.TrimSpace(in.IdempotencyKey), merchantOrderReference, strings.TrimSpace(in.CorrelationID), in.Now))
+	if err != nil {
+		return CreateManualTopUpResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO payment_reconciliation_jobs (intent_id,reason,status,due_at) VALUES ($1,'unknown','pending',$2)`, intent.ID, in.Now.Add(5*time.Minute)); err != nil {
+		return CreateManualTopUpResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CreateManualTopUpResult{}, err
+	}
+	return CreateManualTopUpResult{Intent: intent}, nil
 }
 
 func (s *Store) CreateManualTopUp(ctx context.Context, in CreateManualTopUpInput) (CreateManualTopUpResult, error) {

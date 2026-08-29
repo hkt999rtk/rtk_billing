@@ -104,6 +104,25 @@ type ChargeRequest struct {
 	CorrelationID          string
 }
 
+type HostedChargeRequest struct {
+	IntentID               string
+	AmountMinor            int64
+	Currency               Currency
+	MerchantOrderReference string
+	NotifyURL              string
+	ReturnURL              string
+	ItemDescription        string
+}
+
+type HostedChargeResult struct {
+	EndpointURL string
+	Fields      map[string]string
+}
+
+type HostedChargeProvider interface {
+	CreateHostedCharge(context.Context, HostedChargeRequest) (HostedChargeResult, error)
+}
+
 type QueryRequest struct {
 	IntentID                     string
 	AmountMinor                  int64

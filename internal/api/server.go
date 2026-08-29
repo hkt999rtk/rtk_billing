@@ -102,6 +102,7 @@ func (s *Server) registerTenantRoutes(org *gin.RouterGroup) {
 	org.PUT("/auto-topup", s.requirePermission("auto_topup.manage"), s.putAutoTopUpPolicy)
 	org.DELETE("/auto-topup", s.requirePermission("auto_topup.manage"), s.disableAutoTopUpPolicy)
 	org.POST("/topups", s.requirePermission("payment_intent.create"), s.createManualTopUp)
+	org.POST("/topups/checkout", s.requirePermission("payment_intent.create"), s.createHostedTopUp)
 	org.GET("/payment-intents", s.requirePermission("payment_intent.read"), s.listPaymentIntents)
 	org.GET("/payment-intents/:intentId", s.requirePermission("payment_intent.read"), s.getPaymentIntent)
 }
