@@ -15,6 +15,57 @@ import (
 
 const creationToken = "isolated-billing-cloud-creation-credential"
 
+func TestBillingWritersWaitForCreationInsteadOfOrphaningAccounts(t *testing.T) {
+	env := newIntegrationAPI(t)
+	ctx := context.Background()
+	cloudID := testutil.OrganizationID("bootstrap-before-debit")
+	body := map[string]any{"organization_id": cloudID, "amount_minor": 10, "currency": "TWD", "reason": "invoice_debit", "external_id": "bootstrap-invoice"}
+	debit := func() *httptest.ResponseRecorder {
+		return env.request(t, "POST", "/v1/internal/billing/debits", "", "bootstrap-debit", body)
+	}
+	for range 2 {
+		if out := debit(); out.Code != 503 || !strings.Contains(out.Body.String(), "BILLING_ACCOUNT_NOT_READY") {
+			t.Fatal("debit created an account without owner evidence", out.Code, out.Body.String())
+		}
+	}
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	out := env.request(t, "POST", "/v1/internal/billing/periods/close", "", "", map[string]any{"organization_id": cloudID, "period_start": start, "period_end": start.AddDate(0, 1, 0)})
+	if out.Code != 503 || !strings.Contains(out.Body.String(), "BILLING_ACCOUNT_NOT_READY") {
+		t.Fatal("period close did not wait for account provisioning", out.Code, out.Body.String())
+	}
+	var writes int
+	if err := env.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM commercial_accounts)+(SELECT count(*) FROM billing_invoices)+(SELECT count(*) FROM billing_periods)+(SELECT count(*) FROM balance_ledger_entries)+(SELECT count(*) FROM billing_responsibility_periods)`).Scan(&writes); err != nil || writes != 0 {
+		t.Fatal("unprovisioned requests leaked writes", writes, err)
+	}
+	if err := env.server.ConfigureCloudCreation(CloudCreationAPIOptions{Token: creationToken, Store: paymentstore.New(env.db)}); err != nil {
+		t.Fatal(err)
+	}
+	event := paymentstore.CloudCreation{EventID: testutil.OrganizationID("bootstrap-before-debit-event"), OrganizationID: cloudID, OwnerUserID: testutil.OrganizationID("integration-owner"), OwnershipVersion: 1, OccurredAt: start}
+	event.EvidenceSHA256 = event.EvidenceDigest()
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/v1/internal/billing/cloud-creations", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+creationToken)
+	created := httptest.NewRecorder()
+	env.server.Router().ServeHTTP(created, req)
+	if created.Code != 200 {
+		t.Fatal("creation event failed after deferred debit", created.Code, created.Body.String())
+	}
+	if out := debit(); out.Code != 201 {
+		t.Fatal("retry debit after provisioning", out.Code, out.Body.String())
+	}
+	if out := debit(); out.Code != 200 || !strings.Contains(out.Body.String(), `"duplicate":true`) {
+		t.Fatal("duplicate debit", out.Code, out.Body.String())
+	}
+	var accounts, periods, entries int
+	if err := env.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM commercial_accounts), (SELECT count(*) FROM billing_responsibility_periods), (SELECT count(*) FROM balance_ledger_entries)`).Scan(&accounts, &periods, &entries); err != nil || accounts != 1 || periods != 1 || entries != 1 {
+		t.Fatal("bootstrap/debit replay lost exactly-once invariants", accounts, periods, entries, err)
+	}
+}
+
 type creationStoreFixture struct {
 	err   error
 	calls int

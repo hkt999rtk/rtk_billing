@@ -536,6 +536,10 @@ func (s *Server) closeBillingPeriod(c *gin.Context) {
 		OrganizationID: request.OrganizationID, PeriodStart: request.PeriodStart, PeriodEnd: request.PeriodEnd,
 		DueAt: request.DueAt, RequestID: strings.TrimSpace(c.GetHeader("X-Request-ID")),
 	})
+	if errors.Is(err, paymentstore.ErrNotFound) {
+		writeError(c, http.StatusServiceUnavailable, "BILLING_ACCOUNT_NOT_READY", "Billing account provisioning is incomplete; retry later")
+		return
+	}
 	if err != nil {
 		writeBillingError(c, err)
 		return

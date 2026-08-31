@@ -200,6 +200,7 @@ func TestIntegrationInternalBillingDebitAuthenticationAndIdempotency(t *testing.
 		t.Fatalf("reused debit credential error = %v", err)
 	}
 	organizationID := testutil.OrganizationID("billing-api-debit")
+	env.provisionOwner(t, organizationID)
 	path := "/v1/internal/billing/debits"
 	body := map[string]any{
 		"organization_id": organizationID,

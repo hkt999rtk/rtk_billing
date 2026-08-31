@@ -132,6 +132,14 @@ and historical snapshots unchanged, compensation appears once in the correct led
 
 ### New-cloud responsibility provisioning
 
+Tenant account reads, internal debit ingestion and period closing must not
+implicitly create commercial accounts. Debit and close-period requests for an
+unprovisioned cloud return retryable `503 BILLING_ACCOUNT_NOT_READY` without
+account, invoice or ledger writes. Retry the original request after the creation
+event commits; this prevents ordinary billing work from racing ahead of the
+initial owner evidence. Existing accounts still require the reviewed history
+migration; these routes never infer or overwrite their ownership.
+
 AM's new-cloud transaction persists the cloud UUID, initial unique global owner,
 version 1, creation time and immutable event UUID. Migration 066 emits this event
 only for newly inserted Brand Clouds after the owner transaction is complete; it

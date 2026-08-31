@@ -512,6 +512,7 @@ paths:
       tags:
       - Internal Billing
       summary: Close, price, issue, settle, and render one billing period
+      description: Requires an already provisioned commercial account. Returns 503 BILLING_ACCOUNT_NOT_READY without invoice or account writes while new-cloud provisioning is incomplete; retry the original period after provisioning.
       operationId: closeBillingPeriod
       security:
       - billingInternalAuth: []
@@ -525,6 +526,8 @@ paths:
       responses:
         '200':
           description: Existing or newly closed invoice result.
+        '503':
+          description: Billing account provisioning is incomplete; retry later.
         '422':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
@@ -1292,7 +1295,9 @@ paths:
       summary: Post one authenticated idempotent invoice or usage-adjustment debit.
       description: Uses a dedicated billing-source credential. It does not calculate
         prices or invoices and cannot post credits, manual adjustments, refunds, or
-        chargebacks.
+        chargebacks. It never creates a commercial account. Until trusted new-cloud
+        provisioning has committed, returns 503 BILLING_ACCOUNT_NOT_READY; retry
+        the same idempotency key and payload after provisioning.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:

@@ -30,7 +30,6 @@ const maxPaymentWebhookBytes = 1 << 20
 
 type paymentPersistence interface {
 	paymentservice.Store
-	EnsureCommercialAccount(context.Context, string, payment.Currency) (payment.CommercialAccount, bool, error)
 	GetCommercialAccountByOrganization(context.Context, string, payment.Currency) (payment.CommercialAccount, error)
 	ListLedgerEntriesPage(context.Context, string, int, int) (paymentstore.LedgerEntryPage, error)
 	ListPaymentMethods(context.Context, string, int, int) (paymentstore.PaymentMethodPage, error)
@@ -191,7 +190,7 @@ func (s *Server) paymentAccount(c *gin.Context) (payment.CommercialAccount, bool
 		writeError(c, http.StatusServiceUnavailable, "PAYMENT_PROVIDER_NOT_CONFIGURED", "Payment service is not configured")
 		return payment.CommercialAccount{}, false
 	}
-	account, _, err := s.payments.store.EnsureCommercialAccount(c.Request.Context(), c.Param("orgId"), payment.CurrencyTWD)
+	account, err := s.payments.store.GetCommercialAccountByOrganization(c.Request.Context(), c.Param("orgId"), payment.CurrencyTWD)
 	if err != nil {
 		writePaymentError(c, err)
 		return payment.CommercialAccount{}, false
