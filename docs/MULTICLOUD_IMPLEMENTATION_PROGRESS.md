@@ -340,6 +340,33 @@ Financial privacy checkpoint evidence:
   `git diff --check`, API security-scheme tests and the Python contract importer
   tests passed. These are local checks, not runtime PR CI or staging evidence.
 
+## AM public API confirmation checkpoint — 2026-08-31
+
+- Added optional `TestHandoffAccountManagerPublicAPIContract`: the separately
+  compiled AM API creates verified global source/target sessions, requests and
+  accepts a handoff via its real HTTP handlers, then previews and confirms the
+  Billing snapshot through this service's real dedicated HTTP router/store.
+- The two participants confirm zero credit, retry independently and reload the
+  durable result. Billing stores exactly two confirmations and remains prepared;
+  AM stores two intents/acknowledgments, retains source ownership and denies the
+  target ordinary membership before commit. No amount moves and no owner switches.
+- Set `ACCOUNT_MANAGER_HANDOFF_CLIENT_DIR` to the isolated AM checkout and
+  `ACCOUNT_MANAGER_HANDOFF_DATABASE_URL` to the dedicated disposable
+  `multicloud_am_public_http_test` database at `127.0.0.1:63229`. Billing continues
+  using its own isolated `TEST_DATABASE_URL`; the databases must be separate.
+  The test-only bind endpoint belongs to an `httptest` wrapper, not production.
+- Initial eligibility, producer preparation and collector completeness are
+  synthetic. The test proves AM session-to-Billing confirmation persistence,
+  not actual producer drain, real settlement completeness, owner commit, browser
+  behavior or staging acceptance. No runtime configuration was changed.
+- Full uncached `go test ./... -count=1` passed with both cross-repository fixtures
+  enabled (API 33.334s, payment store 44.505s, payment service 32.013s). The new
+  public-API fixture passed three Billing-side race runs (13.555s); AM's own full
+  suite also passed. Logs: `/tmp/rtk-billing-public-handoff-suite-20260831.log`
+  and `/tmp/rtk-billing-public-handoff-race-20260831.log`. `go vet ./...`,
+  `git diff --check` and the OpenAPI importer regression passed. These are local
+  correctness checks, not runtime CI or performance measurements.
+
 ## Not implemented / deployment gate
 
 The optional dedicated handoff HTTP transport and separately compiled AM client
@@ -355,8 +382,9 @@ Remaining work includes:
 
 1. Wire the implemented dedicated transport to the Account Manager durable coordinator,
    outbox, producer hold/cutoff acknowledgments, persisted usage/invoice/provider
-   reconciliation checkpoint collectors and routing of versioned snapshots and
-   both confirmations. The collector must observe local state before gathering
+   reconciliation checkpoint collectors. AM public versioned preview and both
+   confirmations are now wired; automatic coordinator delivery remains absent.
+   The collector must observe local state before gathering
    independently verified checkpoints, not append a fresh digest to stale reports.
 2. Connect commit/finalize/abort receipts to authenticated AM durable decisions and
    retry workers. Add the audited forward-reconciliation clearance path for changed
