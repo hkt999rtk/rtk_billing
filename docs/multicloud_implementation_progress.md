@@ -673,6 +673,35 @@ enablement. The SQL commit barrier does not prove producer completeness.
 A bare persisted `prepared` phase is never a substitute for live financial status
 or the explicit commit authorization protocol.
 
+## Immutable usage qualification — 2026-09-01
+
+Runtime `20b3a6c` rejects any modified producer field on usage replay even when
+the source hash is unchanged. UUIDs, hex digests and UTC microsecond windows are
+canonicalized before writing. Forward migration 058 rejects update/delete of
+accepted usage facts; it does not rewrite historical facts or migration markers.
+Isolated PostgreSQL race tests cover conflicting concurrent inserts, direct SQL
+mutation, invalid input, exact replay and timestamp precision. Go vet/build and
+diff checks passed.
+
+Full workspace PR-profile run `local-billing-usage-integrity` passed in
+**37.948s**, at **74.11%**, with all configured package ratchets and artifact
+redaction passing. Report:
+`.artifacts/test-runs/local-billing-usage-integrity/coverage/test_report.md`
+in the unpublished qualification checkout rooted at `d128eab`. Coverage SHA:
+`8614ca0b782d9b34d5c318a7a025ee17df6ee00ec2108873e31b76a39c3beaf1`.
+No base ref was supplied, so differential coverage, default pre-PR and GitHub CI
+are not established by this run. Updated OpenAPI and contracts checks passed;
+262 catalog cases and spec inventory have zero blocking findings.
+
+This establishes immutable acceptance, not source completeness. Durable source
+collection, source-to-Billing forwarding, period-close/write serialization,
+producer drain and actual invoice/provider evidence remain open. In particular,
+the current application period precheck precedes the usage insert and must not
+be treated as an atomic barrier; retrying an incomplete period must reacquire a
+closing fence before reading facts. No collector or transfer readiness was
+enabled and no staging state was changed. Transfer still requires balance >= 0
+and every independent financial/completeness condition, not positive-only credit.
+
 ## Read-only ownership eligibility transport — 2026-09-01
 
 Added the dedicated internal ownership-eligibility route and independently
