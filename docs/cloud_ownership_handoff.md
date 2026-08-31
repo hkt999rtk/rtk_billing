@@ -1,7 +1,7 @@
 # Brand Cloud Billing ownership handoff design
 
 Status: design-first target, not deployed acceptance. Follow canonical
-[MULTICLOUD_OWNERSHIP.md](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/blob/codex/multicloud-owner-design/MULTICLOUD_OWNERSHIP.md). Account Manager owns membership/ownership; Billing owns
+[multicloud_ownership.md](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/blob/codex/multicloud-owner-design/multicloud_ownership.md). Account Manager owns membership/ownership; Billing owns
 monetary state using opaque organization UUIDs without cross-database joins.
 
 ## Responsibility and access
