@@ -42,6 +42,9 @@ func (s *Store) PutAutoTopUpPolicy(ctx context.Context, in PutAutoTopUpPolicyInp
 	if account.State == payment.AccountStateClosed {
 		return payment.AutoTopUpPolicy{}, ErrAccountClosed
 	}
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		return payment.AutoTopUpPolicy{}, err
+	}
 	if account.Currency != in.Currency {
 		return payment.AutoTopUpPolicy{}, ErrConflict
 	}

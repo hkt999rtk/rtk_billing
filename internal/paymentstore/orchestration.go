@@ -143,6 +143,9 @@ func (s *Store) BeginProviderAttempt(ctx context.Context, in BeginProviderAttemp
 
 	switch in.Operation {
 	case payment.ProviderOperationCharge:
+		if err := requireNoHandoffTx(ctx, tx, accountID); err != nil {
+			return ProviderAttemptWork{}, err
+		}
 		if job.Reason != payment.ReconciliationReasonCharge || intent.State != payment.PaymentIntentStateCreated {
 			return ProviderAttemptWork{}, ErrJobNotActionable
 		}

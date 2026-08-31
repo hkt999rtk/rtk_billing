@@ -794,6 +794,13 @@ func (s *Server) handlePaymentSimulatorSetupCallback(c *gin.Context) {
 		input.ProviderMethodRefSHA256 = hex.EncodeToString(methodDigest[:])
 	}
 	result, err := s.payments.store.CompletePaymentMethodSetup(c.Request.Context(), input)
+	if errors.Is(err, paymentstore.ErrSetupInvalidated) {
+		// The authenticated provider result was durably recorded without activating
+		// a method. Acknowledge it so the provider need not retry forever. Browser
+		// setup requests still receive the explicit unusable-setup conflict.
+		c.JSON(http.StatusOK, gin.H{"accepted": true, "duplicate": result.Duplicate})
+		return
+	}
 	if err != nil {
 		writePaymentSetupError(c, err)
 		return
@@ -914,6 +921,10 @@ func (s *Server) writePaymentAudit(c *gin.Context, eventType, subjectType, subje
 
 func writePaymentError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, paymentstore.ErrHandoffFenced):
+		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_HANDOFF_FENCED", "Payment changes are paused during ownership handoff")
+	case errors.Is(err, paymentstore.ErrSetupInvalidated):
+		writeError(c, http.StatusConflict, "PAYMENT_SETUP_INVALIDATED", "Payment setup is no longer usable")
 	case errors.Is(err, paymentstore.ErrNotFound):
 		writeError(c, http.StatusNotFound, "not_found", "Payment resource not found")
 	case errors.Is(err, payment.ErrInvalidAmount):

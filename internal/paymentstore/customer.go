@@ -236,6 +236,9 @@ func (s *Store) CreateHostedTopUp(ctx context.Context, in CreateHostedTopUpInput
 	if account.State == payment.AccountStateClosed || account.State == payment.AccountStateSuspended {
 		return CreateManualTopUpResult{}, ErrAccountClosed
 	}
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		return CreateManualTopUpResult{}, err
+	}
 	if account.Currency != in.Currency {
 		return CreateManualTopUpResult{}, ErrConflict
 	}
@@ -297,6 +300,9 @@ func (s *Store) CreateManualTopUp(ctx context.Context, in CreateManualTopUpInput
 	}
 	if account.State == payment.AccountStateClosed || account.State == payment.AccountStateSuspended {
 		return CreateManualTopUpResult{}, ErrAccountClosed
+	}
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		return CreateManualTopUpResult{}, err
 	}
 	if account.Currency != in.Currency {
 		return CreateManualTopUpResult{}, ErrConflict

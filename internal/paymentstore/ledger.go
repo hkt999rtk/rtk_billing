@@ -80,6 +80,13 @@ func (s *Store) PostLedgerEntry(ctx context.Context, in PostLedgerEntryInput) (P
 	if !errors.Is(err, ErrNotFound) {
 		return PostLedgerEntryResult{}, err
 	}
+	// Provider reconciliation credits use transitionIntentTx. Manual credit is
+	// not an escape hatch for topping up during handoff preparation.
+	if in.Direction == payment.LedgerDirectionCredit {
+		if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+			return PostLedgerEntryResult{}, err
+		}
+	}
 
 	entry, account, err := insertLedgerEntryTx(ctx, tx, account, in)
 	if err != nil {
@@ -212,6 +219,12 @@ func sameLedgerRequest(existing payment.LedgerEntry, in PostLedgerEntryInput) bo
 }
 
 func evaluateAutoTopUpTx(ctx context.Context, tx pgx.Tx, account payment.CommercialAccount, trigger payment.LedgerEntry, now time.Time, correlationID string) (*payment.PaymentIntent, error) {
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		if errors.Is(err, ErrHandoffFenced) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	policy, err := getPolicyForUpdate(ctx, tx, account.ID)
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
@@ -303,6 +316,12 @@ func evaluateAutoTopUpTx(ctx context.Context, tx pgx.Tx, account payment.Commerc
 }
 
 func rearmPolicyAfterCreditTx(ctx context.Context, tx pgx.Tx, account payment.CommercialAccount) (payment.CommercialAccount, error) {
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		if errors.Is(err, ErrHandoffFenced) {
+			return account, nil
+		}
+		return payment.CommercialAccount{}, err
+	}
 	policy, err := getPolicyForUpdate(ctx, tx, account.ID)
 	if errors.Is(err, ErrNotFound) {
 		return account, nil
