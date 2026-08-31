@@ -92,13 +92,17 @@ func periodBarrierFixture(t *testing.T) (context.Context, *pgxpool.Pool, *Store,
 	return ctx, db, s, in, fact
 }
 
-func awaitBlockedInvoiceConnection(t *testing.T, ctx context.Context, db *pgxpool.Pool, pid uint32) {
+type invoiceRowQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func awaitBlockedInvoiceConnection(t *testing.T, ctx context.Context, observer invoiceRowQuerier, pid uint32) {
 	t.Helper()
 	tick := time.NewTicker(5 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		var blocked bool
-		if err := db.QueryRow(ctx, `SELECT cardinality(pg_blocking_pids($1))>0`, pid).Scan(&blocked); err != nil {
+		if err := observer.QueryRow(ctx, `SELECT cardinality(pg_blocking_pids($1))>0`, pid).Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {
@@ -215,7 +219,7 @@ func TestInvoiceCloseWaitsForCommittedUsageAndSerializesCompetingCloses(t *testi
 			invoice, created, err := (&Store{db: conn.Conn()}).PrepareInvoice(ctx, in)
 			results <- result{invoice, created, err}
 		}()
-		awaitBlockedInvoiceConnection(t, ctx, db, pid)
+		awaitBlockedInvoiceConnection(t, ctx, writer, pid)
 	}
 	if err := writer.Commit(ctx); err != nil {
 		t.Fatal(err)
