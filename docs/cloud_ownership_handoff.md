@@ -156,3 +156,10 @@ Coordinate matched backups/restore under write freeze. Database restore cannot
 undo external payments/consents: reconcile provider outcomes/idempotency keys
 with charging disabled before workers resume. Never automatically replay a charge
 because its local completion record was rolled back. Staging evidence is required.
+
+Use the workspace [Core Backup and Restore](../../../docs/backup-restore.md)
+procedure for the matched maintenance-window set, target safety backup and
+explicit verify/resume gates. Billing PostgreSQL is included; an archive cannot
+roll back payment-provider state, consent or previously sent email. Keep
+dispatch disabled while reconciling these effects, including when restoring
+after a fresh deployment. A `scope=core` archive is not full-environment recovery.
