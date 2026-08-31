@@ -47,6 +47,18 @@ build checks pass. The 259-case inventory covers 393 requirements, 664 operation
 and 67 workflows with zero blocking findings (91 nonblocking unspecified
 normative candidates remain). No base ref was supplied: differential coverage,
 the default pre-PR gate and GitHub CI are not certified by this run.
+AM's matching complete PR-profile run at `8dec808` passes in 269.433s (82.28%
+overall). Recompiling the Billing child at runtime `3fce593` and repeating the
+actual AM/Billing race fixture passes in 2.07s (package 3.941s). The full AM run
+used Billing `2d5b7c6` and also passed its cross-service case without a skip.
+
+Next collector investigation is grounded in Video Cloud
+`internal/mqttusageapp/app.go`, `internal/usage/aggregator.go` and
+`internal/postgres/usage.go`: the logger polling boundary currently uses newly
+added event count rather than fetched-page completeness, has no durable source
+watermark, and no runtime forwarding to Billing's `billing_usage_facts` was
+found. A replayed/full page cannot be treated as a settled cutoff. These are
+remaining implementation gaps, not permission to synthesize checkpoint hashes.
 
 ## Implemented locally
 
