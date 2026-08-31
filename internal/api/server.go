@@ -132,7 +132,7 @@ func (s *Server) requireTenantContext() gin.HandlerFunc {
 		actorType := strings.TrimSpace(c.GetHeader("X-Billing-Actor-Type"))
 		actorID := strings.TrimSpace(c.GetHeader("X-Billing-Actor-ID"))
 		requestID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
-		if actorType != "brand_cloud_user" || !validContextValue(actorID, 200) || !validContextValue(requestID, 128) {
+		if actorType != "user" || !validContextValue(actorID, 200) || !validContextValue(requestID, 128) {
 			writeError(c, http.StatusBadRequest, "BILLING_CONTEXT_REQUIRED", "Trusted billing actor and request context are required")
 			c.Abort()
 			return
