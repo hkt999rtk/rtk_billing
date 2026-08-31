@@ -221,7 +221,8 @@ func (s *Store) GetOwnershipHandoff(ctx context.Context, organizationID, operati
 func requireNoHandoffTx(ctx context.Context, tx pgx.Tx, accountID string) error {
 	var fenced bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_ownership_handoffs
-		WHERE account_id=$1 AND phase NOT IN ('finalized','aborted'))`, accountID).Scan(&fenced)
+		WHERE account_id=$1 AND phase NOT IN ('finalized','aborted'))
+		OR EXISTS(SELECT 1 FROM billing_cloud_closures WHERE account_id=$1 AND phase<>'canceled')`, accountID).Scan(&fenced)
 	if err != nil {
 		return err
 	}

@@ -232,7 +232,7 @@ func (s *Store) GetCloudDeletionPreflight(ctx context.Context, in CloudPreflight
 		}
 	}
 	var active bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM billing_ownership_handoffs WHERE account_id=$1 AND phase NOT IN ('aborted','finalized'))`, account.ID).Scan(&active); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM billing_ownership_handoffs WHERE account_id=$1 AND phase NOT IN ('aborted','finalized')) OR EXISTS(SELECT 1 FROM billing_cloud_closures WHERE account_id=$1 AND phase<>'canceled')`, account.ID).Scan(&active); err != nil {
 		return CloudDeletionPreflight{}, err
 	}
 	if active || account.State != payment.AccountStateActive {

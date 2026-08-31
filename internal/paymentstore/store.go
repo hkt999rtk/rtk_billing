@@ -35,7 +35,7 @@ type rowScanner interface {
 
 func mapNotFound(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "55000" && pgErr.ConstraintName == "billing_handoff_commit_barrier" {
+	if errors.As(err, &pgErr) && pgErr.Code == "55000" && (pgErr.ConstraintName == "billing_handoff_commit_barrier" || pgErr.ConstraintName == "billing_cloud_closure_barrier") {
 		return ErrHandoffFenced
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

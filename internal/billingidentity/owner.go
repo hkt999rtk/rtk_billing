@@ -80,6 +80,7 @@ func (s *Store) AuthorizeOwner(ctx context.Context, organizationID, userID strin
 		EXISTS(SELECT 1 FROM billing_ownership_handoffs h WHERE h.account_id=a.id AND
 		(h.phase IN ('commit_authorized','finalizing') OR (h.phase='abort_pending' AND EXISTS
 		(SELECT 1 FROM billing_handoff_commit_authorizations g WHERE g.operation_id=h.id))))
+		OR EXISTS(SELECT 1 FROM billing_cloud_closures c WHERE c.account_id=a.id AND c.phase<>'canceled')
 		FROM commercial_accounts a LEFT JOIN billing_responsibility_periods p ON p.account_id=a.id AND p.effective_until IS NULL
 		WHERE a.organization_id=$1 AND a.currency='TWD'`, organizationID).
 		Scan(&scope.AccountID, &state, &owner, &currentVersion, &periodStart, &committing)
@@ -146,7 +147,8 @@ func LockAccount(ctx context.Context, tx pgx.Tx, accountID string) error {
 	var committing bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM billing_ownership_handoffs h WHERE h.account_id=$1 AND
 		(h.phase IN ('commit_authorized','finalizing') OR (h.phase='abort_pending' AND EXISTS
-		(SELECT 1 FROM billing_handoff_commit_authorizations g WHERE g.operation_id=h.id))))`, accountID).Scan(&committing); err != nil {
+		(SELECT 1 FROM billing_handoff_commit_authorizations g WHERE g.operation_id=h.id))))
+		OR EXISTS(SELECT 1 FROM billing_cloud_closures WHERE account_id=$1 AND phase<>'canceled')`, accountID).Scan(&committing); err != nil {
 		return err
 	}
 	if committing {

@@ -9,6 +9,129 @@ info:
   description: Provider-neutral pricing, wallet, payment, invoice, and billing access
     service.
 paths:
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/prepare:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: prepareBillingCloudClosure
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Persist payer fence and provider-revocation tasks; requires AM durable resource fence.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosurePrepareRequest' }
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureOperationResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/status:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    get:
+      tags: [Cloud Closure]
+      operationId: getBillingCloudClosureStatus
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Read live closure evidence and blockers; never creates collector evidence.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureStatusResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/close:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: closeBillingCloud
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Atomically close zero-balance Billing using fresh settlement and verified AM resource-readiness decision.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosureCloseRequest' }
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureAckResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: cancelBillingCloudClosure
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Begin durable cancellation; retain fence until independently verified release and revocations.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosureCancelRequest' }
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureOperationResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /v1/internal/billing/clouds/{orgId}/deletion-preflight:
     get:
       tags: [Ownership Handoff]
@@ -1299,6 +1422,91 @@ components:
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    ClosureSHA256:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    CloudClosurePrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [cutoff, am_request_sha256]
+      properties:
+        cutoff: { type: string, format: date-time, description: Persisted resource-fence cutoff; must not be in the future. }
+        am_request_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    CloudClosureCloseRequest:
+      type: object
+      additionalProperties: false
+      required: [settlement_id, am_readiness_sha256]
+      properties:
+        settlement_id: { type: string, format: uuid }
+        am_readiness_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    CloudClosureCancelRequest:
+      type: object
+      additionalProperties: false
+      required: [cancellation_id, am_cancellation_sha256]
+      properties:
+        cancellation_id: { type: string, format: uuid }
+        am_cancellation_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    CloudClosure:
+      type: object
+      additionalProperties: false
+      required: [id, account_id, owner_user_id, ownership_version, cutoff, phase, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+        cutoff: { type: string, format: date-time }
+        phase: { type: string, enum: [preparing, closed, canceling, canceled] }
+        version: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    CloudClosureResponseScope:
+      type: object
+      required: [cloud_id, owner_user_id, ownership_version, operation_id]
+      properties:
+        cloud_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+        operation_id: { type: string, format: uuid }
+    CloudClosureOperationResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [operation]
+          properties:
+            operation: { $ref: '#/components/schemas/CloudClosure' }
+    CloudClosureStatusResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [status]
+          properties:
+            status:
+              type: object
+              additionalProperties: false
+              required: [operation, ready, blockers]
+              properties:
+                operation: { $ref: '#/components/schemas/CloudClosure' }
+                ready: { type: boolean, description: True only for preparing with current zero-credit settlement and every provider revocation acknowledged. Terminal/canceling status is not readiness. }
+                receipt_id: { type: string, format: uuid }
+                blockers:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string }
+    CloudClosureAckResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [acknowledgment]
+          properties:
+            acknowledgment:
+              type: object
+              additionalProperties: false
+              required: [operation_id, phase, closed_at, receipt_sha256]
+              properties:
+                operation_id: { type: string, format: uuid }
+                phase: { type: string, const: closed }
+                closed_at: { type: string, format: date-time }
+                receipt_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
     CloudDeletionPreflight:
       type: object
       required: [cloud_id, owner_user_id, ownership_version, eligible, blockers, balance_minor, currency, observed_at, expires_at]
@@ -2221,6 +2429,12 @@ components:
         duplicate:
           type: boolean
   parameters:
+    ClosureOwnerUserId:
+      in: header
+      name: X-Billing-Owner-User-ID
+      required: true
+      schema: { type: string, format: uuid }
+      description: Exactly one canonical global owner UUID header; bound to original closure responsibility even on closed-command replay.
     HandoffOperationId:
       name: operationId
       in: path

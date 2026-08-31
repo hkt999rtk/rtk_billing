@@ -450,6 +450,61 @@ Financial privacy checkpoint evidence:
   acknowledgments remain required before any actual delete. No runtime PR,
   shared-database mutation or staging deployment was performed.
 
+## Durable Billing cloud closure (055)
+
+- Forward migration 055 adds account-serialized closure operations, immutable
+  provider-revocation manifests/receipts, cutoff settlement evidence, completion
+  receipts and cancellation/release acknowledgments. Active closure and ownership
+  handoff are mutually exclusive. Prepare requires AM's persisted deletion intent
+  and resource fence; it is not deletion permission or settlement certification.
+- Preparation atomically invalidates pending setups, revokes local methods and
+  consents, disables/disarms auto charging and writes audit evidence. New payer
+  authority and charge dispatch are blocked through preparing/canceling/closed.
+  Cutoff reconciliation remains possible before close. Late setup callbacks retain
+  deduplicated hashed observations but cannot restore credentials or authority.
+- Local revocation is not provider cancellation. Each method/setup manifest task
+  needs independently verified provider acknowledgment. Settlement receipts bind
+  the operation, original owner/version, cutoff, local financial state and current
+  provider acknowledgment manifest, with independently reconciled checkpoints and
+  a maximum five-minute lifetime. Missing, expired, changed or misbound evidence
+  fails closed; supplied zeros cannot suppress local financial blockers.
+- Close requires exactly zero balance and all other financial clearance. Under
+  one account lock it rechecks live evidence, closes the Billing account/access,
+  ends its responsibility period, and records immutable completion plus audit.
+  SQL guards prohibit reopening or appending a new responsibility period and
+  changing closed monetary history. Exact retries return the original receipt
+  even after the responsibility period ends; changed replays conflict. AM must
+  finish tombstoning by forward retry, never reopen Billing after this commit.
+- Pre-close cancellation remains fenced until verified provider revocations and
+  hold-release acknowledgment. Cancellation does not revive old payment methods,
+  consent or auto charging. Revocation provenance cannot be cleared to restore a
+  consent. A later setup requires new explicit payer authorization.
+- Added dedicated-coordinator POST prepare/close/cancel and GET status under
+  `/v1/internal/billing/clouds/{orgId}/closures/{operationId}`. Every command
+  requires canonical cloud/operation IDs and exact owner/version headers, echoes
+  that scope and uses no-store responses. Existing dedicated credential, bounded
+  strict JSON and request deadline apply. OpenAPI and its compatibility importer
+  preserve this boundary. There is no HTTP settlement-write, provider-ack or
+  cancellation-release endpoint; unconfigured routes remain 404.
+- Tests cover negative/zero/positive balances, stale cutoff debit/provider
+  manifest, missing checkpoints, expired/misbound receipts, provider revocation,
+  late callbacks, audit rollback, duplicate concurrent prepare/close, competing
+  payer authority, terminal-state preservation, cancellation and HTTP credential
+  isolation. Provider/collector and AM decision evidence are synthetic fixtures;
+  these tests are not live-provider or complete cross-service deletion acceptance.
+- AM durable DELETE/resource producer fences/closure transport, production
+  reconciliation and provider adapters, UI operation tracking and staging evidence
+  remain required. No runtime PR, shared-database change or deployment occurred.
+- Verification: full uncached Go suite passed on fresh isolated
+  `multicloud_billing_closure_v3_test` through migration 055 (API 25.788s,
+  paymentstore 46.891s, paymentservice 23.038s), including existing real AM
+  transport/public-API/worker fixtures. Targeted closure, handoff and deletion
+  preflight race tests passed three runs. The final additional route-absence and
+  concurrent-consent tests are included in that race run. Logs:
+  `/tmp/rtk-billing-cloud-closure-v3-suite-20260831.log` and
+  `/tmp/rtk-billing-cloud-closure-v3-race-20260831.log`. OpenAPI compatibility
+  importer tests, `go vet ./...` and whitespace checks also passed.
+
 ## Not implemented / deployment gate
 
 The optional dedicated handoff HTTP transport and separately compiled AM client
@@ -491,8 +546,9 @@ Remaining work includes:
    hashes for an already-classified predecessor adjustment and thereby strand an
    otherwise unchanged commit snapshot. Provider cash recovery, signatures and
    real cross-service receipt delivery are not proven by the store fixtures.
-5. Resource-producer and new-work fences, closure protocol, full cross-service
-   acceptance, migration preflight/restore, CI and staging evidence.
+5. Production resource-producer and new-work fences, AM integration of the local
+   Billing closure protocol, full cross-service acceptance, migration
+   preflight/restore, CI and staging evidence.
 
 Preparing records and simulated terminal phase changes in low-level tests do not
 prove an end-to-end ownership transfer. Existing cutoff debit ingestion is not

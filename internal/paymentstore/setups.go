@@ -214,7 +214,7 @@ func (s *Store) CompletePaymentMethodSetup(ctx context.Context, in CompletePayme
 		return CompletePaymentMethodSetupResult{}, err
 	}
 	var invalidated bool
-	if err := tx.QueryRow(ctx, `SELECT invalidated_by_handoff IS NOT NULL FROM payment_method_setup_sessions WHERE id=$1`, session.ID).Scan(&invalidated); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT invalidated_by_handoff IS NOT NULL OR invalidated_by_closure IS NOT NULL FROM payment_method_setup_sessions WHERE id=$1`, session.ID).Scan(&invalidated); err != nil {
 		return CompletePaymentMethodSetupResult{}, err
 	}
 	if invalidated {

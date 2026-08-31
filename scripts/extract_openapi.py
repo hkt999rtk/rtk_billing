@@ -110,7 +110,7 @@ def main() -> None:
             elif path == "/v1/internal/billing/debits":
                 operation["security"] = [{"billingDebitAuth": []}]
             elif path.startswith("/v1/internal/billing/clouds/") and (
-                "/ownership-handoffs/" in path or path.endswith("/deletion-preflight")
+                "/ownership-handoffs/" in path or "/closures/" in path or path.endswith("/deletion-preflight")
             ):
                 operation["security"] = [{"billingHandoffAuth": []}]
             elif path.startswith("/v1/internal/billing/"):
