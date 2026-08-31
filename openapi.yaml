@@ -9,6 +9,32 @@ info:
   description: Provider-neutral pricing, wallet, payment, invoice, and billing access
     service.
 paths:
+  /v1/internal/billing/clouds/{orgId}/deletion-preflight:
+    get:
+      tags: [Ownership Handoff]
+      operationId: getBillingCloudDeletionPreflight
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Read-only, current-owner advisory closure blockers; never authorizes deletion.
+      parameters:
+        - { $ref: '#/components/parameters/OrgId' }
+        - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+        - in: header
+          name: X-Billing-Owner-User-ID
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Zero credit plus independently reconciled, fresh local-state-bound evidence is required. No account or hold is created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudDeletionPreflight' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/prepare:
     parameters:
       - { $ref: '#/components/parameters/OrgId' }
@@ -1273,6 +1299,22 @@ components:
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    CloudDeletionPreflight:
+      type: object
+      required: [cloud_id, owner_user_id, ownership_version, eligible, blockers, balance_minor, currency, observed_at, expires_at]
+      properties:
+        cloud_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+        eligible: { type: boolean }
+        blockers:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [balance_nonzero, usage_unsettled, debt_outstanding, payment_pending, refund_pending, dispute_pending, lifecycle_conflict, evidence_unavailable] }
+        balance_minor: { type: integer, format: int64 }
+        currency: { type: string, enum: [TWD] }
+        observed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
     HandoffPrepareRequest:
       type: object
       additionalProperties: false

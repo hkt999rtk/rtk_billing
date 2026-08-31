@@ -52,13 +52,17 @@ func (s *Server) ConfigureHandoff(in HandoffAPIOptions) error {
 		return fmt.Errorf("handoff credential must be distinct from payment credentials")
 	}
 	s.handoff = &handoffRuntime{token: in.Token, store: in.Store}
-	r := s.router.Group("/v1/internal/billing/clouds/:orgId/ownership-handoffs/:operationId", func(c *gin.Context) {
+	cloud := s.router.Group("/v1/internal/billing/clouds/:orgId", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 		defer cancel()
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}, requireBearerToken(in.Token))
+	if reader, ok := in.Store.(cloudDeletionPreflightReader); ok {
+		cloud.GET("/deletion-preflight", cloudDeletionPreflightHandler(reader))
+	}
+	r := cloud.Group("/ownership-handoffs/:operationId")
 	r.POST("/prepare", s.prepareHandoff)
 	r.GET("/settlement", s.getHandoffSettlement)
 	r.POST("/confirm", s.confirmHandoff)

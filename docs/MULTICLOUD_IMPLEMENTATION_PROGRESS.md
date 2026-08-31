@@ -413,6 +413,43 @@ Financial privacy checkpoint evidence:
   `go vet ./...`, `git diff --check` and the OpenAPI importer regression passed.
   AM separately passed full regression and repeated store/worker/config race tests.
 
+## Advisory cloud deletion preflight (054)
+
+- Added forward migration 054 for immutable current-owner preflight collector
+  receipts, separate from frozen handoff settlement/commit evidence. Receipts
+  bind account, owner/version, the captured local financial-state digest and
+  independently reconciled usage/invoice/provider checkpoints with a maximum
+  five-minute observation lifetime. Changed local state invalidates a receipt;
+  external zeros cannot remove independently observed local financial blockers.
+- Read-only preflight uses a repeatable snapshot and checks current responsibility.
+  It never ensures/creates an account, installs a hold, writes a receipt or closes
+  Billing. Exact zero credit is required alongside all other financial clearance.
+  Active handoffs and nonactive account state block deletion. Missing/stale
+  collector evidence is never treated as readiness from empty database tables.
+- Added dedicated-coordinator `GET /v1/internal/billing/clouds/{orgId}/deletion-preflight`.
+  It requires the existing isolated handoff credential plus current owner and
+  ownership-version headers. Tenant/debit credentials cannot call it. No HTTP
+  collector-write or closure route was exposed. OpenAPI and its compatibility
+  importer preserve this credential boundary.
+- Store/HTTP tests cover -1/0/+1 credit, missing checkpoints, stale local state,
+  expired evidence, owner/version mismatch, immutable replay, independent
+  debt/payment/refund/dispute blockers and no side effects from preflight.
+  A cross-repository fixture runs the actual AM preflight HTTP client against
+  Billing's router/store. Reconciliation checkpoints remain explicit synthetic
+  fixtures; no real collector or producer completeness is claimed.
+- Full uncached Go suite passed against fresh isolated
+  `multicloud_billing_preflight_test` through 054 (API 47.714s, paymentstore 57.717s,
+  paymentservice 43.022s). Targeted API/paymentstore race tests passed three runs
+  (12.077s / 18.012s), including the real AM transport fixture. Logs:
+  `/tmp/rtk-billing-deletion-preflight-suite-20260831.log` and
+  `/tmp/rtk-billing-deletion-preflight-race-20260831.log`. Vet, whitespace checks
+  and the OpenAPI compatibility-importer unit test also passed. The existing
+  consent/commit/worker cross-repository fixtures ran in the full suite.
+- This does not implement Billing closure or authorize AM soft deletion. The
+  later lifecycle fence, settled cutoff, provider cancellation and durable closure
+  acknowledgments remain required before any actual delete. No runtime PR,
+  shared-database mutation or staging deployment was performed.
+
 ## Not implemented / deployment gate
 
 The optional dedicated handoff HTTP transport and separately compiled AM client
