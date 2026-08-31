@@ -18,6 +18,19 @@ BFF headers cannot bypass a fence or ownership-version mismatch. Platform access
 is separately authorized/audited. Old broad admin/member Billing grants confer
 no tenant access under this model; another cloud's owner has no implicit rights.
 
+Current ownership alone does not expose predecessor financial records. Tenant
+invoice/document/statement/activity reads, list totals, exports and download URLs
+are additionally restricted to the caller's recorded responsibility periods.
+An owner returning after an intervening owner cannot read the intervening period.
+Unknown or mixed-period records require a safe period-specific projection or are
+withheld; never disclose another payer's legal name, tax ID, address, email,
+payment reference or line-item history. The incoming owner receives only the
+confirmed opening balance, handoff boundary and subsequent own-period records,
+not predecessor invoices or identifying ledger detail. Keep the full immutable
+history for separately authorized/audited platform access. The departed owner
+has no tenant access, including historical records; required document delivery
+uses existing verified billing delivery/support, not restored cloud membership.
+
 ## Durable financial boundary
 
 Internal prepare/status/finalize/abort commands bind cloud ID, operation ID and
@@ -58,6 +71,8 @@ consents and responsibility history. No cascade delete.
 Simulator tests cover delayed/duplicate callbacks, in-flight payments/refunds,
 disputes, stale confirmations, credential separation, every crash boundary,
 old-owner denial, balance preservation, historical attribution and deletion.
+Include predecessor invoice IDs, downloads, exports, mixed-period statements,
+returning owners and pagination counts in financial-privacy negative tests.
 Coordinate matched backups/restore under write freeze. Database restore cannot
 undo external payments/consents: reconcile provider outcomes/idempotency keys
 with charging disabled before workers resume. Never automatically replay a charge
