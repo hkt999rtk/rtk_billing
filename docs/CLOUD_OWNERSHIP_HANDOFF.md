@@ -33,6 +33,15 @@ uses existing verified billing delivery/support, not restored cloud membership.
 
 ## Durable financial boundary
 
+Transfer requires the current owner to settle all outstanding Billing and leave
+strictly positive available cloud credit (`balance_minor > 0`). Zero is not
+sufficient. Return `balance_not_positive` for zero/negative credit; independently
+reject unrated/unsettled usage, unpaid invoices/debt, pending payments/refunds/
+disputes and unavailable evidence even if the balance projection is positive.
+Request/acceptance eligibility checks are advisory to the later fenced financial
+commit, not permission to use stale snapshots. Recheck complete cutoff settlement
+and the exact positive balance/version before authorizing ownership commit.
+
 Internal prepare/status/finalize/abort commands bind cloud ID, operation ID and
 expected ownership version. Use a dedicated handoff service credential, distinct
 from tenant, pricing/access, debit and provider credentials. Store request digest,
@@ -46,6 +55,11 @@ Already dispatched provider work must reconcile; a local fence cannot cancel an
 external charge. Resource producers acknowledge cutoff, ingestion completeness
 and settlement. Unrated/unbounded late usage, debt, payments/refunds/disputes or
 missing evidence blocks preparation. Time or zero invoice count is not proof.
+Cutoff settlement leaving zero/negative credit blocks preparation/commit and
+produces no confirmable balance snapshot. Keep ownership unchanged and holds
+active; finish precommit cancellation and acknowledged hold release before the
+original owner settles/top-ups through normal Billing and retries a new transfer.
+There is no top-up or saved-card charging exception to the handoff monetary fence.
 
 After settlement, both parties confirm the same versioned balance snapshot.
 Positive balance stays in the account and ledger unchanged; changed amounts
@@ -71,6 +85,10 @@ consents and responsibility history. No cascade delete.
 Simulator tests cover delayed/duplicate callbacks, in-flight payments/refunds,
 disputes, stale confirmations, credential separation, every crash boundary,
 old-owner denial, balance preservation, historical attribution and deletion.
+Cover balances -1/0/+1, positive credit with unsettled invoices or pending work,
+positive-to-nonpositive cutoff races, and cancellation/settlement/retry. Only +1
+with all other financial checks clear qualifies for transfer; deletion still
+requires exactly zero, not positive credit.
 Include predecessor invoice IDs, downloads, exports, mixed-period statements,
 returning owners and pagination counts in financial-privacy negative tests.
 Coordinate matched backups/restore under write freeze. Database restore cannot
