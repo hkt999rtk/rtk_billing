@@ -1,7 +1,7 @@
 # Payment Abstraction And Automatic Top-Up Design
 
 The design-first multi-cloud extension is specified in
-[CLOUD_OWNERSHIP_HANDOFF.md](CLOUD_OWNERSHIP_HANDOFF.md): unique owner tenant
+[cloud_ownership_handoff.md](cloud_ownership_handoff.md): unique owner tenant
 Billing authority, per-cloud balance, responsibility history and fenced handoff.
 It is not included in the implemented-foundation claim below.
 
@@ -18,10 +18,10 @@ Owner: `rtk_billing`.
 
 Contract source of truth:
 
-- `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md`
-- `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md`
-- `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md`
-- `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md`
+- `repos/rtk_cloud_contracts_doc/billing_service.md`
+- `repos/rtk_cloud_contracts_doc/payments_and_balance.md`
+- `repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md`
+- `repos/rtk_cloud_contracts_doc/billing_activity.md`
 
 ## Decision Summary
 
