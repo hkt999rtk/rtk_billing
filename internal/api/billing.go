@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/billingservice"
 	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
@@ -121,6 +122,9 @@ func (s *Server) currentBillingUsage(ctx context.Context, organizationID string)
 	startLocal := time.Date(localNow.Year(), localNow.Month(), 1, 0, 0, 0, 0, location)
 	endLocal := startLocal.AddDate(0, 1, 0)
 	start, end := startLocal.UTC(), endLocal.UTC()
+	if scope, ok := billingidentity.FromContext(ctx); ok && scope.CurrentPeriodStart.After(start) {
+		start = scope.CurrentPeriodStart
+	}
 	return s.billingUsageForPeriod(ctx, organizationID, profile, start, end)
 }
 

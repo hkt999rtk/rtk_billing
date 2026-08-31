@@ -47,6 +47,8 @@ func writeOwnershipError(c *gin.Context, err error) bool {
 		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_VERSION_CONFLICT", "Billing ownership version has changed")
 	case errors.Is(err, billingidentity.ErrTransition):
 		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_TRANSITION", "Billing ownership commit is in progress")
+	case errors.Is(err, billingidentity.ErrSnapshot):
+		writeError(c, http.StatusConflict, "BILLING_SNAPSHOT_CONFLICT", "Billing data changed; retry with current ownership context")
 	case errors.Is(err, billingidentity.ErrUnavailable):
 		writeError(c, http.StatusServiceUnavailable, "BILLING_OWNERSHIP_UNAVAILABLE", "Billing ownership evidence is unavailable")
 	default:

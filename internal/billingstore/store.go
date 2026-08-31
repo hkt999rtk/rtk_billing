@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,7 +18,8 @@ var (
 )
 
 type Store struct {
-	db *pgxpool.Pool
+	db         database.Connection
+	tenantRead bool
 }
 
 func New(db *pgxpool.Pool) *Store { return &Store{db: db} }

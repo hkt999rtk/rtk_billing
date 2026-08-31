@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
@@ -20,7 +21,8 @@ var (
 )
 
 type Store struct {
-	db *pgxpool.Pool
+	db         database.Connection
+	tenantRead bool
 }
 
 func New(db *pgxpool.Pool) *Store {

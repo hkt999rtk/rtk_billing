@@ -111,6 +111,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Return tenant balance current cost runway and top-up health
+      description: Current sole-owner access only. The current period starts at the later of the calendar-month boundary and the current responsibility-period boundary. Usage, totals and forecasts use only authorized period inputs; the shared cloud balance does not authorize predecessor history.
       operationId: getBillingSummary
       security:
       - billingServiceAuth: []
@@ -143,6 +144,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Return server-priced usage for the active billing period
+      description: Explicit date ranges are filtered to the current caller's proven responsibility periods before pricing or aggregation. Unproven and cross-period usage windows are withheld, not prorated. A returning owner cannot read an intervening owner's usage.
       operationId: getBillingUsage
       security:
       - billingServiceAuth: []
@@ -175,6 +177,7 @@ paths:
       tags:
       - Billing and Payments
       summary: List tenant invoices with bounded filters
+      description: Items and pagination totals use the same responsibility-period filter and snapshot. Only invoices whose recipient version and entire interval match a proven period of the current caller are visible; unknown or mixed-period invoices are withheld.
       operationId: listBillingInvoices
       security:
       - billingServiceAuth: []
@@ -199,6 +202,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Get one tenant invoice and settlement links
+      description: Returns 404 for an invoice outside the current caller's proven responsibility periods, including predecessor and mixed-period invoices. Departed owners have no tenant access even to their historical invoices.
       operationId: getBillingInvoice
       security:
       - billingServiceAuth: []
@@ -228,6 +232,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Download an immutable issued invoice PDF
+      description: Applies the same period authorization as invoice detail before reading document bytes. A known invoice UUID does not authorize a predecessor document.
       operationId: downloadBillingInvoicePdf
       security:
       - billingServiceAuth: []
@@ -262,6 +267,7 @@ paths:
       tags:
       - Billing and Payments
       summary: List normalized customer-safe billing activity
+      description: Activity items, filtered totals and summary counts include only resources proven to belong to the current caller's responsibility periods. Unknown and predecessor resources are withheld; payment metadata is independently period-filtered.
       operationId: listBillingActivity
       security:
       - billingServiceAuth: []
@@ -288,6 +294,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Get one customer-safe billing activity timeline
+      description: Parent activity authorization and related timeline reads share an authorized snapshot. Predecessor or unproven resource IDs return 404.
       operationId: getBillingActivity
       security:
       - billingServiceAuth: []
@@ -386,6 +393,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Export tenant billing activity as UTF-8 CSV
+      description: Exports invoice statement rows using the same responsibility-period visibility as invoice lists, including returning-owner and unknown-record exclusions. Export permission alone does not authorize predecessor records.
       operationId: exportBillingStatement
       security:
       - billingServiceAuth: []
@@ -450,6 +458,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: List immutable customer-safe balance ledger entries.
+      description: Only entries with proven bindings to the current caller's responsibility periods are returned or counted. Invoice-linked entries also require the invoice's whole interval and recipient version to match that period. The confirmed opening balance does not expose its predecessor entries.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/Limit'
@@ -481,6 +490,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: List redacted organization payment methods.
+      description: Redaction is not authorization. Only methods bound to the current caller's proven responsibility periods are visible. Previous-period methods remain revoked and cannot be reused or mutated, even after that owner returns.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/Limit'
@@ -556,6 +566,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Revoke a payment method and disable its active automatic top-up policy.
+      description: The method must belong to the current ownership version. Predecessor, unknown and the caller's previous-period method IDs return 404, including already-revoked methods.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/PaymentMethodId'
@@ -596,6 +607,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Read the automatic top-up policy and Asia/Taipei safety-limit reset.
+      description: Returns auto_topup=null when no current-period policy exists. A retained predecessor policy is not the successor's configuration and is not disclosed.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       responses:
@@ -624,6 +636,7 @@ paths:
       - billingServiceAuth: []
       summary: Replace the automatic top-up policy using optimistic concurrency and
         explicit consent.
+      description: Requires the current owner's active current-period method and new consent. If-Match 0 creates a logical new configuration, including replacement of a proven revoked and disabled predecessor configuration. That predecessor snapshot is archived internally and generations remain monotonic. Existing current-period configuration requires its exact version; unknown legacy configuration is not automatically adopted.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/IfMatchVersion'
@@ -665,6 +678,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Disable automatic top-up and advance the policy generation.
+      description: Requires a current-period policy. A retained predecessor policy returns 404 even if already disabled; this endpoint cannot reveal its settings.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/IfMatchVersion'
@@ -787,6 +801,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: List customer-safe payment intent history.
+      description: Items and totals include only intents with immutable bindings to the current caller's proven responsibility periods. Predecessor and unproven legacy intents are withheld.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/Limit'
@@ -818,6 +833,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Read one customer-safe payment intent and its normalized attempts.
+      description: Both intent and attempts require proven period visibility. Known predecessor or unproven intent IDs return 404.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/PaymentIntentId'

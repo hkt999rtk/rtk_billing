@@ -122,14 +122,49 @@ has been made for this implementation branch.
 - Service OpenAPI and its import regression guard document the mandatory version
   header on every tenant path. Production BFF propagation/bootstrap integration
   has **not** been implemented yet, so this branch must not be deployed alone.
-  Owner entry checks are **not** historical-query filtering: the remaining reads,
-  aggregates, exports and payment metadata still require the period-scoped work below.
+  The entry checks are complemented by the period-scoped reads below; entry
+  authorization alone does not authorize a predecessor's financial history.
 - A validated provider setup response is reconciled independently of the now-stale
   tenant request, preserving invalidation evidence without reactivating old methods.
   Hosted setup/checkout responses recheck owner/version before exposing actions to
   the browser. A synchronous setup response arriving after local finalization is
   tested to record evidence while returning an invalidated-setup conflict without
   the old hosted URL. This does not yet implement the BFF hosted-return binding.
+- Forward migration `053_financial_record_responsibility.sql` binds newly created
+  payment methods and ledger entries to proven responsibility periods. Payment
+  credits inherit the original intent binding, invoice debits require a matching
+  recipient version and whole-period containment, and current manual
+  adjustments use the current period. Unproven legacy records are not backfilled.
+  These bindings are append-only; they do not change monetary liability or permit
+  late predecessor usage to debit a successor. Production cutoff routing is still
+  a separate deployment gate.
+- Invoice detail, PDF bytes, lists/counts, invoice CSV statements, activity and
+  timelines, ledger and payment-method/intent/attempt reads now enforce proven
+  responsibility-period visibility. Whole mixed-period or unproven invoices are
+  withheld. Returning owners can read their own earlier periods but not intervening
+  periods; departed owners cannot read even their own history through tenant APIs.
+  Related records and each page/count share a repeatable-read, account-locked
+  authorized snapshot. Authority/fence transitions touch the guard row so a reader
+  with an older PostgreSQL snapshot cannot retain old authority after waiting for
+  that lock. Such conflicts return retryable `BILLING_SNAPSHOT_CONFLICT`, not data.
+- Usage is period-filtered before pricing, counting or aggregation. A window must
+  fit wholly inside one proven caller period; unknown/cross-period windows are
+  withheld, never guessed or prorated. Summary/forecast inputs start at the later
+  of month start and current tenure start. Explicit historical queries can include
+  earlier own periods, but not predecessor/intervening quantities or costs.
+- The current auto-topup projection excludes prior-period methods. DELETE and
+  method mutations enforce the same current-version boundary, even for revoked
+  rows. A new owner can configure a proven retired policy with their own new
+  method and consent, using logical-create version zero. The old projection is
+  archived in append-only restricted evidence, creation metadata resets and
+  policy generations/versions remain monotonic. Current configuration needs an
+  exact version; unknown legacy configuration cannot be silently adopted.
+  Manual payment completion no longer rearms a disabled predecessor policy.
+- Manual and hosted top-up retries additionally require the original intent's
+  binding to the current ownership version. Possessing an old idempotency key
+  cannot reveal predecessor or previous-tenure transactions; current retries
+  remain idempotent. Provider reconciliation continues through its original
+  separately trusted binding, not tenant history authorization.
 
 ## Verification
 
@@ -239,6 +274,34 @@ Owner-boundary checkpoint evidence:
   browser access. Fixtures provision synthetic ownership explicitly, never as a
   request-helper fallback; production identity/bootstrap integration remains absent.
 
+Financial privacy checkpoint evidence:
+
+- A fresh isolated `multicloud_billing_privacy_guard_test` database on loopback
+  port 63229 applied every migration through the final unpublished 053. Earlier
+  `multicloud_billing_privacy_test` / `multicloud_billing_privacy_final_test` databases
+  contain intermediate 053 versions and are not final-migration evidence.
+- Full uncached `go test ./... -count=1` passed (API 9.997s, payment store 20.140s,
+  worker service 12.802s). Final targeted race checks passed (API 4.674s, store
+  11.066s). These are correctness checks, not scale benchmarks. Privacy/guard
+  tests also passed three repeated runs; the additional unknown-policy/hosted-key
+  test passed separately and in the final full/race suites.
+- `go vet ./...`, `git diff --check` and the OpenAPI import regression passed.
+  Final logs: `/tmp/rtk-billing-privacy-suite-final-20260831.log`,
+  `/tmp/rtk-billing-privacy-race-final-20260831.log`, and repeated-run log
+  `/tmp/rtk-billing-privacy-repeated-20260831.log`.
+- Database-backed HTTP coverage includes two transfers A→B→A, direct IDs/PDF
+  bytes/CSV, lists/counts/pagination, hidden predecessor and unproven records,
+  mixed usage/invoice windows, current-period summary/forecast and old method
+  mutation denial. It also covers retired-policy replacement with new consent,
+  immutable policy evidence, blind-overwrite rejection and old-key replay denial.
+  A deterministic pre-fence PostgreSQL snapshot test verifies that waiting with
+  an old snapshot cannot retain authority; fresh fenced/departed reads fail too.
+- Fixtures use synthetic trusted collector/AM receipts and deliberately identifying
+  fake PDF bytes. They prove local authorization and privacy, not production
+  collector completeness, PDF rendering, real AM membership changes, migration
+  reconciliation, BFF/browser scope isolation or staging acceptance. No shared or
+  staging database was changed; this branch still must not be deployed alone.
+
 ## Not implemented / deployment gate
 
 There is deliberately no externally callable prepare/bootstrap/collector route yet
@@ -258,13 +321,15 @@ Remaining work includes:
    retry workers. Add the audited forward-reconciliation clearance path for changed
    provider evidence after an observed commit; currently such drift keeps the
    operation `finalizing` and cannot be canceled, rather than silently releasing it.
-3. Complete responsibility-period privacy for all Billing reads, aggregates,
-   downloads, usage/forecasts, payment metadata and hosted returns. Revalidate
-   authority together with those queries, not only at HTTP admission; account and
-   profile operations are transaction-scoped already, but other reads are not.
-   Connect the BFF's authenticated global actor and ownership version plus trusted
+3. Connect the BFF's authenticated global actor and ownership version plus trusted
    signup/migration responsibility/profile provisioning. Existing accounts without
-   evidence intentionally fail closed. Implement separately audited platform reads.
+   evidence intentionally fail closed. Tenant period filters are now implemented
+   locally, but reviewed historical method/ledger binding and migration preflight,
+   separately audited platform history reads, the safe opening-balance UI projection,
+   and hosted-return browser binding still need integration. Activity enumeration
+   no longer silently truncates source rows at 500, but still materializes visible
+   history for normalization/filtering. SQL-bounded pagination and realistic scale
+   evidence are required before enabling this for large production accounts.
 4. Connect the local predecessor adjustment/review store to signature-verified
    provider adapters, durable inbox/reconciliation workers and restricted platform
    exception/recovery tooling. Routing must not mutate generic payment-state inbox
@@ -278,7 +343,7 @@ Preparing records and simulated terminal phase changes in low-level tests do not
 prove an end-to-end ownership transfer. Existing cutoff debit ingestion is not
 ingestion-completeness proof. Outstanding work must keep readiness fail-closed.
 Snapshot freshness currently hashes per-cloud financial rows; scale evidence,
-production producer holds, owner/version access enforcement, historical privacy,
+production producer holds, integrated owner/version propagation and privacy,
 and predecessor compensation routing must be established before enabling the
 protocol endpoints. The SQL commit barrier does not prove producer completeness.
 A bare persisted `prepared` phase is never a substitute for live financial status

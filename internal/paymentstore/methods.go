@@ -143,10 +143,12 @@ func getConsentForUpdate(ctx context.Context, tx pgx.Tx, consentID string) (paym
 }
 
 func getPaymentMethodForUpdate(ctx context.Context, tx pgx.Tx, methodID string) (payment.PaymentMethod, error) {
+	args := []any{methodID}
+	visibility := methodVisibility(ctx, &args, true)
 	return scanPaymentMethod(tx.QueryRow(ctx, `
 		SELECT `+paymentMethodColumns+`
 		FROM payment_methods
-		WHERE id = $1
+		WHERE id = $1 AND `+visibility+`
 		FOR UPDATE
-	`, methodID))
+	`, args...))
 }

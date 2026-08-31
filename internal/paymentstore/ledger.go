@@ -353,16 +353,21 @@ func rearmPolicyAfterCreditTx(ctx context.Context, tx pgx.Tx, account payment.Co
 }
 
 func (s *Store) ListLedgerEntries(ctx context.Context, accountID string, limit int) ([]payment.LedgerEntry, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) ([]payment.LedgerEntry, error) { return view.ListLedgerEntries(ctx, accountID, limit) })
+	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	args := []any{accountID, limit}
+	visibility := ledgerVisibility(ctx, &args)
 	rows, err := s.db.Query(ctx, `
 		SELECT `+ledgerColumns+`
 		FROM balance_ledger_entries
-		WHERE account_id = $1
+		WHERE account_id = $1 AND `+visibility+`
 		ORDER BY created_at, id
 		LIMIT $2
-	`, accountID, limit)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -384,21 +389,28 @@ type LedgerEntryPage struct {
 }
 
 func (s *Store) ListLedgerEntriesPage(ctx context.Context, accountID string, limit, offset int) (LedgerEntryPage, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) (LedgerEntryPage, error) {
+			return view.ListLedgerEntriesPage(ctx, accountID, limit, offset)
+		})
+	}
 	if !required(accountID) {
 		return LedgerEntryPage{}, ErrConflict
 	}
 	limit, offset = boundedPage(limit, offset)
+	args := []any{accountID}
+	visibility := ledgerVisibility(ctx, &args)
 	var total int
-	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM balance_ledger_entries WHERE account_id = $1`, accountID).Scan(&total); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM balance_ledger_entries WHERE account_id = $1 AND `+visibility, args...).Scan(&total); err != nil {
 		return LedgerEntryPage{}, err
 	}
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(ctx, `
 		SELECT `+ledgerColumns+`
 		FROM balance_ledger_entries
-		WHERE account_id = $1
+		WHERE account_id = $1 AND `+visibility+`
 		ORDER BY created_at DESC, id DESC
-		LIMIT $2 OFFSET $3
-	`, accountID, limit, offset)
+		`+fmt.Sprintf("LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return LedgerEntryPage{}, err
 	}

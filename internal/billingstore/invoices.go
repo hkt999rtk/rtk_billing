@@ -179,6 +179,11 @@ func (s *Store) markPeriodIncomplete(ctx context.Context, periodID, code string,
 }
 
 func (s *Store) GetInvoiceByPeriod(ctx context.Context, organizationID, periodID string) (billing.Invoice, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (billing.Invoice, error) {
+			return view.GetInvoiceByPeriod(ctx, organizationID, periodID)
+		})
+	}
 	var id string
 	err := s.db.QueryRow(ctx, `SELECT id::text FROM billing_invoices WHERE organization_id = $1 AND period_id = $2`, organizationID, periodID).Scan(&id)
 	if err != nil {
@@ -188,7 +193,12 @@ func (s *Store) GetInvoiceByPeriod(ctx context.Context, organizationID, periodID
 }
 
 func (s *Store) GetInvoice(ctx context.Context, organizationID, invoiceID string) (billing.Invoice, error) {
-	invoice, err := scanInvoice(s.db.QueryRow(ctx, invoiceSelect+` WHERE invoices.organization_id = $1 AND invoices.id = $2`, organizationID, invoiceID))
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (billing.Invoice, error) { return view.GetInvoice(ctx, organizationID, invoiceID) })
+	}
+	args := []any{organizationID, invoiceID}
+	visibility := invoiceVisibility(ctx, &args)
+	invoice, err := scanInvoice(s.db.QueryRow(ctx, invoiceSelect+` WHERE invoices.organization_id = $1 AND invoices.id = $2 AND `+visibility, args...))
 	if err != nil {
 		return billing.Invoice{}, err
 	}
@@ -207,6 +217,9 @@ func (s *Store) GetInvoice(ctx context.Context, organizationID, invoiceID string
 }
 
 func (s *Store) ListInvoices(ctx context.Context, organizationID string, filter InvoiceFilter) (InvoicePage, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (InvoicePage, error) { return view.ListInvoices(ctx, organizationID, filter) })
+	}
 	if filter.Limit <= 0 || filter.Limit > 100 {
 		filter.Limit = 25
 	}
@@ -215,6 +228,7 @@ func (s *Store) ListInvoices(ctx context.Context, organizationID string, filter 
 	}
 	args := []any{organizationID}
 	conditions := []string{"invoices.organization_id = $1"}
+	conditions = append(conditions, invoiceVisibility(ctx, &args))
 	appendCondition := func(sql string, value any) {
 		args = append(args, value)
 		conditions = append(conditions, fmt.Sprintf(sql, len(args)))
@@ -356,14 +370,21 @@ func (s *Store) PutInvoiceDocument(ctx context.Context, organizationID, invoiceI
 }
 
 func (s *Store) GetInvoiceDocument(ctx context.Context, organizationID, invoiceID string) (InvoiceDocumentRecord, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (InvoiceDocumentRecord, error) {
+			return view.GetInvoiceDocument(ctx, organizationID, invoiceID)
+		})
+	}
+	args := []any{organizationID, invoiceID}
+	visibility := invoiceVisibility(ctx, &args)
 	var out InvoiceDocumentRecord
 	err := s.db.QueryRow(ctx, `
 		SELECT documents.content_type, documents.byte_length, documents.sha256, documents.renderer_version,
 		       documents.invoice_version, documents.generated_at, documents.document_bytes
 		FROM billing_invoice_documents AS documents
 		JOIN billing_invoices AS invoices ON invoices.id = documents.invoice_id
-		WHERE invoices.organization_id = $1 AND invoices.id = $2
-	`, organizationID, invoiceID).Scan(&out.Metadata.ContentType, &out.Metadata.ByteLength, &out.Metadata.SHA256,
+		WHERE invoices.organization_id = $1 AND invoices.id = $2 AND `+visibility,
+		args...).Scan(&out.Metadata.ContentType, &out.Metadata.ByteLength, &out.Metadata.SHA256,
 		&out.Metadata.RendererVersion, &out.Metadata.InvoiceVersion, &out.Metadata.GeneratedAt, &out.Bytes)
 	return out, mapNotFound(err)
 }

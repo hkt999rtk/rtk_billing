@@ -5,8 +5,10 @@ package billingidentity
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,13 +19,15 @@ var (
 	ErrDenied      = errors.New("current sole owner required")
 	ErrVersion     = errors.New("billing ownership version conflict")
 	ErrTransition  = errors.New("billing ownership commit in progress")
+	ErrSnapshot    = errors.New("billing read snapshot changed; retry with current authority")
 )
 
 type Scope struct {
-	OrganizationID   string
-	AccountID        string
-	UserID           string
-	OwnershipVersion int64
+	OrganizationID     string
+	AccountID          string
+	UserID             string
+	OwnershipVersion   int64
+	CurrentPeriodStart time.Time
 }
 
 type scopeKey struct{}
@@ -69,16 +73,17 @@ func (s *Store) AuthorizeOwner(ctx context.Context, organizationID, userID strin
 	scope.OrganizationID, scope.UserID, scope.OwnershipVersion = organizationID, userID, version
 	var owner *string
 	var currentVersion *int64
+	var periodStart *time.Time
 	var state string
 	var committing bool
-	err := s.db.QueryRow(ctx, `SELECT a.id::text,a.state,p.owner_user_id::text,p.ownership_version,
+	err := s.db.QueryRow(ctx, `SELECT a.id::text,a.state,p.owner_user_id::text,p.ownership_version,p.effective_from,
 		EXISTS(SELECT 1 FROM billing_ownership_handoffs h WHERE h.account_id=a.id AND
 		(h.phase IN ('commit_authorized','finalizing') OR (h.phase='abort_pending' AND EXISTS
 		(SELECT 1 FROM billing_handoff_commit_authorizations g WHERE g.operation_id=h.id))))
 		FROM commercial_accounts a LEFT JOIN billing_responsibility_periods p ON p.account_id=a.id AND p.effective_until IS NULL
 		WHERE a.organization_id=$1 AND a.currency='TWD'`, organizationID).
-		Scan(&scope.AccountID, &state, &owner, &currentVersion, &committing)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && (owner == nil || currentVersion == nil) {
+		Scan(&scope.AccountID, &state, &owner, &currentVersion, &periodStart, &committing)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (owner == nil || currentVersion == nil || periodStart == nil) {
 		return Scope{}, ErrUnavailable
 	}
 	if err != nil {
@@ -93,6 +98,7 @@ func (s *Store) AuthorizeOwner(ctx context.Context, organizationID, userID strin
 	if committing {
 		return Scope{}, ErrTransition
 	}
+	scope.CurrentPeriodStart = *periodStart
 	return scope, nil
 }
 
@@ -110,6 +116,10 @@ func LockAccount(ctx context.Context, tx pgx.Tx, accountID string) error {
 	}
 	var org, state string
 	if err := tx.QueryRow(ctx, `SELECT organization_id::text,state FROM commercial_accounts WHERE id=$1 FOR UPDATE`, accountID).Scan(&org, &state); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "40001" {
+			return ErrSnapshot
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrDenied
 		}

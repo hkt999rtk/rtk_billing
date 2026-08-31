@@ -37,6 +37,12 @@ class ExtractOpenAPITests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(imported["paths"][path][method]["security"], [{scheme: []}])
+        for suffix in ("billing/usage", "billing/invoices", "billing/invoices/{invoiceId}",
+                       "billing/invoices/{invoiceId}/pdf", "billing/activity", "billing/ledger",
+                       "billing/statements", "payment-methods", "payment-intents"):
+            path = "/v1/orgs/{orgId}/" + suffix
+            self.assertEqual(imported["paths"][path]["get"]["description"],
+                             checked_in["paths"][path]["get"]["description"])
 
 
 if __name__ == "__main__":
