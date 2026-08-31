@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
@@ -31,6 +32,10 @@ type rowScanner interface {
 }
 
 func mapNotFound(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55000" && pgErr.ConstraintName == "billing_handoff_commit_barrier" {
+		return ErrHandoffFenced
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

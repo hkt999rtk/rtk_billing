@@ -54,6 +54,32 @@ has been made for this implementation branch.
   version, phase, snapshot version and exact currency/amount. Concurrent retries
   persist once per participant/version with atomic audit. Both confirmations leave
   ownership and the monetary fence unchanged; they do not authorize owner commit.
+- Forward migration `051_handoff_commit_protocol.sql` adds immutable commit
+  authorizations, observed Account Manager committed decisions, finalization
+  acknowledgments, precommit cancellation receipts and hold-release acknowledgments.
+  Authorization rechecks the live snapshot and both stored confirmations. SQL
+  account-serialized barriers prevent post-authorization ledger/balance, usage,
+  invoice, period and settlement-link mutations from changing the confirmed amount.
+  Provider inbox evidence is still writable; producer outboxes must retain rejected
+  writes for reconciliation rather than treating the fence as permission to drop them.
+- Finalization first persists the trusted AM committed decision in a separate
+  transaction, entering `finalizing`. A later audit/profile/consent failure cannot
+  erase that decision or make cancellation legal again. Local finalization then
+  closes/opens responsibility periods, records the unchanged opening balance,
+  revokes old consents/methods and disables automatic charging atomically with audit.
+  Exact retries return the durable acknowledgment without repeating side effects.
+  Logical grant/version binding establishes ordering; independent host wall clocks
+  are not compared as a substitute for AM's committed decision.
+- Prospective source profiles are archived in restricted immutable evidence.
+  The active profile is reset to blank, `requires_configuration=true`, and the new
+  ownership version, with a newer ETag. Invoice issuance is blocked until configured;
+  draft arithmetic/usage accounting may continue without copying predecessor PII.
+  Historical invoice recipient snapshots and ledger balances are not rewritten.
+- Abort requires a trusted AM precommit cancellation receipt bound to any issued
+  commit grant, followed by explicit producer-hold release acknowledgment. The
+  interval remains fenced. Abort never restores revoked methods/consents or a
+  policy disabled while held. Once a committed decision is observed, only forward
+  finalization/reconciliation is permitted, never rollback to source ownership.
 
 ## Verification
 
@@ -61,8 +87,10 @@ Preparation tests used the isolated loopback PostgreSQL `multicloud_billing_test
 database on port 63229. Snapshot testing uses the separate fresh database
 `multicloud_billing_settlement_test` on that same local container, including all
 migrations from scratch. Neither is staging or shared development data. Use the
-new snapshot test database for subsequent work: the older local database applied
-an intermediate, unpublished 050 and is not the final-migration evidence source.
+new commit test database `multicloud_billing_commit_test` for subsequent work.
+It applied the final 049/050/051 migrations from scratch. The earlier local test
+databases applied intermediate unpublished migrations and are not the current
+final-migration evidence source.
 
 - Full `go test ./...` passed after the initial preparation/fence implementation.
 - API/store handoff tests repeated three times passed, including authenticated
@@ -100,13 +128,31 @@ Snapshot checkpoint evidence:
   audit atomicity and nonnegative amount rules, not real producer/provider
   settlement completeness. Production collector integration is still outstanding.
 
+Commit protocol checkpoint evidence:
+
+- Fresh-database full `go test ./... -count=1` passed, including profile reset and
+  returning-owner periods (payment store 12.793s, worker service 8.822s).
+- API/store handoff tests repeated three times passed. Targeted race checks passed
+  for payment store, worker service and API. Full/race durations are not benchmarks.
+- `go vet ./...`, `git diff --check` and the service's OpenAPI import regression
+  test (`python3 -m unittest discover -s scripts -p 'test_extract_openapi.py'`) passed.
+- Logs: `/tmp/rtk-billing-commit-suite-final-20260831.log`,
+  `/tmp/rtk-billing-commit-repeated-20260831.log`,
+  `/tmp/rtk-billing-commit-race-20260831.log`.
+- Tests prove local atomicity, immutable replay, current source-period checks,
+  account-serialized commit barriers, durable commit observation before failed
+  finalization, no post-observation cancellation, unchanged opening balance,
+  revocation/profile reset and new periods for returning owners. They do not prove
+  production AM decision authentication, membership mutation, historical-read
+  privacy or predecessor compensation handling; those remain deployment gates.
+
 ## Not implemented / deployment gate
 
 There is deliberately no externally callable prepare/bootstrap/collector route yet
-and no owner-commit/finalize/abort implementation. Trusted collector storage can
-advance a preparation to a confirmable snapshot, but no production collector is
-connected. Do not enable transfers or bootstrap historical responsibility from a
-today's-owner lookup.
+and no production cross-service coordinator. Store-level commit/finalize/abort
+logic is implemented, but trusted collectors/AM decision delivery are not connected.
+Do not enable transfers or bootstrap historical responsibility from a today's-owner
+lookup. Synthetic AM receipt hashes in protocol tests are not real owner mutations.
 
 Remaining work includes:
 
@@ -115,9 +161,10 @@ Remaining work includes:
    reconciliation checkpoint collectors and routing of versioned snapshots and
    both confirmations. The collector must observe local state before gathering
    independently verified checkpoints, not append a fresh digest to stale reports.
-2. Commit authorization, permanent old-payment-consent revocation, profile retirement
-   and reset, responsibility close/open, durable finalize/abort acknowledgments.
-   Owner-commit failures must finish forward, not restore predecessor access.
+2. Connect commit/finalize/abort receipts to authenticated AM durable decisions and
+   retry workers. Add the audited forward-reconciliation clearance path for changed
+   provider evidence after an observed commit; currently such drift keeps the
+   operation `finalizing` and cannot be canceled, rather than silently releasing it.
 3. Current-owner/ownership-version enforcement and responsibility-period privacy
    for all Billing reads, aggregates, downloads, payment metadata and hosted returns.
    Existing tenant permission-header authorization is not sufficient.
@@ -129,7 +176,9 @@ Remaining work includes:
 Preparing records and simulated terminal phase changes in low-level tests do not
 prove an end-to-end ownership transfer. Existing cutoff debit ingestion is not
 ingestion-completeness proof. Outstanding work must keep readiness fail-closed.
-Snapshot freshness currently hashes per-cloud financial rows; scale evidence and
-the final synchronized producer/write fence must be established before enabling
-commit. A bare persisted `prepared` phase is never a substitute for live financial
-status or the later commit authorization protocol.
+Snapshot freshness currently hashes per-cloud financial rows; scale evidence,
+production producer holds, owner/version access enforcement, historical privacy,
+and predecessor compensation routing must be established before enabling the
+protocol endpoints. The SQL commit barrier does not prove producer completeness.
+A bare persisted `prepared` phase is never a substitute for live financial status
+or the explicit commit authorization protocol.

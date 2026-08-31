@@ -69,7 +69,7 @@ func validHandoffScope(scope HandoffScope) bool {
 	return canonicalUUID(scope.OrganizationID) && canonicalUUID(scope.OperationID) && scope.OwnershipVersion > 0
 }
 
-func loadHandoffScopeTx(ctx context.Context, tx pgx.Tx, scope HandoffScope) (payment.CommercialAccount, OwnershipHandoff, error) {
+func lockHandoffOperationTx(ctx context.Context, tx pgx.Tx, scope HandoffScope) (payment.CommercialAccount, OwnershipHandoff, error) {
 	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts
 		WHERE organization_id=$1 AND currency='TWD' FOR UPDATE`, scope.OrganizationID))
 	if err != nil {
@@ -83,14 +83,26 @@ func loadHandoffScopeTx(ctx context.Context, tx pgx.Tx, scope HandoffScope) (pay
 	if op.OwnershipVersion != scope.OwnershipVersion {
 		return account, op, ErrOwnershipVersionConflict
 	}
+	return account, op, nil
+}
+
+func loadHandoffScopeTx(ctx context.Context, tx pgx.Tx, scope HandoffScope) (payment.CommercialAccount, OwnershipHandoff, error) {
+	account, op, err := lockHandoffOperationTx(ctx, tx, scope)
+	if err != nil {
+		return account, op, err
+	}
+	return account, op, requireSourceResponsibilityTx(ctx, tx, account, op)
+}
+
+func requireSourceResponsibilityTx(ctx context.Context, tx pgx.Tx, account payment.CommercialAccount, op OwnershipHandoff) error {
 	var current bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_responsibility_periods
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_responsibility_periods
 		WHERE account_id=$1 AND owner_user_id=$2 AND ownership_version=$3 AND effective_until IS NULL)`,
 		account.ID, op.SourceUserID, op.OwnershipVersion).Scan(&current)
 	if err == nil && !current {
 		err = ErrOwnershipVersionConflict
 	}
-	return account, op, err
+	return err
 }
 
 func (s *Store) CaptureHandoffSettlementState(ctx context.Context, scope HandoffScope) (SettlementState, error) {

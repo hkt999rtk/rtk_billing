@@ -42,6 +42,7 @@ func newPaymentIntegrationEnv(t *testing.T) paymentIntegrationEnv {
 	if _, err := db.Exec(ctx, `
 		TRUNCATE
 			billing_audit_events,
+			billing_profiles,
 			billing_usage_facts,
 			billing_periods,
 			pricing_plan_versions,

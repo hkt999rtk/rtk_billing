@@ -37,9 +37,13 @@ func (s *Store) EnsureBillingProfile(ctx context.Context, organizationID string,
 	}
 	var created bool
 	err = s.db.QueryRow(ctx, `
-		WITH inserted AS (
-			INSERT INTO billing_profiles (organization_id, legal_name, locale, timezone, delivery_preference, created_at, updated_at)
-			VALUES ($1::uuid, $1::uuid::text, 'zh-TW', 'Asia/Taipei', 'portal', $2, $2)
+		WITH responsibility AS (
+			SELECT r.ownership_version FROM billing_responsibility_periods r JOIN commercial_accounts a ON a.id=r.account_id
+			WHERE a.organization_id=$1 AND a.currency='TWD' AND r.effective_until IS NULL
+		), inserted AS (
+			INSERT INTO billing_profiles (organization_id, legal_name, ownership_version, requires_configuration, locale, timezone, delivery_preference, created_at, updated_at)
+			VALUES ($1::uuid, CASE WHEN EXISTS(SELECT 1 FROM responsibility) THEN '' ELSE $1::uuid::text END,
+			(SELECT ownership_version FROM responsibility), EXISTS(SELECT 1 FROM responsibility), 'zh-TW', 'Asia/Taipei', 'portal', $2, $2)
 			ON CONFLICT (organization_id) DO NOTHING
 			RETURNING true
 		)
@@ -55,7 +59,7 @@ func (s *Store) EnsureBillingProfile(ctx context.Context, organizationID string,
 func (s *Store) GetBillingProfile(ctx context.Context, organizationID string) (billing.BillingProfile, error) {
 	return scanProfile(s.db.QueryRow(ctx, `
 		SELECT organization_id::text, legal_name, COALESCE(tax_identifier, ''), COALESCE(billing_address, ''),
-		       COALESCE(contact_email, ''), locale, timezone, delivery_preference, version, created_at, updated_at
+		       COALESCE(contact_email, ''), locale, timezone, delivery_preference, version, created_at, updated_at,ownership_version,requires_configuration
 		FROM billing_profiles WHERE organization_id = $1
 	`, organizationID))
 }
@@ -72,10 +76,10 @@ func (s *Store) PutBillingProfile(ctx context.Context, in PutProfileInput) (bill
 		UPDATE billing_profiles
 		SET legal_name = $3, tax_identifier = NULLIF($4, ''), billing_address = NULLIF($5, ''),
 		    contact_email = NULLIF($6, ''), locale = $7, timezone = $8, delivery_preference = $9,
-		    version = version + 1, updated_at = $10
+		    version = version + 1, updated_at = $10, requires_configuration=false
 		WHERE organization_id = $1 AND version = $2
 		RETURNING organization_id::text, legal_name, COALESCE(tax_identifier, ''), COALESCE(billing_address, ''),
-		          COALESCE(contact_email, ''), locale, timezone, delivery_preference, version, created_at, updated_at
+		          COALESCE(contact_email, ''), locale, timezone, delivery_preference, version, created_at, updated_at,ownership_version,requires_configuration
 	`, in.OrganizationID, in.ExpectedVersion, strings.TrimSpace(in.LegalName), strings.TrimSpace(in.TaxIdentifier),
 		strings.TrimSpace(in.BillingAddress), strings.TrimSpace(in.ContactEmail), strings.TrimSpace(in.Locale),
 		strings.TrimSpace(in.Timezone), in.DeliveryPreference, in.Now.UTC()))
@@ -94,7 +98,7 @@ func (s *Store) PutBillingProfile(ctx context.Context, in PutProfileInput) (bill
 func scanProfile(row rowScanner) (billing.BillingProfile, error) {
 	var out billing.BillingProfile
 	err := row.Scan(&out.OrganizationID, &out.LegalName, &out.TaxIdentifier, &out.BillingAddress, &out.ContactEmail,
-		&out.Locale, &out.Timezone, &out.DeliveryPreference, &out.Version, &out.CreatedAt, &out.UpdatedAt)
+		&out.Locale, &out.Timezone, &out.DeliveryPreference, &out.Version, &out.CreatedAt, &out.UpdatedAt, &out.OwnershipVersion, &out.RequiresConfiguration)
 	return out, mapNotFound(err)
 }
 

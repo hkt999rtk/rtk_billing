@@ -85,6 +85,10 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		_ = s.markPeriodIncomplete(ctx, periodID, "billing_profile_missing", in.Now)
 		return billing.Invoice{}, false, err
 	}
+	if profile.RequiresConfiguration {
+		_ = s.markPeriodIncomplete(ctx, periodID, "billing_profile_configuration_required", in.Now)
+		return billing.Invoice{}, false, billing.ErrProfileConfigurationRequired
+	}
 	draft, err := billing.BuildDraftInvoice(billing.Invoice{
 		OrganizationID: in.OrganizationID, AccountID: in.AccountID, PeriodID: periodID,
 		PricingVersionID: pricing.ID, Currency: in.Currency, PeriodStart: in.PeriodStart.UTC(), PeriodEnd: in.PeriodEnd.UTC(),

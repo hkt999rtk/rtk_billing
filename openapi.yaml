@@ -303,6 +303,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Get the prospective billing recipient profile
+      description: After ownership handoff, the active profile is blank with requires_configuration=true and the new ownership_version. Historical recipient snapshots are not copied to the incoming owner. A configured profile is required before new invoice issuance.
       operationId: getBillingProfile
       security:
       - billingServiceAuth: []
@@ -315,6 +316,16 @@ paths:
       responses:
         '200':
           description: Billing profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [billing_profile, profile]
+                properties:
+                  billing_profile:
+                    $ref: '#/components/schemas/BillingProfile'
+                  profile:
+                    $ref: '#/components/schemas/BillingProfile'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-PROFILE-001
@@ -322,6 +333,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Replace the prospective billing recipient profile
+      description: A successful replacement configures the current owner's profile. Finalization increments the profile version, invalidating pre-handoff If-Match values; clients cannot restore an old recipient using a stale form.
       operationId: putBillingProfile
       security:
       - billingServiceAuth: []
@@ -1015,6 +1027,26 @@ components:
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    BillingProfile:
+      type: object
+      required: [legal_name, locale, timezone, delivery_preference, version, requires_configuration]
+      properties:
+        organization_id: {type: string, format: uuid, readOnly: true}
+        ownership_version: {type: integer, minimum: 1, readOnly: true}
+        requires_configuration:
+          type: boolean
+          readOnly: true
+          description: True for an unset current-owner profile; invoice issuance is blocked until the owner supplies a replacement.
+        legal_name: {type: string}
+        tax_identifier: {type: string}
+        billing_address: {type: string}
+        contact_email: {type: string}
+        locale: {type: string}
+        timezone: {type: string}
+        delivery_preference: {type: string, enum: [portal, portal_and_email]}
+        version: {type: integer, minimum: 1, readOnly: true}
+        created_at: {type: string, format: date-time, readOnly: true}
+        updated_at: {type: string, format: date-time, readOnly: true}
     BillingForecast:
       type: object
       required: [state, observation_days, confidence, calculated_at]

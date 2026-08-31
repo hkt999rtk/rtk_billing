@@ -9,9 +9,10 @@ import (
 )
 
 var (
-	ErrInvalidInvoice = errors.New("invalid invoice")
-	ErrInvoiceIssued  = errors.New("issued invoice is immutable")
-	ErrRateNotFound   = errors.New("pricing rate not found")
+	ErrInvalidInvoice               = errors.New("invalid invoice")
+	ErrInvoiceIssued                = errors.New("issued invoice is immutable")
+	ErrRateNotFound                 = errors.New("pricing rate not found")
+	ErrProfileConfigurationRequired = errors.New("billing profile configuration is required")
 )
 
 func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) (Invoice, error) {
@@ -101,6 +102,9 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 }
 
 func IssueInvoice(invoice Invoice, number string, now time.Time, dueAt time.Time) (Invoice, error) {
+	if invoice.Recipient.RequiresConfiguration {
+		return Invoice{}, ErrProfileConfigurationRequired
+	}
 	if invoice.State != InvoiceStateDraft || invoice.IssuedAt != nil || strings.TrimSpace(number) == "" || dueAt.Before(now) {
 		return Invoice{}, ErrInvalidInvoice
 	}

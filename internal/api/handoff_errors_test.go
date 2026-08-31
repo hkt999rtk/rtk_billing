@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
 	"github.com/hkt999rtk/rtk_billing/internal/testutil"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestHandoffPaymentErrorsAreExplicitConflicts(t *testing.T) {
@@ -30,6 +32,23 @@ func TestHandoffPaymentErrorsAreExplicitConflicts(t *testing.T) {
 		r := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(r)
 		writePaymentSetupError(c, test.err)
+		if r.Code != http.StatusConflict || !strings.Contains(r.Body.String(), test.code) {
+			t.Fatalf("error=%v status=%d body=%s", test.err, r.Code, r.Body.String())
+		}
+	}
+}
+
+func TestBillingHandoffCommitAndProfileErrorsAreExplicitConflicts(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{billing.ErrProfileConfigurationRequired, "BILLING_PROFILE_CONFIGURATION_REQUIRED"},
+		{&pgconn.PgError{Code: "55000", ConstraintName: "billing_handoff_commit_barrier"}, "BILLING_OWNERSHIP_HANDOFF_FENCED"},
+	} {
+		r := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(r)
+		writeBillingError(c, test.err)
 		if r.Code != http.StatusConflict || !strings.Contains(r.Body.String(), test.code) {
 			t.Fatalf("error=%v status=%d body=%s", test.err, r.Code, r.Body.String())
 		}

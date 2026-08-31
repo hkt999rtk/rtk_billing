@@ -26,17 +26,19 @@ const (
 )
 
 type BillingProfile struct {
-	OrganizationID     string    `json:"organization_id,omitempty"`
-	LegalName          string    `json:"legal_name"`
-	TaxIdentifier      string    `json:"tax_identifier,omitempty"`
-	BillingAddress     string    `json:"billing_address,omitempty"`
-	ContactEmail       string    `json:"contact_email,omitempty"`
-	Locale             string    `json:"locale"`
-	Timezone           string    `json:"timezone"`
-	DeliveryPreference string    `json:"delivery_preference"`
-	Version            int64     `json:"version"`
-	CreatedAt          time.Time `json:"created_at,omitempty"`
-	UpdatedAt          time.Time `json:"updated_at,omitempty"`
+	OwnershipVersion      *int64    `json:"ownership_version,omitempty"`
+	RequiresConfiguration bool      `json:"requires_configuration"`
+	OrganizationID        string    `json:"organization_id,omitempty"`
+	LegalName             string    `json:"legal_name"`
+	TaxIdentifier         string    `json:"tax_identifier,omitempty"`
+	BillingAddress        string    `json:"billing_address,omitempty"`
+	ContactEmail          string    `json:"contact_email,omitempty"`
+	Locale                string    `json:"locale"`
+	Timezone              string    `json:"timezone"`
+	DeliveryPreference    string    `json:"delivery_preference"`
+	Version               int64     `json:"version"`
+	CreatedAt             time.Time `json:"created_at,omitempty"`
+	UpdatedAt             time.Time `json:"updated_at,omitempty"`
 }
 
 type PricingVersion struct {

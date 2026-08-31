@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/billingservice"
@@ -560,7 +561,14 @@ func parseBillingVersion(value string) (int64, bool) {
 }
 
 func writeBillingError(c *gin.Context, err error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55000" && pgErr.ConstraintName == "billing_handoff_commit_barrier" {
+		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_HANDOFF_FENCED", "Billing changes are paused during ownership handoff")
+		return
+	}
 	switch {
+	case errors.Is(err, billing.ErrProfileConfigurationRequired):
+		writeError(c, http.StatusConflict, "BILLING_PROFILE_CONFIGURATION_REQUIRED", "The current owner must configure a billing profile")
 	case errors.Is(err, billingstore.ErrNotFound):
 		writeError(c, http.StatusNotFound, "BILLING_RESOURCE_NOT_FOUND", "Billing resource was not found")
 	case errors.Is(err, billingstore.ErrConflict), errors.Is(err, billing.ErrInvalidInvoice), errors.Is(err, billing.ErrInvalidScale), errors.Is(err, billing.ErrRateNotFound):
