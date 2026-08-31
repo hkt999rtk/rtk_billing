@@ -486,6 +486,14 @@ paths:
       tags:
       - Internal Billing
       summary: Idempotently ingest a digest-anchored usage fact
+      description: >-
+        Replay is accepted only when every producer field matches the immutable
+        stored fact, not merely its source SHA-256. Organization UUIDs and hex
+        digests are canonicalized; windows use UTC microsecond precision and must
+        remain nonempty. Changed scope, quantity, measurement, window, or source
+        returns 409 even when the caller reuses the original digest. The server
+        assigns the fact ID. Acceptance does not certify source completeness or
+        ownership-transfer settlement readiness.
       operationId: putBillingUsageFact
       security:
       - billingInternalAuth: []

@@ -2,12 +2,13 @@ package billingstore
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
@@ -160,8 +161,22 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		fact.QuantityScale < 0 || fact.QuantityScale > 9 || !fact.WindowEnd.After(fact.WindowStart) {
 		return billing.UsageFact{}, false, ErrConflict
 	}
+	if _, err := hex.DecodeString(fact.SourceSHA256); err != nil {
+		return billing.UsageFact{}, false, ErrConflict
+	}
+	var organization pgtype.UUID
+	if err := organization.Scan(fact.OrganizationID); err != nil || !organization.Valid || organization.Bytes == [16]byte{} {
+		return billing.UsageFact{}, false, ErrConflict
+	}
+	fact.OrganizationID = organization.String()
+	fact.SourceSHA256 = strings.ToLower(fact.SourceSHA256)
+	fact.WindowStart = fact.WindowStart.UTC().Truncate(time.Microsecond)
+	fact.WindowEnd = fact.WindowEnd.UTC().Truncate(time.Microsecond)
+	if fact.WindowStart.IsZero() || !fact.WindowEnd.After(fact.WindowStart) {
+		return billing.UsageFact{}, false, ErrConflict
+	}
 	if stored, err := s.GetUsageFact(ctx, fact.UsageID); err == nil {
-		if stored.SourceSHA256 != strings.ToLower(fact.SourceSHA256) {
+		if !sameUsageFact(stored, fact) {
 			return billing.UsageFact{}, false, ErrConflict
 		}
 		return stored, false, nil
@@ -198,7 +213,7 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 	if err != nil {
 		return billing.UsageFact{}, false, err
 	}
-	if !created && stored.SourceSHA256 != strings.ToLower(fact.SourceSHA256) {
+	if !sameUsageFact(stored, fact) {
 		return billing.UsageFact{}, false, ErrConflict
 	}
 	return stored, created, nil
@@ -255,9 +270,12 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	return out, rows.Err()
 }
 
-func canonicalUsageDigest(fact billing.UsageFact) (string, error) {
-	encoded, err := json.Marshal(fact)
-	return string(encoded), err
+func sameUsageFact(a, b billing.UsageFact) bool {
+	// The upstream digest is provenance, not authority to change any persisted
+	// field. ID is assigned by this service and is not part of producer input.
+	return a.UsageID == b.UsageID && a.OrganizationID == b.OrganizationID &&
+		a.ServiceCode == b.ServiceCode && a.MetricCode == b.MetricCode &&
+		a.Quantity == b.Quantity && a.QuantityScale == b.QuantityScale && a.Unit == b.Unit &&
+		a.WindowStart.Equal(b.WindowStart) && a.WindowEnd.Equal(b.WindowEnd) &&
+		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256
 }
-
-var _ = canonicalUsageDigest

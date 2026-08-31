@@ -163,6 +163,16 @@ completeness or financial eligibility evidence.
 
 ### Advisory request/acceptance eligibility
 
+Usage replay requires exact equality of every immutable fact field, not just a
+caller-supplied source hash. The receipt binds cloud, service, metric, quantity,
+scale, unit, window and source. Source hashes must be hexadecimal SHA-256 values;
+UUIDs and UTC microsecond timestamps are normalized before insertion/replay.
+Forward migration 058 prevents rewriting/deleting accepted usage facts without
+changing earlier migration markers or historical values. Corrections require
+new auditable facts. This integrity gate is not producer completeness: source
+drain, durable forwarding, lateness and provider/invoice reconciliation still
+need independent collector proof before ownership can change.
+
 `POST /v1/internal/billing/clouds/{orgId}/ownership-eligibility` is a read-only
 financial query under the same dedicated handoff credential and 15-second
 deadline. Headers bind `X-Billing-Owner-User-ID` and the canonical positive
