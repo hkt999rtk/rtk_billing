@@ -4,6 +4,50 @@ This is implementation evidence, not replacement normative design. The approved
 target remains `cloud_ownership_handoff.md`. No runtime PR or staging deployment
 has been made for this implementation branch.
 
+## New-cloud responsibility bootstrap checkpoint — 2026-09-01
+
+Runtime `cbbf60d` adds migration 057 and a dedicated creation-event HTTP receiver.
+It binds the immutable initial global owner, cloud, version 1, event UUID and
+microsecond creation boundary supplied by AM's transactional migration-066
+outbox. Account, responsibility period, append-only receipt and audit commit
+together. Concurrent delivery and lost replies replay the original receipt;
+changed bindings, future timestamps and existing accounts without a matching
+receipt are rejected. No historic owner, funds, payment authorization or legal
+profile is inferred from a request or an empty database.
+
+Follow-ups `2d5b7c6` / `3fce593` remove all runtime implicit commercial-account
+creation from tenant account reads, internal debit and invoice period closing.
+Unprovisioned internal debit/close requests return retryable 503 without account,
+invoice or ledger writes. After the actual creation event commits, the original
+debit can be retried exactly once. Currency/amount validation remains 400 rather
+than being misclassified as a provisioning delay. `EnsureCommercialAccount`
+remains a low-level fixture/legacy migration primitive, not an HTTP interface.
+
+Focused race tests pass for atomicity, concurrent replay, audit rollback,
+credential separation, bounded strict HTTP and delayed provisioning. The
+independent AM/Billing test uses two owned databases and a compiled Billing HTTP
+fixture, not a mocked success receipt. It deliberately loses a committed reply
+and verifies one account, responsibility period and audit after recovery. The
+fixture does not deliver email, create a payment or prove financial readiness.
+
+Usage/invoice/provider collectors, complete producer inventory and historical
+provenance migration remain unimplemented release requirements. The settled
+balance >= 0 rule and independent blockers are unchanged. No service deployment,
+live provider action, runtime PR or parent gitlink publication occurred.
+
+Full PR-profile verification at `3fce593` passes in **78.330s**, run
+`local-billing-cloud-bootstrap-v3`: governed **74.01%**, all configured package
+ratchets and artifact redaction PASS. Report in the unpublished qualification
+checkout rooted at workspace `d128eab`:
+`.artifacts/test-runs/local-billing-cloud-bootstrap-v3/coverage/test_report.md`.
+Coverage SHA-256:
+`25f628767a2c5d77b40941b6708ffc90fb1293a4b2b9ef29123ceae99a70f52c`.
+Focused writer/validation race tests pass in 3.048s; OpenAPI/importer, vet and
+build checks pass. The 259-case inventory covers 393 requirements, 664 operations
+and 67 workflows with zero blocking findings (91 nonblocking unspecified
+normative candidates remain). No base ref was supplied: differential coverage,
+the default pre-PR gate and GitHub CI are not certified by this run.
+
 ## Implemented locally
 
 - Financial eligibility accepts settled available credit **>= 0**, including
