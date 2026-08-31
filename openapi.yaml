@@ -101,6 +101,7 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
   /v1/internal/billing/clouds/{orgId}/closures/{operationId}/cancel:
+    description: Pre-close cancellation is irreversible for this operation and never restores old payer authorization. Coordinator must first retire every outstanding close command, or finish AM tombstoning if closure already won. Producer/provider release acknowledgments remain independent prerequisites.
     parameters:
       - { $ref: '#/components/parameters/OrgId' }
       - { $ref: '#/components/parameters/HandoffOperationId' }
@@ -127,6 +128,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CloudClosureOperationResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/retire-command:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: retireBillingCloudCloseCommand
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Atomically retire a pending close command or return its already-committed closure.
+      description: Serialized with closure on the account. Retirement permanently prohibits this exact settlement/readiness command, including delayed retries. It does not release the lifecycle fence or create settlement evidence. Only a scope-bound retired receipt permits replacement. If closure already won, finish AM tombstoning; do not cancel or reopen. Exact retirement retries return the persisted result. Ambiguous HTTP errors do not prove retirement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosureCloseRequest' }
+      responses:
+        '200':
+          description: Durable, mutually exclusive retired or closed outcome.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudCloseResolutionResponse' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -1439,6 +1472,41 @@ components:
       properties:
         settlement_id: { type: string, format: uuid }
         am_readiness_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    CloudCloseResolutionResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [resolution]
+          properties:
+            resolution:
+              type: object
+              additionalProperties: false
+              required: [operation_id, settlement_id, am_readiness_sha256, outcome]
+              properties:
+                operation_id: { type: string, format: uuid }
+                settlement_id: { type: string, format: uuid }
+                am_readiness_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+                outcome: { type: string, enum: [retired, closed] }
+                receipt_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+                retired_at: { type: string, format: date-time }
+                acknowledgment:
+                  type: object
+                  required: [operation_id, phase, closed_at, receipt_sha256]
+                  properties:
+                    operation_id: { type: string, format: uuid }
+                    phase: { type: string, const: closed }
+                    closed_at: { type: string, format: date-time }
+                    receipt_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+              oneOf:
+                - required: [receipt_sha256, retired_at]
+                  properties: { outcome: { const: retired } }
+                  not: { required: [acknowledgment] }
+                - required: [acknowledgment]
+                  properties: { outcome: { const: closed } }
+                  not:
+                    anyOf:
+                      - required: [receipt_sha256]
+                      - required: [retired_at]
     CloudClosureCancelRequest:
       type: object
       additionalProperties: false

@@ -38,6 +38,7 @@ class ExtractOpenAPITests(unittest.TestCase):
             ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/prepare", "post", "billingHandoffAuth"),
             ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/status", "get", "billingHandoffAuth"),
             ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/close", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/retire-command", "post", "billingHandoffAuth"),
             ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/cancel", "post", "billingHandoffAuth"),
             ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/prepare", "post", "billingHandoffAuth"),
             ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/settlement", "get", "billingHandoffAuth"),

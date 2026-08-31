@@ -67,6 +67,7 @@ func (s *Server) ConfigureHandoff(in HandoffAPIOptions) error {
 		group.POST("/prepare", prepareCloudClosureHandler(closure))
 		group.GET("/status", cloudClosureStatusHandler(closure))
 		group.POST("/close", closeCloudHandler(closure))
+		group.POST("/retire-command", retireCloudCloseHandler(closure))
 		group.POST("/cancel", cancelCloudClosureHandler(closure))
 	}
 	r := cloud.Group("/ownership-handoffs/:operationId")

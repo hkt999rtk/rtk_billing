@@ -17,6 +17,7 @@ type cloudClosurePersistence interface {
 	GetCloudClosureStatus(context.Context, paymentstore.CloudClosureScope) (paymentstore.CloudClosureStatus, error)
 	CloseCloud(context.Context, paymentstore.CloseCloudInput) (paymentstore.CloudClosureAck, error)
 	CancelCloudClosure(context.Context, paymentstore.CloudClosureScope, string, string) (paymentstore.CloudClosure, error)
+	RetireCloudClose(context.Context, paymentstore.CloseCloudInput) (paymentstore.CloudCloseResolution, error)
 }
 
 func closureScope(c *gin.Context) (paymentstore.CloudClosureScope, bool) {
@@ -34,6 +35,8 @@ func closureScope(c *gin.Context) (paymentstore.CloudClosureScope, bool) {
 func closureReply(c *gin.Context, scope paymentstore.CloudClosureScope, field string, result any, err error) {
 	if err != nil {
 		switch {
+		case errors.Is(err, paymentstore.ErrCloudClosureCommandRetired):
+			writeError(c, http.StatusConflict, "BILLING_CLOSURE_COMMAND_RETIRED", "The original command is permanently retired")
 		case errors.Is(err, paymentstore.ErrNotFound):
 			writeError(c, http.StatusNotFound, "BILLING_CLOSURE_NOT_FOUND", "Closure scope not found")
 		case errors.Is(err, paymentstore.ErrCloudClosureNotReady), errors.Is(err, paymentstore.ErrSettlementEvidenceStale):
@@ -90,6 +93,12 @@ func cloudClosureStatusHandler(store cloudClosurePersistence) gin.HandlerFunc {
 	}
 }
 func closeCloudHandler(store cloudClosurePersistence) gin.HandlerFunc {
+	return cloudCloseCommandHandler(store, false)
+}
+func retireCloudCloseHandler(store cloudClosurePersistence) gin.HandlerFunc {
+	return cloudCloseCommandHandler(store, true)
+}
+func cloudCloseCommandHandler(store cloudClosurePersistence, retire bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		scope, ok := closureScope(c)
 		if !ok {
@@ -106,7 +115,13 @@ func closeCloudHandler(store cloudClosurePersistence) gin.HandlerFunc {
 			writeError(c, 400, "BILLING_CLOSURE_REQUEST_INVALID", "Exact settlement and AM resource readiness decision are required")
 			return
 		}
-		out, err := store.CloseCloud(c.Request.Context(), paymentstore.CloseCloudInput{Scope: scope, SettlementID: req.SettlementID, AMReadinessSHA256: req.AMReadinessSHA256})
+		in := paymentstore.CloseCloudInput{Scope: scope, SettlementID: req.SettlementID, AMReadinessSHA256: req.AMReadinessSHA256}
+		if retire {
+			out, err := store.RetireCloudClose(c.Request.Context(), in)
+			closureReply(c, scope, "resolution", out, err)
+			return
+		}
+		out, err := store.CloseCloud(c.Request.Context(), in)
 		closureReply(c, scope, "acknowledgment", out, err)
 	}
 }

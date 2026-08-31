@@ -505,6 +505,44 @@ Financial privacy checkpoint evidence:
   `/tmp/rtk-billing-cloud-closure-v3-race-20260831.log`. OpenAPI compatibility
   importer tests, `go vet ./...` and whitespace checks also passed.
 
+## Permanent close-command retirement checkpoint (056)
+
+- The dedicated coordinator API now includes `POST .../closures/{operationId}/retire-command`.
+  It accepts the exact close settlement/readiness command and, under the same
+  account lock as close, returns one durable outcome: permanently retired or the
+  original matching closed acknowledgment. An HTTP rejection alone does not
+  authorize AM to replace a command. Retirement never releases holds or creates
+  settlement/provider evidence.
+- Forward migration 056 adds immutable command-retirement receipts and SQL guards
+  against completing a retired command. Delayed retries stay rejected even if the
+  old settlement arrives later or a different command subsequently closes Billing.
+  Replays recover the stored receipt; mismatched committed commands conflict.
+  Receipt and audit commit atomically. Closed accounts are never reopened.
+- OpenAPI specifies mutually exclusive outcomes and the importer retains the
+  dedicated credential boundary. HTTP tests cover missing configuration, forbidden
+  credentials and malformed bodies for the new route. No provider/collector or
+  hold-release write endpoint is exposed by this change.
+- AM now consumes retirement proof before replacing stale evidence or canceling.
+  The four-mode cross-service fixture covers lost close response, stale evidence
+  plus lost retirement response, partial cancellation followed by final release,
+  and close winning cancellation. Both databases and HTTP/store implementations
+  are real; collector/provider/resource receipts remain synthetic test fixtures.
+  AM cancellation is currently a store command, not a public HTTP/BFF feature.
+- Verification: the full uncached Billing suite passed through 056 on
+  `multicloud_billing_closure_recovery_test` (paymentstore 113.950s,
+  paymentservice 64.401s), including AM cross-service fixtures. Targeted closure
+  race tests passed three runs (paymentstore 66.580s, API 24.107s), including eight
+  close/retirement races per run and audit rollback. OpenAPI importer tests and
+  `go vet ./...` passed. Logs: `/tmp/rtk-billing-deletion-recovery-suite-20260831.log`
+  and `/tmp/rtk-billing-deletion-recovery-race-20260831.log`.
+  All four cross-service modes passed three Billing race-instrumented runs
+  (34.467s) using fresh `multicloud_am_deletion_recovery_http_test` through
+  current AM 062; log: `/tmp/rtk-am-billing-deletion-recovery-cross-race-20260831.log`.
+  The AM child is separately compiled and its own targeted race tests passed three
+  runs, as recorded in AM's 062 checkpoint. These tests are not provider or staging
+  acceptance.
+  No runtime PR, shared-database change or deployment occurred.
+
 ## Not implemented / deployment gate
 
 ### AM deletion integration checkpoint
@@ -521,7 +559,9 @@ was added. Three Billing race-instrumented runs passed; log:
 `/tmp/rtk-am-billing-deletion-cross-race-20260831.log`. AM child tests compile and
 run independently; their own race checks are tracked in the AM checkpoint.
 The optional `ACCOUNT_MANAGER_DELETION_DATABASE_URL` selects the dedicated
-`multicloud_am_deletion_http_test` database on loopback port 63229. This does not
+`multicloud_am_deletion_http_test` database on loopback port 63229; the new recovery
+fixture also permits fresh `multicloud_am_deletion_recovery_http_test` through AM
+migration 062. This does not
 remove production collector/provider/resource-adapter or staging release gates.
 
 The optional dedicated handoff HTTP transport and separately compiled AM client

@@ -40,7 +40,7 @@ func closureHTTPRequest(t *testing.T, f handoffHTTPFixture, method, suffix, toke
 
 func TestCloudClosureHTTPBoundary(t *testing.T) {
 	f := newHandoffHTTPFixture(t, 0)
-	for _, suffix := range []string{"/prepare", "/status", "/close", "/cancel"} {
+	for _, suffix := range []string{"/prepare", "/status", "/close", "/cancel", "/retire-command"} {
 		method := http.MethodPost
 		if suffix == "/status" {
 			method = http.MethodGet
@@ -55,7 +55,7 @@ func TestCloudClosureHTTPBoundary(t *testing.T) {
 	for _, owner := range []string{"", "not-a-uuid", strings.ToUpper(f.source)} {
 		closureHTTPRequest(t, f, "GET", "/status", testHandoffToken, owner, "1", "", 400)
 	}
-	for _, suffix := range []string{"/prepare", "/close", "/cancel"} {
+	for _, suffix := range []string{"/prepare", "/close", "/cancel", "/retire-command"} {
 		for _, body := range []string{`null`, `{}`, `{} {}`, `{"financial_evidence":{"UsageSettled":true}}`, strings.Repeat(" ", 16*1024) + `{}`} {
 			closureHTTPRequest(t, f, "POST", suffix, testHandoffToken, f.source, "1", body, 400)
 		}
@@ -72,7 +72,7 @@ func TestCloudClosureHTTPBoundary(t *testing.T) {
 
 func TestCloudClosureRoutesAbsentWithoutConfiguration(t *testing.T) {
 	s := newHandoffTestServer(t)
-	for _, suffix := range []string{"prepare", "status", "close", "cancel"} {
+	for _, suffix := range []string{"prepare", "status", "close", "cancel", "retire-command"} {
 		method := "POST"
 		if suffix == "status" {
 			method = "GET"

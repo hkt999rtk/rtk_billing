@@ -463,6 +463,13 @@ func (s *Store) CloseCloud(ctx context.Context, in CloseCloudInput) (CloudClosur
 		return CloudClosureAck{}, err
 	}
 	ack := CloudClosureAck{OperationID: op.ID, Phase: "closed"}
+	var retired bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM billing_cloud_closure_retired_commands WHERE operation_id=$1 AND request_sha256=$2)`, op.ID, digest).Scan(&retired); err != nil {
+		return ack, err
+	}
+	if retired {
+		return ack, ErrCloudClosureCommandRetired
+	}
 	var prior string
 	err = tx.QueryRow(ctx, `SELECT request_sha256,closed_at,receipt_sha256 FROM billing_cloud_closure_completions WHERE operation_id=$1`, op.ID).Scan(&prior, &ack.ClosedAt, &ack.ReceiptSHA256)
 	if err == nil {
