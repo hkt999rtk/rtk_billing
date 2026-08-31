@@ -38,12 +38,14 @@ type RecordCloudPreflightInput struct {
 }
 type CloudDeletionPreflight struct {
 	CloudPreflightScope
-	Eligible     bool      `json:"eligible"`
-	Blockers     []string  `json:"blockers"`
-	BalanceMinor int64     `json:"balance_minor"`
-	Currency     string    `json:"currency"`
-	ObservedAt   time.Time `json:"observed_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	Eligible                 bool      `json:"eligible"`
+	Blockers                 []string  `json:"blockers"`
+	BalanceMinor             int64     `json:"balance_minor"`
+	Currency                 string    `json:"currency"`
+	ObservedAt               time.Time `json:"observed_at"`
+	ExpiresAt                time.Time `json:"expires_at"`
+	receiptID, receiptSHA256 string
+	complete                 bool
 }
 
 func loadCloudPreflightAccountTx(ctx context.Context, tx pgx.Tx, in CloudPreflightScope, lock bool) (payment.CommercialAccount, error) {
@@ -166,6 +168,10 @@ func (s *Store) RecordCloudPreflightEvidence(ctx context.Context, in RecordCloud
 // Advisory only. Uses a read-only repeatable snapshot and never creates an
 // account, freezes payments, changes a receipt, or authorizes closure.
 func (s *Store) GetCloudDeletionPreflight(ctx context.Context, in CloudPreflightScope) (CloudDeletionPreflight, error) {
+	return s.getCloudFinancialPreflight(ctx, in, false)
+}
+
+func (s *Store) getCloudFinancialPreflight(ctx context.Context, in CloudPreflightScope, transfer bool) (CloudDeletionPreflight, error) {
 	if !in.valid() {
 		return CloudDeletionPreflight{}, ErrConflict
 	}
@@ -193,10 +199,11 @@ func (s *Store) GetCloudDeletionPreflight(ctx context.Context, in CloudPreflight
 		}
 	}
 	var sha string
+	var receiptID, receiptSHA string
 	var raw []byte
 	var observed, expires time.Time
-	err = tx.QueryRow(ctx, `SELECT state_sha256,financial_evidence,observed_at,expires_at FROM billing_cloud_preflight_receipts
-        WHERE account_id=$1 AND owner_user_id=$2 AND ownership_version=$3 ORDER BY observed_at DESC,created_at DESC,id DESC LIMIT 1`, account.ID, in.OwnerUserID, in.OwnershipVersion).Scan(&sha, &raw, &observed, &expires)
+	err = tx.QueryRow(ctx, `SELECT state_sha256,financial_evidence,observed_at,expires_at,id::text,request_sha256 FROM billing_cloud_preflight_receipts
+        WHERE account_id=$1 AND owner_user_id=$2 AND ownership_version=$3 ORDER BY observed_at DESC,created_at DESC,id DESC LIMIT 1`, account.ID, in.OwnerUserID, in.OwnershipVersion).Scan(&sha, &raw, &observed, &expires, &receiptID, &receiptSHA)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return CloudDeletionPreflight{}, err
 	}
@@ -207,16 +214,26 @@ func (s *Store) GetCloudDeletionPreflight(ctx context.Context, in CloudPreflight
 			return CloudDeletionPreflight{}, err
 		}
 		financial = mergeSettlementEvidence(evidence, state.Financial)
+		out.receiptID, out.receiptSHA256 = receiptID, receiptSHA
+		out.complete = financial.BalanceKnown && financial.UsageSettled && financial.InvoicesReconciled && financial.ProviderWorkReconciled
 		if expires.Before(out.ExpiresAt) {
 			out.ExpiresAt = expires
 		}
 	} else {
 		add("evidence_unavailable")
 	}
-	for _, code := range billing.CloudClosureBlockers(financial) {
+	blockers := billing.CloudClosureBlockers(financial)
+	if transfer {
+		blockers = billing.OwnershipTransferBlockers(financial)
+	}
+	for _, code := range blockers {
 		switch code {
 		case "balance_negative", "balance_positive":
-			add("balance_nonzero")
+			if transfer {
+				add("balance_negative")
+			} else {
+				add("balance_nonzero")
+			}
 		case "usage_unsettled":
 			add(code)
 		case "unpaid_invoices", "outstanding_debt":

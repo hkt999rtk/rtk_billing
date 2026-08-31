@@ -130,6 +130,34 @@ and historical snapshots unchanged, compensation appears once in the correct led
 
 ## Internal HTTP transport
 
+### Advisory request/acceptance eligibility
+
+`POST /v1/internal/billing/clouds/{orgId}/ownership-eligibility` is a read-only
+financial query under the same dedicated handoff credential and 15-second
+deadline. Headers bind `X-Billing-Owner-User-ID` and the canonical positive
+`X-Billing-Ownership-Version`; JSON supplies `target_user_id`, `action` (`request`
+or `accept`) and `transfer_id` (absent/empty for request, mandatory UUID for
+acceptance). Source and target must differ. AM independently authenticates both
+identities and validates its persisted transfer; Billing does not own user records.
+
+The response echoes the complete request binding and returns `complete`,
+`receipt_id`, `evidence_sha256`, currency, signed minor-unit balance, stable
+blockers, observation time and expiry. Only current responsibility and a fresh,
+local-state-matching collector receipt can provide complete evidence. The evidence
+digest binds that receipt to the action, target and transfer ID. Missing/expired
+evidence returns `complete=false` with `evidence_unavailable`; it never becomes
+approval just because local tables are empty. Negative balance returns
+`balance_negative`; zero and positive credit remain subject to every independent
+financial and lifecycle blocker. This does not reuse deletion's zero-only rule.
+
+The query does not create an account, hold, receipt, consent or ownership period.
+It exposes no payment/invoice/provider or predecessor PII. AM checks echo, bounded
+lifetime and completeness before using the response. Later fenced settlement and
+commit revalidate everything; this endpoint neither reserves credit nor certifies
+producer drain. Collector ingestion remains a separate trusted workflow, with no
+coordinator endpoint for manufacturing evidence. Production admission stays
+disabled until the actual participant inventory and collectors are installed.
+
 The Billing implementation exposes the following optional coordinator operations
 under `/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}`:
 

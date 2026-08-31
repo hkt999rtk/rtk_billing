@@ -616,3 +616,25 @@ and predecessor compensation routing must be established before production
 enablement. The SQL commit barrier does not prove producer completeness.
 A bare persisted `prepared` phase is never a substitute for live financial status
 or the explicit commit authorization protocol.
+
+## Read-only ownership eligibility transport — 2026-09-01
+
+Added the dedicated internal ownership-eligibility route and independently
+compiled AM client contract tests. The read-only repeatable snapshot checks
+current responsibility, local financial state and fresh collector evidence;
+proof binds the target/action/transfer as well as the cloud and owner version.
+No query creates an account, hold, receipt or responsibility period. Transfer
+permits zero or positive credit only with all independent checks satisfied;
+deletion continues to require exactly zero. Missing collector evidence remains
+unavailable rather than treating empty tables as reconciliation proof.
+
+Focused store/API race tests passed (8.267s/7.404s), including actual HTTP calls
+from AM for -1/0/+1 at request and acceptance, stale receipt invalidation,
+independent financial blockers, unchanged read-only state and deletion policy.
+Full uncached `go test ./...` passed on the owned loopback database
+`multicloud_billing_eligibility_20260901`; `go vet ./...`, `go build ./...` and
+the OpenAPI extractor unit test passed. Full-suite log:
+`/tmp/rtk-billing-eligibility-full.log`; ordinary coverage profile:
+`/tmp/rtk-billing-eligibility-full-coverage.out`. This profile is not the workspace
+governed coverage gate. Production collector/provider/producer wiring, service
+CI, migration rehearsal and staging acceptance remain open.

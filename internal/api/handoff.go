@@ -62,6 +62,9 @@ func (s *Server) ConfigureHandoff(in HandoffAPIOptions) error {
 	if reader, ok := in.Store.(cloudDeletionPreflightReader); ok {
 		cloud.GET("/deletion-preflight", cloudDeletionPreflightHandler(reader))
 	}
+	if reader, ok := in.Store.(ownershipEligibilityReader); ok {
+		cloud.POST("/ownership-eligibility", ownershipEligibilityHandler(reader))
+	}
 	if closure, ok := in.Store.(cloudClosurePersistence); ok {
 		group := cloud.Group("/closures/:operationId")
 		group.POST("/prepare", prepareCloudClosureHandler(closure))
