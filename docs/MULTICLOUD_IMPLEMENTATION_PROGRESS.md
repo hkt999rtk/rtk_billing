@@ -34,11 +34,35 @@ has been made for this implementation branch.
   eventual cancellation. Authenticated simulator callbacks are acknowledged after
   persistence; browser setup failures remain explicit HTTP 409 conflicts.
 - No timer, balance change, or commercial access-state change releases a fence.
+- Forward migration `050_handoff_settlement_snapshots.sql` adds append-only
+  settlement receipts, nonnegative balance snapshots and participant confirmations.
+  Collector receipts bind operation/cloud/ownership version and a local financial
+  state digest to the three independently reconciled domain checkpoints. A true
+  completeness flag without its checkpoint is rejected. No browser input route
+  can supply these receipts.
+- Local invoice/debt/payment/setup/refund work can only add blockers to collector
+  evidence, never be masked by supplied zero counts. A positive-total invoice's
+  settled label is insufficient without its posted ledger linkage. Failed
+  reconciliation jobs remain blockers until resolved, not equivalent to completed.
+- Freshness checks include balance/version, usage, periods, invoices/settlement
+  links, payment intents/jobs/attempts, setup observations and mapped webhooks.
+  Every preview/confirmation recomputes local state. A changed amount (including
+  +1 to 0 or 0 to -1), new usage or new evidence revision invalidates old approvals.
+  Negative cutoff credit produces no confirmable snapshot. Old receipts/snapshots/
+  approvals remain immutable evidence, not reusable authorization.
+- Source/target confirmations independently validate identity, cloud, ownership
+  version, phase, snapshot version and exact currency/amount. Concurrent retries
+  persist once per participant/version with atomic audit. Both confirmations leave
+  ownership and the monetary fence unchanged; they do not authorize owner commit.
 
 ## Verification
 
-All database tests use the isolated loopback PostgreSQL `multicloud_billing_test`
-database on port 63229, not staging or shared development data.
+Preparation tests used the isolated loopback PostgreSQL `multicloud_billing_test`
+database on port 63229. Snapshot testing uses the separate fresh database
+`multicloud_billing_settlement_test` on that same local container, including all
+migrations from scratch. Neither is staging or shared development data. Use the
+new snapshot test database for subsequent work: the older local database applied
+an intermediate, unpublished 050 and is not the final-migration evidence source.
 
 - Full `go test ./...` passed after the initial preparation/fence implementation.
 - API/store handoff tests repeated three times passed, including authenticated
@@ -59,17 +83,38 @@ database on port 63229, not staging or shared development data.
   `/tmp/rtk-billing-handoff-repeated-20260831.log`,
   `/tmp/rtk-billing-handoff-race-20260831.log`.
 
+Snapshot checkpoint evidence:
+
+- Three repeated database runs passed for all handoff/initial-responsibility tests.
+- Full uncached `go test ./... -count=1` passed on the fresh snapshot database;
+  payment store 14.629s and worker service 8.537s (concurrent test runs share the
+  fixture lock, so these elapsed times are not benchmarks).
+- Final targeted race runs passed: payment store 10.984s, worker service 4.189s
+  and API 4.902s. These include failed refund reconciliation remaining blocked.
+  Logs: `/tmp/rtk-billing-settlement-repeated-20260831.log`,
+  `/tmp/rtk-billing-settlement-suite-final-20260831.log`,
+  `/tmp/rtk-billing-settlement-race-final-20260831.log`.
+- Final `go vet ./...` and `git diff --check` passed.
+- The receipt tests deliberately supply **synthetic trusted-collector evidence**.
+  They prove protocol persistence, fail-closed local checks, replay/freshness,
+  audit atomicity and nonnegative amount rules, not real producer/provider
+  settlement completeness. Production collector integration is still outstanding.
+
 ## Not implemented / deployment gate
 
-There is deliberately no externally callable prepare/bootstrap route yet and no
-store method that advances preparation into readiness/commit/finalize/abort. Do not
-enable transfers or bootstrap historical responsibility from a today's-owner lookup.
+There is deliberately no externally callable prepare/bootstrap/collector route yet
+and no owner-commit/finalize/abort implementation. Trusted collector storage can
+advance a preparation to a confirmable snapshot, but no production collector is
+connected. Do not enable transfers or bootstrap historical responsibility from a
+today's-owner lookup.
 
 Remaining work includes:
 
 1. Dedicated internal handoff credential, Account Manager durable coordinator,
    outbox, producer hold/cutoff acknowledgments, persisted usage/invoice/provider
-   reconciliation checkpoints, versioned snapshots and both confirmations.
+   reconciliation checkpoint collectors and routing of versioned snapshots and
+   both confirmations. The collector must observe local state before gathering
+   independently verified checkpoints, not append a fresh digest to stale reports.
 2. Commit authorization, permanent old-payment-consent revocation, profile retirement
    and reset, responsibility close/open, durable finalize/abort acknowledgments.
    Owner-commit failures must finish forward, not restore predecessor access.
@@ -84,3 +129,7 @@ Remaining work includes:
 Preparing records and simulated terminal phase changes in low-level tests do not
 prove an end-to-end ownership transfer. Existing cutoff debit ingestion is not
 ingestion-completeness proof. Outstanding work must keep readiness fail-closed.
+Snapshot freshness currently hashes per-cloud financial rows; scale evidence and
+the final synchronized producer/write fence must be established before enabling
+commit. A bare persisted `prepared` phase is never a substitute for live financial
+status or the later commit authorization protocol.
