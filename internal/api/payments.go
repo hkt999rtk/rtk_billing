@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentservice"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
@@ -351,7 +352,10 @@ func (s *Server) setupPaymentMethod(c *gin.Context) {
 		methodDigest := sha256.Sum256([]byte(setup.ProviderMethodRef))
 		completeInput.ProviderMethodRefSHA256 = hex.EncodeToString(methodDigest[:])
 	}
-	completed, err := s.payments.store.CompletePaymentMethodSetup(c.Request.Context(), completeInput)
+	// This is the validated adapter response for the original persisted session,
+	// not browser input. Preserve reconciliation even if ownership changed while
+	// waiting for the provider; invalidated sessions can never reactivate a method.
+	completed, err := s.payments.store.CompletePaymentMethodSetup(billingidentity.ForProviderReconciliation(c.Request.Context()), completeInput)
 	if err != nil {
 		writePaymentSetupError(c, err)
 		return
@@ -361,6 +365,9 @@ func (s *Server) setupPaymentMethod(c *gin.Context) {
 		"provider": providerName, "state": completed.Method.Status, "duplicate": duplicate,
 		"consent_text_version": begin.Consent.TextVersion, "consent_text_sha256": begin.Consent.TextSHA256,
 	}) {
+		return
+	}
+	if !s.revalidateOwnerResponse(c) {
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"payment_method": completed.Method, "hosted_url": setup.HostedURL, "duplicate": duplicate})
@@ -648,6 +655,9 @@ func (s *Server) createHostedTopUp(c *gin.Context) {
 	if result.Duplicate {
 		status = http.StatusOK
 	}
+	if !s.revalidateOwnerResponse(c) {
+		return
+	}
 	c.JSON(status, gin.H{"payment_intent": paymentIntentResponse(result.Intent), "duplicate": result.Duplicate, "payment_action": gin.H{"method": "POST", "url": action.EndpointURL, "fields": action.Fields}})
 }
 
@@ -920,6 +930,9 @@ func (s *Server) writePaymentAudit(c *gin.Context, eventType, subjectType, subje
 }
 
 func writePaymentError(c *gin.Context, err error) {
+	if writeOwnershipError(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, paymentstore.ErrHandoffFenced):
 		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_HANDOFF_FENCED", "Payment changes are paused during ownership handoff")

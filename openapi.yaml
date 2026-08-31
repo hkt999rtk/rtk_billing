@@ -105,6 +105,8 @@ paths:
       - REQ-AM-INVOICE-LIFECYCLE-001
       - REQ-AM-INVOICE-ARITHMETIC-001
   /v1/orgs/{orgId}/billing/summary:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -135,6 +137,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-SUMMARY-001
   /v1/orgs/{orgId}/billing/usage:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -165,6 +169,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-SUMMARY-001
   /v1/orgs/{orgId}/billing/invoices:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -187,6 +193,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-LIFECYCLE-001
   /v1/orgs/{orgId}/billing/invoices/{invoiceId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -214,6 +222,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-LIFECYCLE-001
   /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -246,6 +256,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-DOCUMENT-001
   /v1/orgs/{orgId}/billing/activity:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -270,6 +282,8 @@ paths:
       - REQ-AM-BILLING-ACTIVITY-002
       - REQ-AM-BILLING-ACTIVITY-003
   /v1/orgs/{orgId}/billing/activity/{activityId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -299,6 +313,8 @@ paths:
       - REQ-AM-BILLING-ACTIVITY-002
       - REQ-AM-BILLING-ACTIVITY-003
   /v1/orgs/{orgId}/billing/profile:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -364,6 +380,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-PROFILE-001
   /v1/orgs/{orgId}/billing/statements:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -388,6 +406,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-DOCUMENT-001
   /v1/orgs/{orgId}/billing/account:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -417,6 +437,8 @@ paths:
         '503':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/billing/ledger:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -446,6 +468,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-methods:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -475,6 +499,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-methods/setup:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     post:
       tags:
       - Billing and Payments
@@ -517,6 +543,8 @@ paths:
         '503':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-methods/{methodId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     delete:
       tags:
       - Billing and Payments
@@ -555,6 +583,8 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/auto-topup:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -668,6 +698,8 @@ paths:
         '428':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/topups:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     post:
       tags:
       - Billing and Payments
@@ -710,6 +742,8 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/topups/checkout:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     post:
       tags: [Billing and Payments]
       operationId: createHostedTopUp
@@ -740,6 +774,8 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
   /v1/orgs/{orgId}/payment-intents:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -769,6 +805,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-intents/{intentId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -1015,7 +1053,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: service-token
-      description: Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=user, a global Account Manager user ID in X-Billing-Actor-ID, X-Billing-Permissions, and X-Request-ID. The retired brand_cloud_user actor type is rejected; historical audit actors are not rewritten.
+      description: Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=user, a global Account Manager user ID in X-Billing-Actor-ID, X-Billing-Ownership-Version, X-Billing-Permissions, and X-Request-ID. Billing verifies the current sole owner and exact ownership version independently of permission headers. Platform privileges do not bypass this tenant boundary. The retired brand_cloud_user actor type is rejected; historical audit actors are not rewritten.
     billingInternalAuth:
       type: http
       scheme: bearer
@@ -1814,6 +1852,15 @@ components:
         duplicate:
           type: boolean
   parameters:
+    OwnershipVersion:
+      name: X-Billing-Ownership-Version
+      in: header
+      required: true
+      description: Exact current Account Manager ownership version. Billing independently checks the global actor against its proven sole-owner projection; permission or claimed role headers cannot substitute for ownership. Missing proof fails closed.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
     OrgId:
       name: orgId
       in: path

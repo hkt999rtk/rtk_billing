@@ -21,8 +21,15 @@ class ExtractOpenAPITests(unittest.TestCase):
         schemes = imported["components"]["securitySchemes"]
         description = schemes["billingServiceAuth"]["description"]
         self.assertIn("X-Billing-Actor-Type=user", description)
+        self.assertIn("X-Billing-Ownership-Version", description)
         self.assertNotIn("X-Billing-Actor-Type=brand_cloud_user", description)
         self.assertEqual(schemes, checked_in["components"]["securitySchemes"])
+        for path, item in imported["paths"].items():
+            if path.startswith("/v1/orgs/"):
+                parameters = [imported["components"]["parameters"][p["$ref"].split("/")[-1]] if "$ref" in p else p for p in item.get("parameters", [])]
+                versions = [p for p in parameters if p.get("name") == "X-Billing-Ownership-Version"]
+                self.assertEqual(len(versions), 1, path)
+                self.assertTrue(versions[0]["required"], path)
         for path, method, scheme in (
             ("/v1/orgs/{orgId}/billing/account", "get", "billingServiceAuth"),
             ("/v1/internal/billing/access/{orgId}", "get", "billingInternalAuth"),

@@ -9,6 +9,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/accessstore"
 	"github.com/hkt999rtk/rtk_billing/internal/api"
 	"github.com/hkt999rtk/rtk_billing/internal/auditstore"
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/billingservice"
 	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
 	"github.com/hkt999rtk/rtk_billing/internal/config"
@@ -36,7 +37,7 @@ func main() {
 	}
 
 	audit := auditstore.New(db)
-	server, err := api.New(api.Options{ServiceToken: cfg.ServiceToken, InternalToken: cfg.InternalToken, Audit: api.AuditAdapter{Store: audit}, Access: accessstore.New(db)})
+	server, err := api.New(api.Options{ServiceToken: cfg.ServiceToken, InternalToken: cfg.InternalToken, Audit: api.AuditAdapter{Store: audit}, Access: accessstore.New(db), Ownership: billingidentity.New(db)})
 	if err != nil {
 		log.Fatal(err)
 	}

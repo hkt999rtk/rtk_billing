@@ -97,6 +97,11 @@ def main() -> None:
         },
     }
     for path, item in paths.items():
+        if path.startswith("/v1/orgs/"):
+            parameters = item.setdefault("parameters", [])
+            if not any(p.get("name") == "X-Billing-Ownership-Version" or p.get("$ref") == "#/components/parameters/OwnershipVersion" for p in parameters):
+                parameters.append({"name": "X-Billing-Ownership-Version", "in": "header", "required": True,
+                                   "schema": {"type": "integer", "format": "int64", "minimum": 1}})
         for method, operation in item.items():
             if method.lower() not in {"get", "put", "post", "patch", "delete"}:
                 continue
@@ -117,7 +122,7 @@ def main() -> None:
     components: dict[str, dict[str, object]] = {"securitySchemes": {
         "billingServiceAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "service-token",
-            "description": "Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=user, a global Account Manager user ID in X-Billing-Actor-ID, X-Billing-Permissions, and X-Request-ID. The retired brand_cloud_user actor type is rejected; historical audit actors are not rewritten.",
+            "description": "Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=user, a global Account Manager user ID in X-Billing-Actor-ID, X-Billing-Ownership-Version, X-Billing-Permissions, and X-Request-ID. Billing verifies the current sole owner and exact ownership version independently of permission headers. Platform privileges do not bypass this tenant boundary. The retired brand_cloud_user actor type is rejected; historical audit actors are not rewritten.",
         },
         "billingInternalAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "internal-service-token",

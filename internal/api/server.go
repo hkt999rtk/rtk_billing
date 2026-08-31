@@ -34,6 +34,7 @@ type Server struct {
 	internalToken string
 	audit         auditPersistence
 	access        accessPersistence
+	ownership     ownerAuthorizer
 	payments      *paymentRuntime
 	billing       *billingRuntime
 }
@@ -43,16 +44,17 @@ type Options struct {
 	InternalToken string
 	Audit         auditPersistence
 	Access        accessPersistence
+	Ownership     ownerAuthorizer
 }
 
 func New(options Options) (*Server, error) {
 	options.ServiceToken = strings.TrimSpace(options.ServiceToken)
 	options.InternalToken = strings.TrimSpace(options.InternalToken)
 	if len(options.ServiceToken) < 32 || len(options.InternalToken) < 32 ||
-		options.ServiceToken == options.InternalToken || options.Audit == nil || options.Access == nil {
+		options.ServiceToken == options.InternalToken || options.Audit == nil || options.Access == nil || options.Ownership == nil {
 		return nil, ErrInvalidServerOptions
 	}
-	s := &Server{serviceToken: options.ServiceToken, internalToken: options.InternalToken, audit: options.Audit, access: options.Access}
+	s := &Server{serviceToken: options.ServiceToken, internalToken: options.InternalToken, audit: options.Audit, access: options.Access, ownership: options.Ownership}
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
@@ -60,7 +62,7 @@ func New(options Options) (*Server, error) {
 	r.POST("/v1/payment-webhooks/:provider", s.handlePaymentWebhook)
 	r.POST("/v1/internal/payment-simulator/setup-callback", s.handlePaymentSimulatorSetupCallback)
 
-	org := r.Group("/v1/orgs/:orgId", s.requireServiceToken(), s.requireTenantContext(), s.requireBillingAccess())
+	org := r.Group("/v1/orgs/:orgId", s.requireServiceToken(), s.requireTenantContext(), s.requireCurrentOwner(), s.requireBillingAccess())
 	s.registerTenantRoutes(org)
 	r.POST("/v1/internal/billing/debits", s.handleInternalBillingDebit)
 	internal := r.Group("/v1/internal", s.requireInternalToken())
@@ -74,7 +76,7 @@ func New(options Options) (*Server, error) {
 	return s, nil
 }
 
-var ErrInvalidServerOptions = &serverError{"distinct service/internal tokens plus audit and access stores are required"}
+var ErrInvalidServerOptions = &serverError{"distinct service/internal tokens plus audit, access and ownership stores are required"}
 
 type serverError struct{ message string }
 

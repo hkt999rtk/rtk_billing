@@ -6,10 +6,18 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
 func (s *Store) EnsureCommercialAccount(ctx context.Context, organizationID string, currency payment.Currency) (payment.CommercialAccount, bool, error) {
+	if scope, ok := billingidentity.FromContext(ctx); ok {
+		if scope.OrganizationID != organizationID || currency != payment.CurrencyTWD {
+			return payment.CommercialAccount{}, false, billingidentity.ErrDenied
+		}
+		account, err := s.GetCommercialAccount(ctx, scope.AccountID)
+		return account, false, err
+	}
 	if !required(organizationID) {
 		return payment.CommercialAccount{}, false, ErrConflict
 	}
@@ -38,6 +46,18 @@ func (s *Store) EnsureCommercialAccount(ctx context.Context, organizationID stri
 }
 
 func (s *Store) GetCommercialAccount(ctx context.Context, accountID string) (payment.CommercialAccount, error) {
+	if _, ok := billingidentity.FromContext(ctx); ok {
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return payment.CommercialAccount{}, err
+		}
+		defer tx.Rollback(ctx)
+		account, err := getAccountForUpdate(ctx, tx, accountID)
+		if err != nil {
+			return payment.CommercialAccount{}, err
+		}
+		return account, tx.Commit(ctx)
+	}
 	return scanAccount(s.db.QueryRow(ctx, `
 		SELECT `+accountColumns+`
 		FROM commercial_accounts
@@ -46,6 +66,12 @@ func (s *Store) GetCommercialAccount(ctx context.Context, accountID string) (pay
 }
 
 func (s *Store) GetCommercialAccountByOrganization(ctx context.Context, organizationID string, currency payment.Currency) (payment.CommercialAccount, error) {
+	if scope, ok := billingidentity.FromContext(ctx); ok {
+		if scope.OrganizationID != organizationID || currency != payment.CurrencyTWD {
+			return payment.CommercialAccount{}, billingidentity.ErrDenied
+		}
+		return s.GetCommercialAccount(ctx, scope.AccountID)
+	}
 	if !required(organizationID) || payment.ValidateCurrency(currency) != nil {
 		return payment.CommercialAccount{}, ErrConflict
 	}
@@ -57,6 +83,9 @@ func (s *Store) GetCommercialAccountByOrganization(ctx context.Context, organiza
 }
 
 func getAccountForUpdate(ctx context.Context, tx pgx.Tx, accountID string) (payment.CommercialAccount, error) {
+	if err := billingidentity.LockAccount(ctx, tx, accountID); err != nil {
+		return payment.CommercialAccount{}, err
+	}
 	return scanAccount(tx.QueryRow(ctx, `
 		SELECT `+accountColumns+`
 		FROM commercial_accounts

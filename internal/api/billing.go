@@ -561,6 +561,9 @@ func parseBillingVersion(value string) (int64, bool) {
 }
 
 func writeBillingError(c *gin.Context, err error) {
+	if writeOwnershipError(c, err) {
+		return
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "55000" && pgErr.ConstraintName == "billing_handoff_commit_barrier" {
 		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_HANDOFF_FENCED", "Billing changes are paused during ownership handoff")

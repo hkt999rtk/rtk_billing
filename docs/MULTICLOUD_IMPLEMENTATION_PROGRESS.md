@@ -105,6 +105,31 @@ has been made for this implementation branch.
   the original-period adjustment and allow exact finalization retry with unchanged
   opening balance. Unresolved reviews and unrelated financial drift remain fenced.
   This is a narrow forward-recovery path, not general permission to ignore drift.
+- The HTTP server now requires an ownership verifier for all 22 tenant operations,
+  in addition to service authentication, global actor context, exact permission
+  and Billing access-state checks. `X-Billing-Ownership-Version` is mandatory and
+  must match the current evidence-backed sole-owner projection. Claimed role or
+  platform headers do not upgrade tenant authority. Missing account/responsibility
+  evidence fails closed without lazy account provisioning; commit-in-progress
+  blocks tenant access until finalization or acknowledged cancellation completes.
+- Verified organization/account/user/version context reaches payment transactions.
+  Account-locked mutations recheck it against the same row lock as handoff commit.
+  Account reads and Billing profile get/ensure/update also revalidate inside their
+  transaction. A request admitted before transfer cannot write afterward; a returning
+  owner's old version does not revive. Profile reads/updates additionally require
+  proven matching profile ownership version; unproven legacy profiles are neither
+  disclosed, overwritten nor automatically adopted from today's owner.
+- Service OpenAPI and its import regression guard document the mandatory version
+  header on every tenant path. Production BFF propagation/bootstrap integration
+  has **not** been implemented yet, so this branch must not be deployed alone.
+  Owner entry checks are **not** historical-query filtering: the remaining reads,
+  aggregates, exports and payment metadata still require the period-scoped work below.
+- A validated provider setup response is reconciled independently of the now-stale
+  tenant request, preserving invalidation evidence without reactivating old methods.
+  Hosted setup/checkout responses recheck owner/version before exposing actions to
+  the browser. A synchronous setup response arriving after local finalization is
+  tested to record evidence while returning an invalidated-setup conflict without
+  the old hosted URL. This does not yet implement the BFF hosted-return binding.
 
 ## Verification
 
@@ -194,6 +219,26 @@ Provider reversal checkpoint evidence:
   signature adapter, actual AM owner mutation, tenant financial-privacy enforcement
   or staging acceptance is implied. No shared/staging database was changed.
 
+Owner-boundary checkpoint evidence:
+
+- Full uncached `go test ./... -count=1` passed (API 4.408s, payment store 26.430s,
+  worker service 12.725s). Targeted race checks passed (API 8.345s, store 21.419s).
+  Owner-boundary and in-flight provider tests passed three repeated runs (API
+  4.280s, store 3.590s). Final tenant `Cache-Control: no-store` response handling
+  was additionally checked by the focused database-backed API tests.
+- `go vet ./...`, `git diff --check`, and the OpenAPI import regression passed.
+  Logs: `/tmp/rtk-billing-owner-suite-final-20260831.log`,
+  `/tmp/rtk-billing-owner-race-final-20260831.log`,
+  `/tmp/rtk-billing-owner-repeated-final-20260831.log`.
+- The runtime route inventory drives negative tests across all 22 tenant
+  operations for admin/member/viewer/other-cloud-owner/transfer-target/platform-only
+  actors, even with all Billing permission and claimed-owner headers. Additional
+  tests cover malformed/stale versions, missing projections without provisioning,
+  request contexts surviving transfer/return, cross-cloud account/profile attempts,
+  unknown legacy profile preservation and late verified setup evidence without
+  browser access. Fixtures provision synthetic ownership explicitly, never as a
+  request-helper fallback; production identity/bootstrap integration remains absent.
+
 ## Not implemented / deployment gate
 
 There is deliberately no externally callable prepare/bootstrap/collector route yet
@@ -213,9 +258,13 @@ Remaining work includes:
    retry workers. Add the audited forward-reconciliation clearance path for changed
    provider evidence after an observed commit; currently such drift keeps the
    operation `finalizing` and cannot be canceled, rather than silently releasing it.
-3. Current-owner/ownership-version enforcement and responsibility-period privacy
-   for all Billing reads, aggregates, downloads, payment metadata and hosted returns.
-   Existing tenant permission-header authorization is not sufficient.
+3. Complete responsibility-period privacy for all Billing reads, aggregates,
+   downloads, usage/forecasts, payment metadata and hosted returns. Revalidate
+   authority together with those queries, not only at HTTP admission; account and
+   profile operations are transaction-scoped already, but other reads are not.
+   Connect the BFF's authenticated global actor and ownership version plus trusted
+   signup/migration responsibility/profile provisioning. Existing accounts without
+   evidence intentionally fail closed. Implement separately audited platform reads.
 4. Connect the local predecessor adjustment/review store to signature-verified
    provider adapters, durable inbox/reconciliation workers and restricted platform
    exception/recovery tooling. Routing must not mutate generic payment-state inbox
