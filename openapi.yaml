@@ -1314,7 +1314,7 @@ components:
       properties:
         cancellation_id: { type: string, format: uuid }
         am_cancellation_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
-        authorization_id: { type: string, format: uuid, description: Required if Billing already issued a commit grant. }
+        authorization_id: { type: string, format: uuid, description: Required if Billing already issued a commit grant. May carry the durable AM attempted authorization ID before grant issuance so ambiguous delivery can be canceled with identical retries. An issued grant must match exactly. }
     HandoffScopeResponse:
       type: object
       required: [cloud_id, operation_id, ownership_version]

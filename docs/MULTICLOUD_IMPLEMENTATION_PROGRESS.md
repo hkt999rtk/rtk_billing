@@ -389,6 +389,30 @@ Financial privacy checkpoint evidence:
   tests passed separate repeated race runs; both services passed `go vet ./...`
   and `git diff --check`. No runtime PR, deployment or shared data change occurred.
 
+## Automatic AM worker and cancellation race checkpoint — 2026-08-31
+
+- The cross-repository public API fixture now also runs AM's actual database-backed
+  recovery worker. Persisted jobs advance confirmed handoffs through real AM owner
+  commit and Billing HTTP finalization without manually invoking those store steps.
+  Prepared/released resource evidence and collector completeness remain synthetic.
+- Precommit abort may include the durable attempted AM authorization ID before
+  Billing has issued a grant. If a grant exists it must still match exactly. The
+  cancellation digest retains that same attempted ID across retries, abort-pending
+  blocks a late authorize request, and a changed cancellation payload conflicts.
+  This avoids guessing grant issuance after an ambiguous authorization response.
+- Focused cancellation tests pass, including valid source/target confirmations
+  followed by cancellation before grant issuance and denial of the late grant.
+  Abort still requires separate trusted release certification; the HTTP response
+  `abort_pending` is not authority to release AM or producer fences.
+- Full uncached `go test ./... -count=1` passed with consent/manual-commit/worker
+  cross-repository variants enabled (API 33.059s, payment store 41.917s, payment
+  service 30.589s). Log: `/tmp/rtk-billing-handoff-worker-suite-20260831.log`.
+  No Billing schema, shared database or production configuration was changed.
+- The three-mode API fixture and abort cases passed three race runs (API 26.851s,
+  payment store 19.607s), recorded in `/tmp/rtk-billing-handoff-worker-race-20260831.log`.
+  `go vet ./...`, `git diff --check` and the OpenAPI importer regression passed.
+  AM separately passed full regression and repeated store/worker/config race tests.
+
 ## Not implemented / deployment gate
 
 The optional dedicated handoff HTTP transport and separately compiled AM client
@@ -396,7 +420,9 @@ are now implemented and exercised together against isolated Billing persistence.
 No handoff routes exist without explicit `BILLING_HANDOFF_TOKEN` configuration;
 no production configuration was changed. There is still no production cross-service
 coordinator and no coordinator bootstrap/collector/hold-release certification route.
-Trusted collectors and automatic AM decision/outbox delivery are not connected.
+Trusted collectors and production resource transports are not connected. AM's
+automatic durable worker is now exercised with the real Billing command transport,
+but it must not be enabled as a substitute for those remaining dependencies.
 Do not enable transfers or bootstrap historical responsibility from a today's-owner
 lookup. Synthetic AM receipt hashes in protocol tests are not real owner mutations.
 
@@ -408,8 +434,8 @@ Remaining work includes:
    confirmations are now wired; automatic coordinator delivery remains absent.
    The collector must observe local state before gathering
    independently verified checkpoints, not append a fresh digest to stale reports.
-2. Connect the tested explicit AM commit/finalize integration to production retry
-   workers and authenticated abort/producer-release delivery. Add the audited
+2. Deploy the tested AM retry worker only with authenticated production producer
+   and abort/release delivery, after complete cross-service acceptance. Add the audited
    forward-reconciliation clearance path for changed
    provider evidence after an observed commit; currently such drift keeps the
    operation `finalizing` and cannot be canceled, rather than silently releasing it.

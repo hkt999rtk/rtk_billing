@@ -24,7 +24,7 @@ import (
 // synthetic fixtures. The commit variant consumes a real Billing grant and
 // persists an actual AM owner decision before real Billing finalization.
 func TestHandoffAccountManagerPublicAPIContract(t *testing.T) {
-	for _, mode := range []string{"consent", "commit"} {
+	for _, mode := range []string{"consent", "commit", "worker"} {
 		t.Run(mode, func(t *testing.T) { exerciseAccountManagerPublicAPIContract(t, mode) })
 	}
 }
@@ -130,14 +130,14 @@ func exerciseAccountManagerPublicAPIContract(t *testing.T, mode string) {
 	var phase string
 	var confirmations int
 	wantPhase := "prepared"
-	if mode == "commit" {
+	if mode != "consent" {
 		wantPhase = "finalized"
 	}
 	if err := env.db.QueryRow(context.Background(), `SELECT phase,(SELECT count(*) FROM billing_handoff_confirmations WHERE operation_id=h.id)
 		FROM billing_ownership_handoffs h WHERE id=$1`, operationID).Scan(&phase, &confirmations); err != nil || phase != wantPhase || confirmations != 2 {
 		t.Fatalf("consent lost or advanced ownership: phase=%s confirmations=%d err=%v", phase, confirmations, err)
 	}
-	if mode == "commit" {
+	if mode != "consent" {
 		var periods, currentTarget int
 		if err := env.db.QueryRow(context.Background(), `SELECT count(*),count(*) FILTER(WHERE r.effective_until IS NULL AND r.owner_user_id=h.target_user_id AND r.ownership_version=h.ownership_version+1)
 			FROM billing_responsibility_periods r JOIN billing_ownership_handoffs h ON h.account_id=r.account_id WHERE h.id=$1`, operationID).Scan(&periods, &currentTarget); err != nil || periods != 2 || currentTarget != 1 {

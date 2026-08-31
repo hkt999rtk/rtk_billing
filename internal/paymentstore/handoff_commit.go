@@ -331,7 +331,11 @@ func (s *Store) BeginOwnershipHandoffAbort(ctx context.Context, in BeginHandoffA
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return HandoffProtocolAck{}, err
 	}
-	if grantID != in.AuthorizationID {
+	// AM may cancel after persisting/sending its authorization request but before
+	// Billing issues the grant. Keep that same attempted ID across ambiguous
+	// delivery retries. An actually issued grant must still match exactly; once
+	// abort_pending commits, a late authorize request cannot create a grant.
+	if grantID != "" && grantID != in.AuthorizationID {
 		return HandoffProtocolAck{}, ErrConflict
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO billing_handoff_cancellations(operation_id,cancellation_id,request_sha256,am_cancellation_sha256)

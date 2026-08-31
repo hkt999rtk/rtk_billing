@@ -282,6 +282,39 @@ func TestHandoffAbortRequiresCancellationAndHoldRelease(t *testing.T) {
 	}
 }
 
+func TestHandoffAbortCarriesAttemptedAuthorizationBeforeGrantExists(t *testing.T) {
+	env, _, prepare, scope := newSettlementFixture(t, 0)
+	ctx := context.Background()
+	status, err := env.store.RecordHandoffSettlement(ctx, settlementReceipt(t, env, scope, "pre-grant-cancel"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []string{prepare.SourceUserID, prepare.TargetUserID} {
+		if _, err := env.store.ConfirmHandoffSnapshot(ctx, snapshotConfirmation(scope, user, status.Snapshot)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	grant := AuthorizeHandoffCommitInput{Scope: scope, AuthorizationID: testutil.OrganizationID("attempted-grant"), SnapshotVersion: status.Snapshot.Version}
+	cancel := BeginHandoffAbortInput{Scope: scope, CancellationID: testutil.OrganizationID("cancel-attempt"), AuthorizationID: grant.AuthorizationID, AMCancellationSHA256: strings.Repeat("a", 64)}
+	for i := 0; i < 2; i++ {
+		if ack, err := env.store.BeginOwnershipHandoffAbort(ctx, cancel); err != nil || ack.Phase != "abort_pending" {
+			t.Fatalf("pre-grant cancellation: %+v %v", ack, err)
+		}
+	}
+	if _, err := env.store.AuthorizeHandoffCommit(ctx, grant); err == nil {
+		t.Fatal("late authorization escaped durable cancellation")
+	}
+	changed := cancel
+	changed.AuthorizationID = ""
+	if _, err := env.store.BeginOwnershipHandoffAbort(ctx, changed); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("cancel retry changed attempted grant: %v", err)
+	}
+	var count int
+	if err := env.db.QueryRow(ctx, `SELECT count(*) FROM billing_handoff_commit_authorizations WHERE operation_id=$1`, scope.OperationID).Scan(&count); err != nil || count != 0 {
+		t.Fatal("canceled operation acquired grant", err)
+	}
+}
+
 func TestHandoffConcurrentFinalizationIsExactlyOnce(t *testing.T) {
 	env, account, prepare, scope := newSettlementFixture(t, 0)
 	grant := authorizeFixtureHandoff(t, env, prepare, scope)
