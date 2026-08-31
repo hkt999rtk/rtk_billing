@@ -39,6 +39,9 @@ func (s *Store) PostLedgerEntry(ctx context.Context, in PostLedgerEntryInput) (P
 	if err := validateLedgerInput(in); err != nil {
 		return PostLedgerEntryResult{}, err
 	}
+	if isSettlementReversal(in.Reason) {
+		return PostLedgerEntryResult{}, ErrProviderReversalRequired
+	}
 	if in.Now.IsZero() {
 		in.Now = time.Now().UTC()
 	} else {
@@ -94,12 +97,7 @@ func (s *Store) PostLedgerEntry(ctx context.Context, in PostLedgerEntryInput) (P
 	}
 
 	var intent *payment.PaymentIntent
-	if in.Direction == payment.LedgerDirectionDebit && isSettlementReversal(in.Reason) {
-		account, err = disarmAutoTopUpAfterSettlementReversalTx(ctx, tx, account)
-		if err != nil {
-			return PostLedgerEntryResult{}, err
-		}
-	} else if in.Direction == payment.LedgerDirectionDebit && account.State == payment.AccountStateActive {
+	if in.Direction == payment.LedgerDirectionDebit && account.State == payment.AccountStateActive {
 		created, evalErr := evaluateAutoTopUpTx(ctx, tx, account, entry, in.Now, in.RequestID)
 		if evalErr != nil {
 			return PostLedgerEntryResult{}, evalErr

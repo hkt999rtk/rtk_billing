@@ -6,18 +6,19 @@ package billing
 // Authority, ownership version and participant confirmation are checked by the
 // handoff coordinator in addition to these financial conditions.
 type FinancialEvidence struct {
-	BalanceKnown           bool
-	Currency               Currency
-	BalanceMinor           int64
-	UsageSettled           bool
-	InvoicesReconciled     bool
-	ProviderWorkReconciled bool
-	UnpaidInvoiceCount     int64
-	DebtMinor              int64
-	PendingPaymentCount    int64
-	PendingRefundCount     int64
-	OpenDisputeCount       int64
-	PendingSetupCount      int64
+	BalanceKnown                 bool
+	Currency                     Currency
+	BalanceMinor                 int64
+	UsageSettled                 bool
+	InvoicesReconciled           bool
+	ProviderWorkReconciled       bool
+	UnpaidInvoiceCount           int64
+	DebtMinor                    int64
+	PendingPaymentCount          int64
+	PendingRefundCount           int64
+	OpenDisputeCount             int64
+	PendingSetupCount            int64
+	UnresolvedProviderEventCount int64
 }
 
 // OwnershipTransferBlockers deliberately accepts zero credit. A positive
@@ -46,7 +47,7 @@ func OwnershipTransferBlockers(e FinancialEvidence) []string {
 	}
 	// Negative counts/debt are malformed evidence, not an alternate encoding of
 	// "none". In particular, a negative debt amount is not spendable credit.
-	if e.UnpaidInvoiceCount < 0 || e.DebtMinor < 0 || e.PendingPaymentCount < 0 || e.PendingRefundCount < 0 || e.OpenDisputeCount < 0 || e.PendingSetupCount < 0 {
+	if e.UnpaidInvoiceCount < 0 || e.DebtMinor < 0 || e.PendingPaymentCount < 0 || e.PendingRefundCount < 0 || e.OpenDisputeCount < 0 || e.PendingSetupCount < 0 || e.UnresolvedProviderEventCount < 0 {
 		blockers = append(blockers, "financial_evidence_invalid")
 	}
 	for _, check := range []struct {
@@ -59,6 +60,7 @@ func OwnershipTransferBlockers(e FinancialEvidence) []string {
 		{e.PendingRefundCount, "refunds_pending"},
 		{e.OpenDisputeCount, "disputes_open"},
 		{e.PendingSetupCount, "payment_setups_pending"},
+		{e.UnresolvedProviderEventCount, "provider_events_unresolved"},
 	} {
 		if check.count > 0 {
 			blockers = append(blockers, check.code)

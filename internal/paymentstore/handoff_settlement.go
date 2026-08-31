@@ -133,7 +133,7 @@ func (s *Store) RecordHandoffSettlement(ctx context.Context, in RecordSettlement
 	}
 	// Invalid counts are not persisted as an alternate representation of zero.
 	for _, count := range []int64{in.Financial.UnpaidInvoiceCount, in.Financial.DebtMinor, in.Financial.PendingPaymentCount,
-		in.Financial.PendingRefundCount, in.Financial.OpenDisputeCount, in.Financial.PendingSetupCount} {
+		in.Financial.PendingRefundCount, in.Financial.OpenDisputeCount, in.Financial.PendingSetupCount, in.Financial.UnresolvedProviderEventCount} {
 		if count < 0 {
 			return HandoffSettlementStatus{}, ErrConflict
 		}
@@ -246,6 +246,7 @@ func mergeSettlementEvidence(external, local billing.FinancialEvidence) billing.
 	external.PendingPaymentCount = max(external.PendingPaymentCount, local.PendingPaymentCount)
 	external.PendingRefundCount = max(external.PendingRefundCount, local.PendingRefundCount)
 	external.PendingSetupCount = max(external.PendingSetupCount, local.PendingSetupCount)
+	external.UnresolvedProviderEventCount = max(external.UnresolvedProviderEventCount, local.UnresolvedProviderEventCount)
 	return external
 }
 
@@ -396,6 +397,11 @@ func captureSettlementStateTx(ctx context.Context, tx pgx.Tx, account payment.Co
 	setups AS (SELECT id,state,invalidated_by_handoff,updated_at FROM payment_method_setup_sessions WHERE account_id=$1),
 	observations AS (SELECT o.session_id,o.result_sha256 FROM billing_handoff_setup_observations o JOIN setups s ON s.id=o.session_id),
 	webhooks AS (SELECT w.id,w.intent_id,w.processing_state,w.payload_sha256 FROM payment_webhook_inbox w JOIN intents i ON i.id=w.intent_id),
+	unresolved_reversals AS (
+		SELECT e.id,e.request_sha256,r.reason_code FROM billing_provider_reversal_events e
+		JOIN billing_provider_reversal_reviews r ON r.event_id=e.id WHERE e.account_id=$1
+		AND NOT EXISTS (SELECT 1 FROM billing_provider_reversal_allocations a WHERE a.event_id=e.id)
+	),
 	open_payment_intents AS (
 		SELECT id FROM intents WHERE state IN ('created','processing','authorized','requires_action','unknown')
 		UNION SELECT intent_id FROM jobs WHERE status <> 'completed'
@@ -413,17 +419,19 @@ func captureSettlementStateTx(ctx context.Context, tx pgx.Tx, account payment.Co
 		'attempts',(SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM attempts a),
 		'setups',(SELECT jsonb_agg(to_jsonb(s) ORDER BY s.id) FROM setups s),
 		'observations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY o.session_id,o.result_sha256) FROM observations o),
-		'webhooks',(SELECT jsonb_agg(to_jsonb(w) ORDER BY w.id) FROM webhooks w)
+		'webhooks',(SELECT jsonb_agg(to_jsonb(w) ORDER BY w.id) FROM webhooks w),
+		'unresolved_reversals',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM unresolved_reversals r)
 	)::text,
 	(SELECT count(*) FROM invoices i WHERE i.state <> 'void' AND (i.state <> 'settled' OR
 		(i.total_minor > 0 AND NOT EXISTS (SELECT 1 FROM settlements s WHERE s.invoice_id=i.id AND s.state='posted' AND s.ledger_entry_id IS NOT NULL)))),
 	(SELECT COALESCE(sum(amount_due_minor),0)::bigint FROM invoices WHERE state <> 'void'),
 	(SELECT count(*) FROM open_payment_intents),
 	(SELECT count(*) FROM jobs WHERE reason='refund' AND status <> 'completed'),
-	(SELECT count(*) FROM setups WHERE state IN ('created','requires_action','unknown'))`,
+	(SELECT count(*) FROM setups WHERE state IN ('created','requires_action','unknown')),
+	(SELECT count(*) FROM unresolved_reversals)`,
 		account.ID, account.OrganizationID, account.AvailableBalanceMinor, account.Version, account.Currency, account.State).
 		Scan(&encoded, &state.Financial.UnpaidInvoiceCount, &state.Financial.DebtMinor, &state.Financial.PendingPaymentCount,
-			&state.Financial.PendingRefundCount, &state.Financial.PendingSetupCount)
+			&state.Financial.PendingRefundCount, &state.Financial.PendingSetupCount, &state.Financial.UnresolvedProviderEventCount)
 	if err != nil {
 		return SettlementState{}, err
 	}

@@ -45,6 +45,7 @@ func TestOwnershipTransferCreditDoesNotOverrideIndependentBlockers(t *testing.T)
 		{"refunds_pending", func(e *FinancialEvidence) { e.PendingRefundCount = 1 }},
 		{"disputes_open", func(e *FinancialEvidence) { e.OpenDisputeCount = 1 }},
 		{"payment_setups_pending", func(e *FinancialEvidence) { e.PendingSetupCount = 1 }},
+		{"provider_events_unresolved", func(e *FinancialEvidence) { e.UnresolvedProviderEventCount = 1 }},
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			for _, amount := range []int64{0, 1, math.MaxInt64} {
@@ -68,6 +69,7 @@ func TestOwnershipTransferUnknownAndMalformedEvidenceFailClosed(t *testing.T) {
 		func(e *FinancialEvidence) { e.UnpaidInvoiceCount = -1 }, func(e *FinancialEvidence) { e.DebtMinor = -1 },
 		func(e *FinancialEvidence) { e.PendingPaymentCount = -1 }, func(e *FinancialEvidence) { e.PendingRefundCount = -1 },
 		func(e *FinancialEvidence) { e.OpenDisputeCount = -1 }, func(e *FinancialEvidence) { e.PendingSetupCount = -1 },
+		func(e *FinancialEvidence) { e.UnresolvedProviderEventCount = -1 },
 	} {
 		e := settledHandoffEvidence(1)
 		mutate(&e)

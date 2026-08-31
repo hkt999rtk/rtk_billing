@@ -362,6 +362,7 @@ func TestRefundCompensationDisarmsAutoTopUpWithoutRecharge(t *testing.T) {
 	env := newPaymentIntegrationEnv(t)
 	fixture := createPaymentFixture(t, env, "refund-no-recharge", 20000, 10000, 50000)
 	ctx := context.Background()
+	_ = handoffInput(t, env, fixture.account) // Bind the new payment to a proven responsibility period.
 
 	debit, err := env.store.PostLedgerEntry(ctx, debitInput(fixture.account.ID, "refund-origin", 11000, testTime(12, 10)))
 	if err != nil || debit.Intent == nil {
@@ -378,15 +379,14 @@ func TestRefundCompensationDisarmsAutoTopUpWithoutRecharge(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	refundInput := PostLedgerEntryInput{
-		AccountID: fixture.account.ID, Direction: payment.LedgerDirectionDebit,
+	refundInput := RecordProviderReversalInput{
+		AccountID: fixture.account.ID, Provider: "fake",
 		AmountMinor: 50000, Currency: payment.CurrencyTWD, Reason: payment.LedgerReasonRefundDebit,
-		IdempotencyScope: "provider_refund", IdempotencyKey: "refund-1",
-		ExternalType: "payment_intent", ExternalID: debit.Intent.ID,
-		ActorType: "service", ActorID: "payment_worker", RequestID: "refund-request-1", Now: testTime(12, 13),
+		EventReference: "refund-1", OriginalIntentID: debit.Intent.ID,
+		ProviderPayloadSHA256: strings.Repeat("e", 64), RequestID: "refund-request-1",
 	}
-	refund, err := env.store.PostLedgerEntry(ctx, refundInput)
-	if err != nil || refund.Intent != nil || refund.Account.AvailableBalanceMinor != 9000 || refund.Account.State != payment.AccountStateAttentionRequired {
+	refund, err := env.store.RecordProviderReversal(ctx, refundInput)
+	if err != nil || refund.Entry == nil || refund.Disposition != "current_balance" || refund.Account.AvailableBalanceMinor != 9000 || refund.Account.State != payment.AccountStateAttentionRequired {
 		t.Fatalf("refund=%+v err=%v", refund, err)
 	}
 	policy, err := env.store.GetAutoTopUpPolicy(ctx, fixture.account.ID)
@@ -395,8 +395,8 @@ func TestRefundCompensationDisarmsAutoTopUpWithoutRecharge(t *testing.T) {
 	}
 	retry := refundInput
 	retry.RequestID = "refund-request-2"
-	duplicate, err := env.store.PostLedgerEntry(ctx, retry)
-	if err != nil || !duplicate.Duplicate || duplicate.Entry.ID != refund.Entry.ID || duplicate.Intent != nil {
+	duplicate, err := env.store.RecordProviderReversal(ctx, retry)
+	if err != nil || !duplicate.Duplicate || duplicate.Entry == nil || duplicate.Entry.ID != refund.Entry.ID {
 		t.Fatalf("duplicate refund=%+v err=%v", duplicate, err)
 	}
 	if next, err := env.store.PostLedgerEntry(ctx, debitInput(fixture.account.ID, "after-refund", 1000, testTime(12, 14))); err != nil || next.Intent != nil {
@@ -417,14 +417,13 @@ func TestRefundCompensationDisarmsAutoTopUpWithoutRecharge(t *testing.T) {
 	if _, err := env.db.Exec(ctx, `DELETE FROM auto_topup_policies WHERE account_id = $1`, withoutPolicy.account.ID); err != nil {
 		t.Fatal(err)
 	}
-	chargeback, err := env.store.PostLedgerEntry(ctx, PostLedgerEntryInput{
-		AccountID: withoutPolicy.account.ID, Direction: payment.LedgerDirectionDebit,
+	chargeback, err := env.store.RecordProviderReversal(ctx, RecordProviderReversalInput{
+		AccountID: withoutPolicy.account.ID, Provider: "fake",
 		AmountMinor: 100, Currency: payment.CurrencyTWD, Reason: payment.LedgerReasonChargebackDebit,
-		IdempotencyScope: "provider_chargeback", IdempotencyKey: "chargeback-no-policy-1",
-		ExternalType: "payment_intent", ExternalID: "external-payment-without-policy",
-		ActorType: "service", ActorID: "payment_worker", RequestID: "chargeback-request-1", Now: testTime(12, 15),
+		EventReference: "chargeback-no-policy-1", OriginalIntentID: testutil.OrganizationID("unknown-payment"),
+		ProviderPayloadSHA256: strings.Repeat("e", 64), RequestID: "chargeback-request-1",
 	})
-	if err != nil || chargeback.Intent != nil || chargeback.Account.AvailableBalanceMinor != 19900 || chargeback.Account.State != payment.AccountStateActive {
+	if err != nil || chargeback.Entry != nil || chargeback.ReviewReason != "original_payment_unresolved" || chargeback.Account.AvailableBalanceMinor != 20000 || chargeback.Account.State != payment.AccountStateActive {
 		t.Fatalf("chargeback without policy=%+v err=%v", chargeback, err)
 	}
 }

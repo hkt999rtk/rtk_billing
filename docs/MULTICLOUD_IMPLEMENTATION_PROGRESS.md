@@ -80,6 +80,31 @@ has been made for this implementation branch.
   interval remains fenced. Abort never restores revoked methods/consents or a
   policy disabled while held. Once a committed decision is observed, only forward
   finalization/reconciliation is permitted, never rollback to source ownership.
+- Forward migration `052_provider_reversal_responsibility.sql` binds new payment
+  intents to the proven responsibility period at creation. It serializes on the
+  account and rejects new intents during handoff even through direct SQL. Existing
+  intents are deliberately **not** backfilled from current ownership. Reviewed
+  migration bindings require explicit evidence, a reviewer and atomic audit;
+  bindings cannot subsequently be reassigned.
+- Verified-worker reversal storage deduplicates provider/event identity across
+  accounts, binds the original settled payment and its responsibility period,
+  checks cumulative refunded/charged-back amounts under the account lock and
+  atomically records attribution and audit. Generic `PostLedgerEntry` no longer
+  accepts refund/chargeback reasons; it cannot bypass attribution.
+- Current-period reversals debit once and disarm auto-top-up without starting a
+  replacement charge. Predecessor reversals use a separate append-only adjustment
+  ledger, never the successor's spendable balance or payment policy. This uses
+  period IDs rather than owner IDs, including returning owners and closed clouds.
+  Unknown, cross-cloud, unpaid, unproven or excessive reversal claims are retained
+  as audited reviews without touching money. Provider adapters must supply trusted
+  verified receipts; a supplied digest alone does not verify a provider signature.
+- Unresolved reversal reviews are local financial blockers and part of snapshot
+  freshness; collector zero counts cannot mask them. During commit authorization,
+  new reversals retain an unresolved review rather than changing confirmed money.
+  Once the durable AM commit decision is observed, audited resolution can classify
+  the original-period adjustment and allow exact finalization retry with unchanged
+  opening balance. Unresolved reviews and unrelated financial drift remain fenced.
+  This is a narrow forward-recovery path, not general permission to ignore drift.
 
 ## Verification
 
@@ -87,7 +112,9 @@ Preparation tests used the isolated loopback PostgreSQL `multicloud_billing_test
 database on port 63229. Snapshot testing uses the separate fresh database
 `multicloud_billing_settlement_test` on that same local container, including all
 migrations from scratch. Neither is staging or shared development data. Use the
-new commit test database `multicloud_billing_commit_test` for subsequent work.
+commit test database `multicloud_billing_commit_test` established the 051 boundary.
+Current reversal testing uses the fresh `multicloud_billing_reversal_test` database
+on the same loopback container, applying all migrations through 052 from scratch.
 It applied the final 049/050/051 migrations from scratch. The earlier local test
 databases applied intermediate unpublished migrations and are not the current
 final-migration evidence source.
@@ -146,6 +173,27 @@ Commit protocol checkpoint evidence:
   production AM decision authentication, membership mutation, historical-read
   privacy or predecessor compensation handling; those remain deployment gates.
 
+Provider reversal checkpoint evidence:
+
+- Full uncached `go test ./... -count=1` passed on the fresh reversal database
+  (payment store 26.883s, worker service 11.615s). All reversal/handoff/financial
+  predicate tests passed three repeated runs (store 43.077s); targeted race checks
+  passed (store 14.221s, Billing predicates 1.687s). Concurrent suites serialize
+  integration fixtures with the database advisory lock; durations are not benchmarks.
+- `go vet ./...` and `git diff --check` passed. Logs:
+  `/tmp/rtk-billing-reversal-suite-final-20260831.log`,
+  `/tmp/rtk-billing-reversal-repeated-20260831.log`,
+  `/tmp/rtk-billing-reversal-race-final-20260831.log`.
+- Coverage includes duplicate/concurrent receipts, competing partial refund and
+  chargeback caps, changed-event replay rejection, cross-cloud and unpaid claims,
+  missing historical binding, reviewed binding/resolution replay, append-only
+  evidence, unchanged successor/returning-owner/closed-account balances and policy,
+  commit-observed forward resolution, unmaskable unknown events, new-charge SQL
+  fencing, amount reconfirmation and audit-failure rollback with retry.
+- These tests use synthetic paid-provider, collector and AM evidence. No provider
+  signature adapter, actual AM owner mutation, tenant financial-privacy enforcement
+  or staging acceptance is implied. No shared/staging database was changed.
+
 ## Not implemented / deployment gate
 
 There is deliberately no externally callable prepare/bootstrap/collector route yet
@@ -168,8 +216,12 @@ Remaining work includes:
 3. Current-owner/ownership-version enforcement and responsibility-period privacy
    for all Billing reads, aggregates, downloads, payment metadata and hosted returns.
    Existing tenant permission-header authorization is not sufficient.
-4. Predecessor-period adjustment ledger, unknown-liability exceptions and delayed
-   refund/chargeback handling that cannot debit successor spendable balance.
+4. Connect the local predecessor adjustment/review store to signature-verified
+   provider adapters, durable inbox/reconciliation workers and restricted platform
+   exception/recovery tooling. Routing must not mutate generic payment-state inbox
+   hashes for an already-classified predecessor adjustment and thereby strand an
+   otherwise unchanged commit snapshot. Provider cash recovery, signatures and
+   real cross-service receipt delivery are not proven by the store fixtures.
 5. Resource-producer and new-work fences, closure protocol, full cross-service
    acceptance, migration preflight/restore, CI and staging evidence.
 
