@@ -507,6 +507,23 @@ Financial privacy checkpoint evidence:
 
 ## Not implemented / deployment gate
 
+### AM deletion integration checkpoint
+
+`TestCloudDeletionAccountManagerPublicAPIContract` now invokes the actual AM
+global-session DELETE/status APIs in the isolated implementation checkout and a
+separate disposable AM database. Real Billing preflight/prepare/status/close and
+durable persistence are exercised. A test wrapper loses the first successful
+close response; AM recovers the persisted job with a new store instance, retries
+the original close command and completes its real tombstone. Billing remains
+closed. The producer hold/inventory and collector checkpoints are explicitly
+synthetic and installed only by the test wrapper; no production fixture route
+was added. Three Billing race-instrumented runs passed; log:
+`/tmp/rtk-am-billing-deletion-cross-race-20260831.log`. AM child tests compile and
+run independently; their own race checks are tracked in the AM checkpoint.
+The optional `ACCOUNT_MANAGER_DELETION_DATABASE_URL` selects the dedicated
+`multicloud_am_deletion_http_test` database on loopback port 63229. This does not
+remove production collector/provider/resource-adapter or staging release gates.
+
 The optional dedicated handoff HTTP transport and separately compiled AM client
 are now implemented and exercised together against isolated Billing persistence.
 No handoff routes exist without explicit `BILLING_HANDOFF_TOKEN` configuration;
