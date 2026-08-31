@@ -191,6 +191,18 @@ approval just because local tables are empty. Negative balance returns
 `balance_negative`; zero and positive credit remain subject to every independent
 financial and lifecycle blocker. This does not reuse deletion's zero-only rule.
 
+Invoice preparation holds the matching cloud's commercial account row from the
+initial closing transition through pricing/usage/profile reads and invoice/line
+commit, using one database transaction (nested helpers use savepoints, not pool
+connections). An incomplete retry transitions back to closing under that same
+lock. Expected missing-evidence failures retain an incomplete diagnostic period;
+storage failures roll back the attempt. Forward migration 059 checks overlapping
+closing/closed periods after the existing account-locking financial triggers,
+so a READ COMMITTED usage insert that waited for closure cannot pass an earlier
+unlocked application precheck. Accepted facts and exact replay remain immutable.
+This local barrier does not establish Logger completeness, producer drainage or
+late-event correction policy; those remain prerequisites to transfer approval.
+
 The query does not create an account, hold, receipt, consent or ownership period.
 It exposes no payment/invoice/provider or predecessor PII. AM checks echo, bounded
 lifetime and completeness before using the response. Later fenced settlement and

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
@@ -207,6 +208,10 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256)).Scan(&id)
 	created := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		var constraint *pgconn.PgError
+		if errors.As(err, &constraint) && constraint.ConstraintName == "billing_usage_period_barrier" {
+			return billing.UsageFact{}, false, ErrInvoiceImmutable
+		}
 		return billing.UsageFact{}, false, err
 	}
 	stored, err := s.GetUsageFact(ctx, fact.UsageID)

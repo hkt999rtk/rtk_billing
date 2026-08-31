@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/database"
 )
 
 type PrepareInvoiceInput struct {
@@ -42,6 +43,34 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		!in.PeriodEnd.After(in.PeriodStart) {
 		return billing.Invoice{}, false, ErrConflict
 	}
+	// Hold the same account lock as usage/financial database barriers from the
+	// first period transition through the final invoice and line writes. Helpers
+	// must use this transaction, never escape to the pool for a newer snapshot.
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return billing.Invoice{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	var accountID string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM commercial_accounts
+		WHERE id=$1 AND organization_id=$2 AND currency=$3 FOR UPDATE`, in.AccountID, in.OrganizationID, in.Currency).Scan(&accountID); err != nil {
+		return billing.Invoice{}, false, mapNotFound(err)
+	}
+	view := *s
+	view.db = database.TransactionConnection{Tx: tx}
+	invoice, created, err := view.prepareInvoice(ctx, in)
+	if err != nil && !errors.Is(err, ErrPricingUnavailable) && !errors.Is(err, ErrIncomplete) && !errors.Is(err, billing.ErrProfileConfigurationRequired) {
+		return billing.Invoice{}, false, err
+	}
+	// These domain failures deliberately retain an incomplete diagnostic period;
+	// unexpected storage failures roll back the entire attempt.
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return billing.Invoice{}, false, commitErr
+	}
+	return invoice, created, err
+}
+
+func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (billing.Invoice, bool, error) {
 	if in.Now.IsZero() {
 		in.Now = time.Now().UTC()
 	}
@@ -53,7 +82,9 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		INSERT INTO billing_periods (organization_id, currency, period_start, period_end, state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, 'closing', $5, $5)
 		ON CONFLICT (organization_id, currency, period_start, period_end)
-		DO UPDATE SET updated_at = billing_periods.updated_at
+		DO UPDATE SET state = CASE WHEN billing_periods.state='closed' THEN 'closed' ELSE 'closing' END,
+		    close_error_code = CASE WHEN billing_periods.state='closed' THEN billing_periods.close_error_code ELSE NULL END,
+		    updated_at = EXCLUDED.updated_at
 		RETURNING id::text, state
 	`, in.OrganizationID, in.Currency, in.PeriodStart.UTC(), in.PeriodEnd.UTC(), in.Now.UTC()).Scan(&periodID, &periodState)
 	if err != nil {

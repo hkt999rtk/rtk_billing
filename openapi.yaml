@@ -520,7 +520,16 @@ paths:
       tags:
       - Internal Billing
       summary: Close, price, issue, settle, and render one billing period
-      description: Requires an already provisioned commercial account. Returns 503 BILLING_ACCOUNT_NOT_READY without invoice or account writes while new-cloud provisioning is incomplete; retry the original period after provisioning.
+      description: >-
+        Requires an already provisioned commercial account. Returns 503
+        BILLING_ACCOUNT_NOT_READY without invoice or account writes while
+        new-cloud provisioning is incomplete; retry the original period after
+        provisioning. Invoice preparation locks the matching cloud account from
+        the closing transition through usage reads and invoice-line commit.
+        Retrying an incomplete period reacquires this fence. Concurrent usage
+        either commits before the read or is rejected as INVOICE_IMMUTABLE;
+        concurrent closes return one immutable invoice. This local transaction
+        does not certify completeness of upstream usage delivery.
       operationId: closeBillingPeriod
       security:
       - billingInternalAuth: []
