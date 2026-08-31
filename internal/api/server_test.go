@@ -9,10 +9,41 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/hkt999rtk/rtk_billing/internal/accessstore"
 )
 
 type testAudit struct{}
+
+func TestTenantContextRequiresGlobalUserIdentity(t *testing.T) {
+	server := &Server{}
+	for _, tc := range []struct {
+		name, actorType, actorID, requestID string
+		want                                int
+	}{
+		{"global user", "user", "global-user-1", "request-1", http.StatusNoContent},
+		{"retired tenant identity", "brand_cloud_user", "legacy-user-1", "request-1", http.StatusBadRequest},
+		{"app end user is separate", "end_user", "app-user-1", "request-1", http.StatusBadRequest},
+		{"missing type", "", "global-user-1", "request-1", http.StatusBadRequest},
+		{"missing user", "user", "", "request-1", http.StatusBadRequest},
+		{"missing correlation", "user", "global-user-1", "", http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			router.GET("/context", server.requireTenantContext(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			req := httptest.NewRequest(http.MethodGet, "/context", nil)
+			req.Header.Set("X-Billing-Actor-Type", tc.actorType)
+			req.Header.Set("X-Billing-Actor-ID", tc.actorID)
+			req.Header.Set("X-Request-ID", tc.requestID)
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+			if res.Code != tc.want {
+				t.Fatalf("status=%d want=%d", res.Code, tc.want)
+			}
+		})
+	}
+}
 
 func (testAudit) CreateAuditEvent(context.Context, AuditEventInput) error { return nil }
 
@@ -43,7 +74,7 @@ func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 		if permission != "unauthenticated" {
 			req.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 32))
 			req.Header.Set("X-Billing-Permissions", permission)
-			req.Header.Set("X-Billing-Actor-Type", "brand_cloud_user")
+			req.Header.Set("X-Billing-Actor-Type", "user")
 			req.Header.Set("X-Billing-Actor-ID", "test-user")
 			req.Header.Set("X-Request-ID", "test-request")
 		}
@@ -98,7 +129,7 @@ func TestInternalAccessStateIsOwnedByBilling(t *testing.T) {
 	internalCredential := httptest.NewRequest("GET", "/v1/orgs/00000000-0000-0000-0000-000000000001/billing/account", nil)
 	internalCredential.Header.Set("Authorization", "Bearer "+strings.Repeat("i", 32))
 	internalCredential.Header.Set("X-Billing-Permissions", "billing_account.read")
-	internalCredential.Header.Set("X-Billing-Actor-Type", "brand_cloud_user")
+	internalCredential.Header.Set("X-Billing-Actor-Type", "user")
 	internalCredential.Header.Set("X-Billing-Actor-ID", "test-user")
 	internalCredential.Header.Set("X-Request-ID", "test-request")
 	internalCredentialResponse := httptest.NewRecorder()

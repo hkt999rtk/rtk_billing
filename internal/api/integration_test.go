@@ -161,7 +161,7 @@ func (a integrationAPI) request(t *testing.T, method, path, permission, idempote
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Billing-Permissions", permission)
-	req.Header.Set("X-Billing-Actor-Type", "brand_cloud_user")
+	req.Header.Set("X-Billing-Actor-Type", "user")
 	req.Header.Set("X-Billing-Actor-ID", "integration-admin")
 	req.Header.Set("X-Request-Id", "integration-request")
 	if idempotencyKey != "" {
