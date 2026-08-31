@@ -37,6 +37,7 @@ type Server struct {
 	ownership     ownerAuthorizer
 	payments      *paymentRuntime
 	billing       *billingRuntime
+	handoff       *handoffRuntime
 }
 
 type Options struct {

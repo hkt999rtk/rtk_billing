@@ -175,10 +175,16 @@ func TestOpenAPIPreservesTenantInternalAndDebitSecuritySchemes(t *testing.T) {
 	}
 	document := string(raw)
 	for operation, scheme := range map[string]string{
-		"getBillingAccount":           "billingServiceAuth",
-		"createBillingPricingVersion": "billingInternalAuth",
-		"getBillingAccess":            "billingInternalAuth",
-		"postInternalBillingDebit":    "billingDebitAuth",
+		"getBillingAccount":               "billingServiceAuth",
+		"createBillingPricingVersion":     "billingInternalAuth",
+		"getBillingAccess":                "billingInternalAuth",
+		"postInternalBillingDebit":        "billingDebitAuth",
+		"prepareBillingOwnershipHandoff":  "billingHandoffAuth",
+		"getBillingOwnershipSettlement":   "billingHandoffAuth",
+		"confirmBillingOwnershipSnapshot": "billingHandoffAuth",
+		"authorizeBillingOwnershipCommit": "billingHandoffAuth",
+		"finalizeBillingOwnershipHandoff": "billingHandoffAuth",
+		"beginBillingOwnershipAbort":      "billingHandoffAuth",
 	} {
 		start := strings.Index(document, "operationId: "+operation)
 		if start < 0 {

@@ -128,6 +128,50 @@ Test delayed setup completion across prepare/commit/finalize, and duplicate/reor
 post-finalization chargebacks/refunds: old methods remain unusable, new-owner balance
 and historical snapshots unchanged, compensation appears once in the correct ledger.
 
+## Internal HTTP transport
+
+The Billing implementation exposes the following optional coordinator operations
+under `/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}`:
+
+| Method / suffix | Authority and result |
+| --- | --- |
+| POST `/prepare` | Source/target/cutoff from AM's persisted acceptance. Installs a hold, not settled readiness. |
+| GET `/settlement` | Live validity, minimal amount/version snapshot and blockers. No invoice, payment-method or predecessor identity details. |
+| POST `/confirm` | AM-authenticated source/target confirms exact amount, currency and snapshot. Billing independently checks participant and persisted live evidence. |
+| POST `/authorize-commit` | Returns a durable grant only with both current confirmations and matching settlement. AM must also verify every producer's hold/drain evidence. |
+| POST `/finalize` | Verified durable AM commit, grant ID and committed boundary. A known commit remains recorded even when local finalization fails. |
+| POST `/abort` | Verified precommit AM cancellation. Returns `abort_pending`; delivery alone does not release Billing's hold. |
+
+Every operation requires the dedicated `BILLING_HANDOFF_TOKEN` plus the original
+`X-Billing-Ownership-Version`. Responses echo cloud/operation/version and carry
+`Cache-Control: no-store`. Request JSON is bounded to 16 KiB, rejects unknown
+fields/trailing documents, and all handlers have a 15-second context deadline.
+Identical retries reuse the durable IDs/payload; unexpected or unavailable evidence
+never becomes approval. Tenant, pricing/access, debit and provider credentials
+cannot enter this group; the handoff credential cannot enter those other groups.
+No handoff route exists unless the dedicated runtime is configured before serving.
+
+There is deliberately no coordinator route for responsibility bootstrap,
+settlement-receipt ingestion or hold-release certification. Those require separate
+trusted provisioning/collector/provider workflows. An emailed token or browser
+confirmation is not one of these proofs. Production coordinator wiring, verified
+producer inventory/checkpoints and global-session enforcement remain release gates.
+
+The AM transport uses HTTPS (literal loopback HTTP is allowed only for isolated
+tests), refuses redirects, bounds responses and validates the echoed scope and
+nested snapshot/grant/acknowledgment. It does not autonomously retry, change an
+operation ID or infer a successful commit from a timeout. Durable workers own retry.
+
+### Cross-repository transport verification
+
+`TestHandoffAccountManagerClientContract` optionally receives
+`ACCOUNT_MANAGER_HANDOFF_CLIENT_DIR` pointing to the isolated AM implementation
+checkout. It starts a loopback Billing router with isolated PostgreSQL fixtures,
+then invokes AM's `TestLiveBillingTransportContract` against that HTTP server.
+This proves the actual independently compiled client/server serialization and
+Billing persistence, not an AM membership commit, browser session or real provider
+settlement. The test never targets staging; its AM side rejects non-loopback URLs.
+
 ## Deletion and evidence
 
 Deletion preparation requires zero balance, settled usage and no pending monetary

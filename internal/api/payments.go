@@ -114,6 +114,9 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 	options.SimulatorCallbackSecret = strings.TrimSpace(options.SimulatorCallbackSecret)
 	options.HostedChargeNotifyURL = strings.TrimSpace(options.HostedChargeNotifyURL)
 	options.HostedChargeReturnURL = strings.TrimSpace(options.HostedChargeReturnURL)
+	if s.handoff != nil && (options.BillingDebitToken == s.handoff.token || options.SimulatorCallbackSecret == s.handoff.token) {
+		return fmt.Errorf("handoff credential must be distinct from payment credentials")
+	}
 	if (options.BillingDebitToken == "") != (options.BillingDebitSource == "") {
 		return fmt.Errorf("billing debit token and source must be configured together")
 	}

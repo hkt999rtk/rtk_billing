@@ -302,17 +302,58 @@ Financial privacy checkpoint evidence:
   reconciliation, BFF/browser scope isolation or staging acceptance. No shared or
   staging database was changed; this branch still must not be deployed alone.
 
+## Dedicated HTTP transport checkpoint — 2026-08-31
+
+- `BILLING_HANDOFF_TOKEN` optionally registers six coordinator endpoints: prepare,
+  live settlement, participant confirm, authorize-commit, finalize and begin-abort.
+  Startup rejects weak/reused credentials across tenant, internal, debit,
+  provider and reference-encryption boundaries. Unconfigured routes remain 404;
+  no staging secret or deployment was changed.
+- Every route authenticates the dedicated bearer and exact original ownership
+  version, binds cloud/operation, rejects unknown/trailing/oversized JSON and uses
+  a bounded context. Responses echo the scope, are non-cacheable and suppress
+  backend diagnostics. General tenant/internal/debit credentials cannot enter;
+  the handoff credential cannot enter tenant or pricing/access APIs.
+- The coordinator API does not expose initial responsibility, settlement-receipt
+  ingestion or hold-release certification. Billing's persisted evidence remains
+  authoritative: request flags cannot mint readiness or both confirmations.
+  Abort requests remain `abort_pending` until trusted hold-release evidence arrives.
+- HTTP tests cover -1/0/+1, missing evidence, exact/changed amount, source-only
+  confirmation, outsider, stale snapshot/version/cloud, duplicate requests and
+  finalization. Injected finalize-audit failure returns 503 but leaves the durable
+  known AM decision `finalizing`; abort still conflicts and exact retry completes.
+- Service OpenAPI describes typed requests/results and the dedicated security
+  scheme. The compatibility importer now preserves that fourth boundary instead
+  of recategorizing these routes as general internal Billing. Import tests pass.
+- A loopback TCP test invokes the separately compiled AM client in
+  `/tmp/rtk-multicloud-impl.bJ3Ic4`; prepare/status/confirm/grant/finalize/retry/abort
+  travel through the actual HTTP router into PostgreSQL. Three repeated race runs
+  of HTTP/client-contract cases passed (API 9.517s). Initial broader boundary/config
+  race tests passed three repeats (API 18.510s, config 1.666s).
+- All fixtures use isolated `multicloud_billing_transport_test` on port 63229,
+  including migrations through the existing 053. No new Billing migration is needed
+  for the transport. **Collector and AM decision receipts are synthetic**; there
+  is no real AM membership commit or resource/provider reconciliation in these tests.
+- Final full uncached suite passed with the cross-repository client fixture enabled
+  (API 18.668s, payment store 33.054s, payment service 18.231s). Log:
+  `/tmp/rtk-billing-transport-suite-final-20260831-r2.log`. `go vet ./...`,
+  `git diff --check`, API security-scheme tests and the Python contract importer
+  tests passed. These are local checks, not runtime PR CI or staging evidence.
+
 ## Not implemented / deployment gate
 
-There is deliberately no externally callable prepare/bootstrap/collector route yet
-and no production cross-service coordinator. Store-level commit/finalize/abort
-logic is implemented, but trusted collectors/AM decision delivery are not connected.
+The optional dedicated handoff HTTP transport and separately compiled AM client
+are now implemented and exercised together against isolated Billing persistence.
+No handoff routes exist without explicit `BILLING_HANDOFF_TOKEN` configuration;
+no production configuration was changed. There is still no production cross-service
+coordinator and no coordinator bootstrap/collector/hold-release certification route.
+Trusted collectors and real AM decision/outbox delivery are not connected.
 Do not enable transfers or bootstrap historical responsibility from a today's-owner
 lookup. Synthetic AM receipt hashes in protocol tests are not real owner mutations.
 
 Remaining work includes:
 
-1. Dedicated internal handoff credential, Account Manager durable coordinator,
+1. Wire the implemented dedicated transport to the Account Manager durable coordinator,
    outbox, producer hold/cutoff acknowledgments, persisted usage/invoice/provider
    reconciliation checkpoint collectors and routing of versioned snapshots and
    both confirmations. The collector must observe local state before gathering
@@ -344,7 +385,7 @@ prove an end-to-end ownership transfer. Existing cutoff debit ingestion is not
 ingestion-completeness proof. Outstanding work must keep readiness fail-closed.
 Snapshot freshness currently hashes per-cloud financial rows; scale evidence,
 production producer holds, integrated owner/version propagation and privacy,
-and predecessor compensation routing must be established before enabling the
-protocol endpoints. The SQL commit barrier does not prove producer completeness.
+and predecessor compensation routing must be established before production
+enablement. The SQL commit barrier does not prove producer completeness.
 A bare persisted `prepared` phase is never a substitute for live financial status
 or the explicit commit authorization protocol.

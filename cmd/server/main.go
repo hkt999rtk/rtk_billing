@@ -68,6 +68,13 @@ func main() {
 	if err := server.ConfigurePayments(api.PaymentAPIOptions{Store: paymentStore, Providers: providers, ReferenceProtector: protector, BillingDebitToken: cfg.BillingDebitToken, BillingDebitSource: cfg.BillingDebitSource, SimulatorCallbackSecret: cfg.SimulatorCallbackSecret, HostedChargeNotifyURL: cfg.NewebPayNotifyURL, HostedChargeReturnURL: cfg.NewebPayReturnURL}); err != nil {
 		log.Fatal(err)
 	}
+	// An unset dedicated credential leaves all handoff routes absent. Never
+	// reuse tenant/pricing/debit authority or enable migration bootstrap here.
+	if cfg.HandoffToken != "" {
+		if err := server.ConfigureHandoff(api.HandoffAPIOptions{Token: cfg.HandoffToken, Store: paymentStore}); err != nil {
+			log.Fatal(err)
+		}
+	}
 	billingStore := billingstore.New(db)
 	billingService, err := billingservice.New(billingservice.Options{Store: billingStore, PaymentStore: paymentStore})
 	if err != nil {

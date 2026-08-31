@@ -9,6 +9,193 @@ info:
   description: Provider-neutral pricing, wallet, payment, invoice, and billing access
     service.
 paths:
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/prepare:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: prepareBillingOwnershipHandoff
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Install the durable monetary hold; does not certify settlement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffPrepareRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffPrepareResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/settlement:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    get:
+      tags: [Ownership Handoff]
+      operationId: getBillingOwnershipSettlement
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Read live settlement validity, minimal snapshot and blockers.
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffSettlementResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/confirm:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: confirmBillingOwnershipSnapshot
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Confirm an exact snapshot as a coordinator-authenticated participant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffConfirmRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffSettlementResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/authorize-commit:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: authorizeBillingOwnershipCommit
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Issue a persisted grant only after current settlement and both confirmations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffAuthorizeRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffAuthorizationResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/finalize:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: finalizeBillingOwnershipHandoff
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Apply a verified durable Account Manager commit; retry forward only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffFinalizeRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffProtocolResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/abort:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: beginBillingOwnershipAbort
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Record a verified precommit cancellation; does not certify hold release.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffAbortRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffProtocolResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /v1/internal/billing/pricing-versions:
     post:
       tags:
@@ -1065,6 +1252,11 @@ paths:
       - REQ-BILL-ACCESS-001
 components:
   securitySchemes:
+    billingHandoffAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: handoff-coordinator-token
+      description: Dedicated Account Manager durable coordinator credential. Distinct from tenant, pricing/access, debit and provider credentials. May relay authenticated participant confirmations and verified AM decisions, but cannot initialize responsibility, certify settlement or release holds. Routes are absent unless explicitly configured. Never expose this credential to a browser.
     billingServiceAuth:
       type: http
       scheme: bearer
@@ -1081,6 +1273,125 @@ components:
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    HandoffPrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [source_user_id, target_user_id, cutoff]
+      properties:
+        source_user_id: { type: string, format: uuid }
+        target_user_id: { type: string, format: uuid }
+        cutoff: { type: string, format: date-time }
+    HandoffConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, snapshot_version, balance_minor, currency]
+      properties:
+        user_id: { type: string, format: uuid, description: Global source or target authenticated by Account Manager. }
+        snapshot_version: { type: integer, format: int64, minimum: 2 }
+        balance_minor: { type: integer, format: int64, minimum: 0 }
+        currency: { type: string, enum: [TWD] }
+    HandoffAuthorizeRequest:
+      type: object
+      additionalProperties: false
+      required: [authorization_id, snapshot_version]
+      properties:
+        authorization_id: { type: string, format: uuid }
+        snapshot_version: { type: integer, format: int64, minimum: 2 }
+    HandoffFinalizeRequest:
+      type: object
+      additionalProperties: false
+      required: [authorization_id, committed_owner_user_id, committed_ownership_version, committed_at, am_commit_sha256]
+      properties:
+        authorization_id: { type: string, format: uuid }
+        committed_owner_user_id: { type: string, format: uuid }
+        committed_ownership_version: { type: integer, format: int64, minimum: 2 }
+        committed_at: { type: string, format: date-time }
+        am_commit_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+    HandoffAbortRequest:
+      type: object
+      additionalProperties: false
+      required: [cancellation_id, am_cancellation_sha256]
+      properties:
+        cancellation_id: { type: string, format: uuid }
+        am_cancellation_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        authorization_id: { type: string, format: uuid, description: Required if Billing already issued a commit grant. }
+    HandoffScopeResponse:
+      type: object
+      required: [cloud_id, operation_id, ownership_version]
+      properties:
+        cloud_id: { type: string, format: uuid }
+        operation_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+    HandoffPreparedOperation:
+      type: object
+      required: [id, account_id, source_user_id, target_user_id, ownership_version, cutoff, phase, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        source_user_id: { type: string, format: uuid }
+        target_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, minimum: 1 }
+        cutoff: { type: string, format: date-time }
+        phase: { type: string }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    HandoffSettlement:
+      type: object
+      required: [operation_id, phase, blockers]
+      properties:
+        operation_id: { type: string, format: uuid }
+        phase: { type: string }
+        blockers: { type: array, items: { type: string } }
+        snapshot:
+          type: object
+          required: [version, balance_minor, currency, cutoff, source_confirmed, target_confirmed]
+          properties:
+            version: { type: integer, format: int64, minimum: 2 }
+            balance_minor: { type: integer, format: int64, minimum: 0 }
+            currency: { type: string, enum: [TWD] }
+            cutoff: { type: string, format: date-time }
+            source_confirmed: { type: boolean }
+            target_confirmed: { type: boolean }
+    HandoffPrepareResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [operation]
+          properties:
+            operation: { $ref: '#/components/schemas/HandoffPreparedOperation' }
+    HandoffSettlementResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [settlement]
+          properties:
+            settlement: { $ref: '#/components/schemas/HandoffSettlement' }
+    HandoffAuthorizationResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [authorization]
+          properties:
+            authorization:
+              type: object
+              required: [operation_id, authorization_id, snapshot_version, created_at]
+              properties:
+                operation_id: { type: string, format: uuid }
+                authorization_id: { type: string, format: uuid }
+                snapshot_version: { type: integer, format: int64, minimum: 2 }
+                created_at: { type: string, format: date-time }
+    HandoffProtocolResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [operation]
+          properties:
+            operation:
+              type: object
+              required: [operation_id, phase]
+              properties:
+                operation_id: { type: string, format: uuid }
+                phase: { type: string, enum: [abort_pending, aborted, finalized] }
     BillingProfile:
       type: object
       required: [legal_name, locale, timezone, delivery_preference, version, requires_configuration]
@@ -1868,6 +2179,17 @@ components:
         duplicate:
           type: boolean
   parameters:
+    HandoffOperationId:
+      name: operationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    HandoffOwnershipVersion:
+      name: X-Billing-Ownership-Version
+      in: header
+      required: true
+      description: Exact source ownership version of this persisted operation, including finalize and abort retries. Does not imply current tenant Billing authority.
+      schema: { type: integer, format: int64, minimum: 1 }
     OwnershipVersion:
       name: X-Billing-Ownership-Version
       in: header

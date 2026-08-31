@@ -32,6 +32,14 @@ Pricing, usage, period-close, and access-control routes use
 `BILLING_DEBIT_TOKEN`. The service refuses credential reuse across these
 boundaries.
 
+`BILLING_HANDOFF_TOKEN` optionally enables the dedicated Account Manager
+coordinator routes below `/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}`.
+It must be at least 32 characters and distinct from every tenant, internal, debit
+and provider credential. Leave it unset until the coordinated handoff deployment
+gates pass; routes are absent by default. This credential is never issued to a
+browser or Cloud Admin. See [handoff protocol](docs/CLOUD_OWNERSHIP_HANDOFF.md#internal-http-transport)
+for scope, evidence and retry requirements.
+
 Health endpoints are unauthenticated. Tenant `/v1/orgs/...` operations require
 `BILLING_SERVICE_TOKEN` plus trusted actor, permission, and request headers;
 internal pricing/access and debit routes use their separate credentials.

@@ -34,6 +34,12 @@ class ExtractOpenAPITests(unittest.TestCase):
             ("/v1/orgs/{orgId}/billing/account", "get", "billingServiceAuth"),
             ("/v1/internal/billing/access/{orgId}", "get", "billingInternalAuth"),
             ("/v1/internal/billing/debits", "post", "billingDebitAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/prepare", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/settlement", "get", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/confirm", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/authorize-commit", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/finalize", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/abort", "post", "billingHandoffAuth"),
         ):
             with self.subTest(path=path):
                 self.assertEqual(imported["paths"][path][method]["security"], [{scheme: []}])

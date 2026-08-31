@@ -11,6 +11,7 @@ func setValidEnvironment(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://billing.invalid/rtk_billing")
 	t.Setenv("BILLING_SERVICE_TOKEN", strings.Repeat("s", 32))
 	t.Setenv("BILLING_INTERNAL_TOKEN", strings.Repeat("i", 32))
+	t.Setenv("BILLING_HANDOFF_TOKEN", "")
 	t.Setenv("BILLING_DEBIT_TOKEN", strings.Repeat("d", 32))
 	t.Setenv("BILLING_DEBIT_SOURCE", "pricing-service")
 	t.Setenv("ENVIRONMENT", "staging")
@@ -19,6 +20,21 @@ func setValidEnvironment(t *testing.T) {
 	t.Setenv("PAYMENT_SIMULATOR_SHARED_SECRET", strings.Repeat("h", 32))
 	t.Setenv("PAYMENT_SIMULATOR_CALLBACK_SECRET", strings.Repeat("c", 32))
 	t.Setenv("PAYMENT_REFERENCE_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+}
+
+func TestHandoffCredentialIsOptionalButCannotReuseOtherBoundaries(t *testing.T) {
+	setValidEnvironment(t)
+	t.Setenv("NEWEBPAY_HASH_KEY", strings.Repeat("k", 32))
+	for _, token := range []string{"short", strings.Repeat("o", 32) + " injected", strings.Repeat("s", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), strings.Repeat("h", 32), strings.Repeat("c", 32), strings.Repeat("k", 32), base64.StdEncoding.EncodeToString(make([]byte, 32))} {
+		t.Setenv("BILLING_HANDOFF_TOKEN", token)
+		if _, err := Load(); err == nil {
+			t.Fatal("weak or reused handoff credential accepted")
+		}
+	}
+	t.Setenv("BILLING_HANDOFF_TOKEN", strings.Repeat("o", 32))
+	if cfg, err := Load(); err != nil || cfg.HandoffToken != strings.Repeat("o", 32) {
+		t.Fatalf("valid optional handoff credential: %v", err)
+	}
 }
 
 func TestLoadRequiresDistinctCredentialBoundaries(t *testing.T) {

@@ -109,6 +109,8 @@ def main() -> None:
                 operation["security"] = []
             elif path == "/v1/internal/billing/debits":
                 operation["security"] = [{"billingDebitAuth": []}]
+            elif path.startswith("/v1/internal/billing/clouds/") and "/ownership-handoffs/" in path:
+                operation["security"] = [{"billingHandoffAuth": []}]
             elif path.startswith("/v1/internal/billing/"):
                 operation["security"] = [{"billingInternalAuth": []}]
             else:
@@ -120,6 +122,10 @@ def main() -> None:
                 operation["x-rtk-requirement-ids"] = requirement_ids
 
     components: dict[str, dict[str, object]] = {"securitySchemes": {
+        "billingHandoffAuth": {
+            "type": "http", "scheme": "bearer", "bearerFormat": "handoff-coordinator-token",
+            "description": "Dedicated Account Manager durable coordinator credential. Distinct from tenant, pricing/access, debit and provider credentials. May relay authenticated participant confirmations and verified AM decisions, but cannot initialize responsibility, certify settlement or release holds. Routes are absent unless explicitly configured. Never expose this credential to a browser.",
+        },
         "billingServiceAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "service-token",
             "description": "Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=user, a global Account Manager user ID in X-Billing-Actor-ID, X-Billing-Ownership-Version, X-Billing-Permissions, and X-Request-ID. Billing verifies the current sole owner and exact ownership version independently of permission headers. Platform privileges do not bypass this tenant boundary. The retired brand_cloud_user actor type is rejected; historical audit actors are not rewritten.",
