@@ -42,6 +42,13 @@ Current ownership alone does not expose predecessor financial records. Tenant
 invoice/document/statement/activity/ledger reads, payment intents and attempts,
 payment-method metadata, list totals, exports and download URLs
 are additionally restricted to the caller's recorded responsibility periods.
+This includes usage facts, quantities, costs, summary `current_period`, forecasts
+and aggregates for any requested date range. Clip to eligible responsibility
+intervals before aggregation; neither historical range queries nor a partially
+overlapping billing month may expose predecessor usage/totals. Forecasts use
+only authorized inputs or return unavailable, not an estimate derived from hidden
+history. The confirmed opening balance is a separate safe projection, not access
+to the ledger entries or usage facts that produced it.
 An owner returning after an intervening owner cannot read the intervening period.
 Unknown or mixed-period records require a safe period-specific projection or are
 withheld; never disclose another payer's legal name, tax ID, address, email,
@@ -89,6 +96,14 @@ ownership commit. Finalize with the committed Account Manager ownership version,
 close/open responsibility periods, permanently revoke old auto-charge consent
 and return a durable acknowledgment. The new owner supplies new payment consent.
 Never duplicate balance/debits or expose old provider payment references.
+Before exposing the new owner's Billing view, retire the prospective billing
+profile into restricted historical evidence and replace its active projection
+with an unset profile tied to the new ownership version. Do not copy old legal
+name, tax ID, address, email, invoice-delivery destination or profile defaults.
+New owner supplies and confirms its own profile before new invoice issuance or
+delivery that needs a recipient; accounting continues without reusing old PII.
+Historical invoice recipient snapshots remain immutable. Prepare hides the old
+profile from the target; finalize resets it idempotently before releasing access.
 
 Abort requires confirmed Account Manager precommit cancellation. Restore only
 still-valid, not externally revoked consent through an audited transition. After
@@ -114,6 +129,10 @@ Include predecessor invoice IDs, downloads, exports, mixed-period statements,
 returning owners and pagination counts in financial-privacy negative tests.
 Also assert that ledger details, payment-intent lists/details/attempts and even
 redacted payment-method metadata cannot expose a predecessor period. Exercise
+historical and overlapping-month usage requests, summary `current_period`, totals
+and forecasts, plus profile reset, stale profile ETags, and invoice delivery that
+must not address the predecessor. Both direct reads and aggregates enforce the
+same period filter before any calculation. Exercise
 participant-only preview/confirmation before commit, denied target general Billing
 reads, stale/expired participants, and two tabs with hosted-return scope changes.
 Coordinate matched backups/restore under write freeze. Database restore cannot
