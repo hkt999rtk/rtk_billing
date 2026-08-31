@@ -117,6 +117,9 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 	if s.handoff != nil && (options.BillingDebitToken == s.handoff.token || options.SimulatorCallbackSecret == s.handoff.token) {
 		return fmt.Errorf("handoff credential must be distinct from payment credentials")
 	}
+	if s.cloudCreationToken != "" && (options.BillingDebitToken == s.cloudCreationToken || options.SimulatorCallbackSecret == s.cloudCreationToken) {
+		return fmt.Errorf("cloud creation credential must be distinct from payment credentials")
+	}
 	if (options.BillingDebitToken == "") != (options.BillingDebitSource == "") {
 		return fmt.Errorf("billing debit token and source must be configured together")
 	}

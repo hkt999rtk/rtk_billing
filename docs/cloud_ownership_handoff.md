@@ -130,6 +130,29 @@ and historical snapshots unchanged, compensation appears once in the correct led
 
 ## Internal HTTP transport
 
+### New-cloud responsibility provisioning
+
+AM's new-cloud transaction persists the cloud UUID, initial unique global owner,
+version 1, creation time and immutable event UUID. Migration 066 emits this event
+only for newly inserted Brand Clouds after the owner transaction is complete; it
+does not scan or attribute legacy clouds. Pending activation does not remove the
+designated owner, but normal authentication/operational checks still prohibit use.
+
+The optional dedicated `BILLING_CLOUD_CREATION_TOKEN` accepts these events at
+`POST /v1/internal/billing/cloud-creations`, separate from handoff/tenant/internal/
+debit/provider authority. Migration 057 stores append-only creation receipts.
+Account, initial responsibility, receipt and audit commit atomically; an existing
+account without the exact receipt is rejected even if its balance is zero. No
+funds, payment consent, legal profile or access override is provisioned.
+
+AM retries the same event after timeout or worker restart. Only the full matching
+receipt is acknowledged under the current delivery lease. Billing's replay reads
+the original receipt and never reopens a closed account, resets a balance, or
+overwrites later ownership periods. Changed owner/time/event/cloud/digest conflicts.
+This path cannot bootstrap existing historical accounts; the reviewed provenance
+and migration workflow remains necessary. It also supplies no usage/provider
+completeness or financial eligibility evidence.
+
 ### Advisory request/acceptance eligibility
 
 `POST /v1/internal/billing/clouds/{orgId}/ownership-eligibility` is a read-only

@@ -15,6 +15,7 @@ type Config struct {
 	ServiceToken                  string
 	InternalToken                 string
 	HandoffToken                  string
+	CloudCreationToken            string
 	BillingDebitToken             string
 	BillingDebitSource            string
 	PaymentReferenceEncryptionKey string
@@ -41,6 +42,7 @@ func Load() (Config, error) {
 		ServiceToken:                  strings.TrimSpace(os.Getenv("BILLING_SERVICE_TOKEN")),
 		InternalToken:                 strings.TrimSpace(os.Getenv("BILLING_INTERNAL_TOKEN")),
 		HandoffToken:                  strings.TrimSpace(os.Getenv("BILLING_HANDOFF_TOKEN")),
+		CloudCreationToken:            strings.TrimSpace(os.Getenv("BILLING_CLOUD_CREATION_TOKEN")),
 		BillingDebitToken:             strings.TrimSpace(os.Getenv("BILLING_DEBIT_TOKEN")),
 		BillingDebitSource:            strings.TrimSpace(os.Getenv("BILLING_DEBIT_SOURCE")),
 		PaymentReferenceEncryptionKey: strings.TrimSpace(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY")),
@@ -68,6 +70,16 @@ func Load() (Config, error) {
 			credentialReuse(cfg.HandoffToken, cfg.SimulatorSharedSecret) || credentialReuse(cfg.HandoffToken, cfg.SimulatorCallbackSecret) ||
 			credentialReuse(cfg.HandoffToken, cfg.NewebPayHashKey) || credentialReuse(cfg.HandoffToken, cfg.PaymentReferenceEncryptionKey) {
 			return Config{}, errors.New("BILLING_HANDOFF_TOKEN must contain at least 32 characters and be distinct from other service credentials")
+		}
+	}
+	if cfg.CloudCreationToken != "" {
+		if len(cfg.CloudCreationToken) < 32 || strings.ContainsAny(cfg.CloudCreationToken, " \t\r\n") {
+			return Config{}, errors.New("BILLING_CLOUD_CREATION_TOKEN must contain at least 32 characters")
+		}
+		for _, secret := range []string{cfg.ServiceToken, cfg.InternalToken, cfg.HandoffToken, cfg.BillingDebitToken, cfg.SimulatorSharedSecret, cfg.SimulatorCallbackSecret, cfg.NewebPayHashKey, cfg.PaymentReferenceEncryptionKey} {
+			if secret != "" && secret == cfg.CloudCreationToken {
+				return Config{}, errors.New("BILLING_CLOUD_CREATION_TOKEN must not reuse another service credential")
+			}
 		}
 	}
 	if (cfg.BillingDebitToken == "") != (cfg.BillingDebitSource == "") {

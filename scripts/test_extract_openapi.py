@@ -34,6 +34,7 @@ class ExtractOpenAPITests(unittest.TestCase):
             ("/v1/orgs/{orgId}/billing/account", "get", "billingServiceAuth"),
             ("/v1/internal/billing/access/{orgId}", "get", "billingInternalAuth"),
             ("/v1/internal/billing/debits", "post", "billingDebitAuth"),
+            ("/v1/internal/billing/cloud-creations", "post", "billingCloudCreationAuth"),
             ("/v1/internal/billing/clouds/{orgId}/deletion-preflight", "get", "billingHandoffAuth"),
             ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/prepare", "post", "billingHandoffAuth"),
             ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/status", "get", "billingHandoffAuth"),

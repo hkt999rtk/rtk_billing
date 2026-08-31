@@ -75,6 +75,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	if cfg.CloudCreationToken != "" {
+		if err := server.ConfigureCloudCreation(api.CloudCreationAPIOptions{Token: cfg.CloudCreationToken, Store: paymentStore}); err != nil {
+			log.Fatal(err)
+		}
+	}
 	billingStore := billingstore.New(db)
 	billingService, err := billingservice.New(billingservice.Options{Store: billingStore, PaymentStore: paymentStore})
 	if err != nil {

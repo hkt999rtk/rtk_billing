@@ -45,7 +45,7 @@ type handoffRuntime struct {
 // incomplete configuration is an error, never an unauthenticated fallback.
 func (s *Server) ConfigureHandoff(in HandoffAPIOptions) error {
 	in.Token = strings.TrimSpace(in.Token)
-	if s.handoff != nil || in.Store == nil || len(in.Token) < 32 || strings.ContainsAny(in.Token, " \t\r\n") || in.Token == s.serviceToken || in.Token == s.internalToken {
+	if s.handoff != nil || in.Store == nil || len(in.Token) < 32 || strings.ContainsAny(in.Token, " \t\r\n") || in.Token == s.serviceToken || in.Token == s.internalToken || in.Token == s.cloudCreationToken {
 		return fmt.Errorf("handoff requires a store and a new dedicated credential of at least 32 characters")
 	}
 	if s.payments != nil && (in.Token == s.payments.billingDebitToken || in.Token == string(s.payments.simulatorCallbackSecret)) {

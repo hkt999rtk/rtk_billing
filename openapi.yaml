@@ -9,6 +9,30 @@ info:
   description: Provider-neutral pricing, wallet, payment, invoice, and billing access
     service.
 paths:
+  /v1/internal/billing/cloud-creations:
+    post:
+      tags: [Cloud Provisioning]
+      operationId: bootstrapBillingBrandCloud
+      security: [{ billingCloudCreationAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Atomically project a new cloud's immutable initial owner into Billing.
+      description: Dedicated AM creation-outbox credential only. No legacy-account adoption, current-owner inference, financial clearance or ownership transfer. Exact replay returns the original receipt even after later transfer or closure, without restoring access or balances. Future timestamps and changed event bindings are rejected. JSON is bounded to 16 KiB; responses are no-store. Absent configuration leaves the route at 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudCreationEvent' }
+      responses:
+        '200':
+          description: Exact committed initial-responsibility receipt, not current ownership authority.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudCreationReceipt' }
+        '400': { description: 'Invalid canonical binding, digest, timestamp or bounded JSON.' }
+        '401': { description: Missing or incorrect dedicated creation credential. }
+        '409': { description: Conflicting event or existing account without matching creation evidence. }
+        '503': { description: Uncertain persistence; retain and retry the original AM event. }
   /v1/internal/billing/clouds/{orgId}/closures/{operationId}/prepare:
     parameters:
       - { $ref: '#/components/parameters/OrgId' }
@@ -1468,6 +1492,11 @@ paths:
       - REQ-BILL-ACCESS-001
 components:
   securitySchemes:
+    billingCloudCreationAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: cloud-creation-outbox-token
+      description: Dedicated AM new-cloud event worker credential, distinct from tenant, internal, handoff, debit and provider credentials. Cannot adopt legacy history, mutate owners, certify financial settlement or release holds.
     billingHandoffAuth:
       type: http
       scheme: bearer
@@ -1489,6 +1518,29 @@ components:
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    CloudCreationFields:
+      type: object
+      required: [event_id, cloud_id, owner_user_id, ownership_version, occurred_at, evidence_sha256]
+      properties:
+        event_id: { type: string, format: uuid }
+        cloud_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, const: 1 }
+        occurred_at: { type: string, format: date-time }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+      description: All UUIDs canonical lowercase and nonzero; time is nonzero, no later than DB time, and microsecond-exact. Digest is SHA-256 of newline-joined brand-cloud-created-v1, event_id, cloud_id, owner_user_id, literal 1, and UTC occurred_at formatted YYYY-MM-DDTHH:mm:ss.ffffffZ, without a trailing newline. Digest binds authenticated evidence; it is not a signature.
+    CloudCreationEvent:
+      allOf:
+        - { $ref: '#/components/schemas/CloudCreationFields' }
+      unevaluatedProperties: false
+    CloudCreationReceipt:
+      allOf:
+        - { $ref: '#/components/schemas/CloudCreationFields' }
+        - type: object
+          required: [account_id]
+          properties:
+            account_id: { type: string, format: uuid }
+      unevaluatedProperties: false
     ClosureSHA256:
       type: string
       pattern: '^[a-f0-9]{64}$'

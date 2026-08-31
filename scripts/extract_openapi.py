@@ -109,6 +109,8 @@ def main() -> None:
                 operation["security"] = []
             elif path == "/v1/internal/billing/debits":
                 operation["security"] = [{"billingDebitAuth": []}]
+            elif path == "/v1/internal/billing/cloud-creations":
+                operation["security"] = [{"billingCloudCreationAuth": []}]
             elif path.startswith("/v1/internal/billing/clouds/") and (
                 "/ownership-handoffs/" in path or "/closures/" in path or path.endswith("/deletion-preflight")
             ):
@@ -124,6 +126,10 @@ def main() -> None:
                 operation["x-rtk-requirement-ids"] = requirement_ids
 
     components: dict[str, dict[str, object]] = {"securitySchemes": {
+        "billingCloudCreationAuth": {
+            "type": "http", "scheme": "bearer", "bearerFormat": "cloud-creation-outbox-token",
+            "description": "Dedicated AM new-cloud event worker credential, distinct from tenant, internal, handoff, debit and provider credentials. Cannot adopt legacy history, mutate owners, certify financial settlement or release holds.",
+        },
         "billingHandoffAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "handoff-coordinator-token",
             "description": "Dedicated Account Manager durable coordinator credential. Distinct from tenant, pricing/access, debit and provider credentials. May relay authenticated participant confirmations and verified AM decisions, but cannot initialize responsibility, certify settlement or release holds. Routes are absent unless explicitly configured. Never expose this credential to a browser.",
