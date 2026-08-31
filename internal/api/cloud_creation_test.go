@@ -23,6 +23,15 @@ func TestBillingWritersWaitForCreationInsteadOfOrphaningAccounts(t *testing.T) {
 	debit := func() *httptest.ResponseRecorder {
 		return env.request(t, "POST", "/v1/internal/billing/debits", "", "bootstrap-debit", body)
 	}
+	body["currency"] = "USD"
+	if out := debit(); out.Code != 400 || !strings.Contains(out.Body.String(), "PAYMENT_CURRENCY_UNSUPPORTED") {
+		t.Fatal("unsupported currency reported as provisioning delay", out.Code, out.Body.String())
+	}
+	body["currency"], body["amount_minor"] = "TWD", -1
+	if out := debit(); out.Code != 400 || !strings.Contains(out.Body.String(), "PAYMENT_AMOUNT_INVALID") {
+		t.Fatal("invalid amount reported as provisioning delay", out.Code, out.Body.String())
+	}
+	body["amount_minor"] = 10
 	for range 2 {
 		if out := debit(); out.Code != 503 || !strings.Contains(out.Body.String(), "BILLING_ACCOUNT_NOT_READY") {
 			t.Fatal("debit created an account without owner evidence", out.Code, out.Body.String())

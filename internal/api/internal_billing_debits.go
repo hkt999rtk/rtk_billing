@@ -48,6 +48,10 @@ func (s *Server) handleInternalBillingDebit(c *gin.Context) {
 		return
 	}
 	// Do not race AM creation delivery by creating an account without its owner.
+	if err := payment.ValidateChargeAmount(request.Currency, request.AmountMinor); err != nil {
+		writePaymentError(c, err)
+		return
+	}
 	account, err := s.payments.store.GetCommercialAccountByOrganization(c.Request.Context(), request.OrganizationID, request.Currency)
 	if errors.Is(err, paymentstore.ErrNotFound) {
 		writeError(c, http.StatusServiceUnavailable, "BILLING_ACCOUNT_NOT_READY", "Billing account provisioning is incomplete; retry later")
