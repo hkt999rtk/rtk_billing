@@ -1,7 +1,7 @@
 # Brand Cloud Billing ownership handoff design
 
 Status: design-first target, not deployed acceptance. Follow canonical
-MULTICLOUD_OWNERSHIP.md. Account Manager owns membership/ownership; Billing owns
+[MULTICLOUD_OWNERSHIP.md](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/blob/codex/multicloud-owner-design/MULTICLOUD_OWNERSHIP.md). Account Manager owns membership/ownership; Billing owns
 monetary state using opaque organization UUIDs without cross-database joins.
 
 ## Responsibility and access
@@ -79,6 +79,11 @@ changed payloads or stale versions conflict. The browser cannot supply trusted
 ownership or call internal handoff routes.
 
 Prepare installs a monetary fence excluding new charges/top-ups and auto-topup.
+Also fence hosted payment-method setup creation/completion. Bind each setup session
+and pending method to its original actor/cloud/ownership version; terminalize them
+before preparation readiness. Late or duplicate provider setup callbacks can only
+record unusable evidence, never activate a method or restore consent after handoff.
+Unresolved setup/provider work blocks readiness. Reconciliation remains available.
 Already dispatched provider work must reconcile; a local fence cannot cancel an
 external charge. Resource producers acknowledge cutoff, ingestion completeness
 and settlement. Unrated/unbounded late usage, debt, payments/refunds/disputes or
@@ -110,6 +115,18 @@ still-valid, not externally revoked consent through an audited transition. After
 owner commit keep fences and retry finalization; never restore old-owner access
 on timeout. Provider callbacks remain enabled for reconciliation; unexpected
 balance changes keep the operation blocked. Recovery uses persisted versions.
+
+After a finalized transfer, compensation for an original predecessor transaction
+(including later refunds/chargebacks) is recorded in a separate predecessor-period
+adjustment ledger/receivable, never against the new owner's spendable cloud balance.
+Key entries by provider event, original transaction and proven responsibility period;
+do not overwrite original cloud ledger history or automatically charge an old method.
+The platform reconciles provider cash movements and recovery separately. Unknown
+liability goes to audited exception handling without defaulting to the current owner.
+This preserves the confirmed opening balance and privacy policy even after deletion.
+Test delayed setup completion across prepare/commit/finalize, and duplicate/reordered
+post-finalization chargebacks/refunds: old methods remain unusable, new-owner balance
+and historical snapshots unchanged, compensation appears once in the correct ledger.
 
 ## Deletion and evidence
 
