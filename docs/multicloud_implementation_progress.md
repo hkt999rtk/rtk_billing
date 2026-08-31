@@ -1,7 +1,7 @@
 # Multi-cloud Billing implementation checkpoint
 
 This is implementation evidence, not replacement normative design. The approved
-target remains `CLOUD_OWNERSHIP_HANDOFF.md`. No runtime PR or staging deployment
+target remains `cloud_ownership_handoff.md`. No runtime PR or staging deployment
 has been made for this implementation branch.
 
 ## Implemented locally
