@@ -492,8 +492,12 @@ paths:
         digests are canonicalized; windows use UTC microsecond precision and must
         remain nonempty. Changed scope, quantity, measurement, window, or source
         returns 409 even when the caller reuses the original digest. The server
-        assigns the fact ID. Acceptance does not certify source completeness or
-        ownership-transfer settlement readiness.
+        assigns the database row ID. Canonical metered-service delivery derives
+        `usage_id` from producer usage ID and metric code, and binds the complete
+        canonical producer event in `source_sha256`. Legacy trusted identifiers
+        remain accepted during migration. Acceptance proves only this immutable
+        fact; it does not certify producer drainage, source high-water
+        completeness, pricing, settlement or ownership-transfer readiness.
       operationId: putBillingUsageFact
       security:
       - billingInternalAuth: []
@@ -515,6 +519,7 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-LIFECYCLE-001
       - REQ-AM-INVOICE-ARITHMETIC-001
+      - REQ-BILL-USAGE-DELIVERY-001
   /v1/internal/billing/periods/close:
     post:
       tags:
