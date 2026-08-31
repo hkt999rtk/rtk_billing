@@ -1,5 +1,10 @@
 # Payment Abstraction And Automatic Top-Up Design
 
+The design-first multi-cloud extension is specified in
+[CLOUD_OWNERSHIP_HANDOFF.md](CLOUD_OWNERSHIP_HANDOFF.md): unique owner tenant
+Billing authority, per-cloud balance, responsibility history and fenced handoff.
+It is not included in the implemented-foundation claim below.
+
 Status: implemented foundation with guarded rollout. Provider-neutral money,
 ledger, policy, intent, durable worker/reconciliation, safe customer HTTP APIs,
 and verified webhook ingestion are implemented. Durable hosted setup, charge,
