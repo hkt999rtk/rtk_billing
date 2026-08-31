@@ -638,3 +638,14 @@ the OpenAPI extractor unit test passed. Full-suite log:
 `/tmp/rtk-billing-eligibility-full-coverage.out`. This profile is not the workspace
 governed coverage gate. Production collector/provider/producer wiring, service
 CI, migration rehearsal and staging acceptance remain open.
+
+The subsequent workspace PR-profile package gate at service commit `f0df49d`
+passed (run `local-billing-eligibility-f0df49d-v2`, 78.670s): governed coverage
+73.65%, all configured package ratchets and artifact redaction passed. The
+workspace checkout was the unpublished candidate rooted at `d128eab`; the
+separately compiled AM client was at `d7f5c21`. This run did not supply a base ref,
+so it does not establish differential coverage or the default pre-PR/CI gate.
+Report: `.artifacts/test-runs/local-billing-eligibility-f0df49d-v2/coverage/test_report.md`
+in the owned qualification checkout. The first attempt stopped before tests
+because its catalog referenced an AM source not yet pinned in that checkout;
+the complete candidate was then regenerated and checked before this rerun.
