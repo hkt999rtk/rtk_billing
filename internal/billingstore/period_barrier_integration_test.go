@@ -187,7 +187,9 @@ func TestInvoiceCloseFencesConcurrentUsageAndRechecksIncompleteRetry(t *testing.
 }
 
 func TestInvoiceCloseWaitsForCommittedUsageAndSerializesCompetingCloses(t *testing.T) {
-	ctx, db, s, in, fact := periodBarrierFixture(t)
+	_, db, s, in, fact := periodBarrierFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	writer, err := db.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
