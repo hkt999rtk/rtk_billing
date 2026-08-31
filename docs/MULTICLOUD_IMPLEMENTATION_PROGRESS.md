@@ -367,6 +367,28 @@ Financial privacy checkpoint evidence:
   `git diff --check` and the OpenAPI importer regression passed. These are local
   correctness checks, not runtime CI or performance measurements.
 
+## Actual AM owner decision integration checkpoint — 2026-08-31
+
+- The public-API cross-repository fixture now runs both consent-only and complete
+  commit/finalize variants. In the latter, AM persists a durable grant request,
+  consumes this Billing service's actual authorization, atomically changes the
+  unique owner/version and records its committed decision. That real decision
+  then reaches Billing over the dedicated HTTP client and is finalized/replayed.
+- The fixture verifies AM global-session status and old/new owner access, two
+  Billing responsibility periods and exactly one current target/version. Both
+  sides persist real protocol state rather than passing a synthetic AM commit hash.
+  Initial financial eligibility, collector completeness and producer preparation/
+  release still use synthetic evidence. This does not prove production settlement,
+  producer drain, automatic worker delivery, UI or staging acceptance.
+- Full uncached Billing `go test ./... -count=1` passed with both variants enabled
+  (API 31.226s, payment store 40.166s, payment service 29.533s). Log:
+  `/tmp/rtk-billing-real-owner-commit-suite-20260831.log`. No new Billing migration
+  or runtime configuration was needed; AM's isolated databases applied forward 058.
+- Both fixture variants passed three Billing-side race runs (23.104s). Log:
+  `/tmp/rtk-billing-real-owner-commit-race-20260831.log`. AM's owner-commit store
+  tests passed separate repeated race runs; both services passed `go vet ./...`
+  and `git diff --check`. No runtime PR, deployment or shared data change occurred.
+
 ## Not implemented / deployment gate
 
 The optional dedicated handoff HTTP transport and separately compiled AM client
@@ -374,7 +396,7 @@ are now implemented and exercised together against isolated Billing persistence.
 No handoff routes exist without explicit `BILLING_HANDOFF_TOKEN` configuration;
 no production configuration was changed. There is still no production cross-service
 coordinator and no coordinator bootstrap/collector/hold-release certification route.
-Trusted collectors and real AM decision/outbox delivery are not connected.
+Trusted collectors and automatic AM decision/outbox delivery are not connected.
 Do not enable transfers or bootstrap historical responsibility from a today's-owner
 lookup. Synthetic AM receipt hashes in protocol tests are not real owner mutations.
 
@@ -386,8 +408,9 @@ Remaining work includes:
    confirmations are now wired; automatic coordinator delivery remains absent.
    The collector must observe local state before gathering
    independently verified checkpoints, not append a fresh digest to stale reports.
-2. Connect commit/finalize/abort receipts to authenticated AM durable decisions and
-   retry workers. Add the audited forward-reconciliation clearance path for changed
+2. Connect the tested explicit AM commit/finalize integration to production retry
+   workers and authenticated abort/producer-release delivery. Add the audited
+   forward-reconciliation clearance path for changed
    provider evidence after an observed commit; currently such drift keeps the
    operation `finalizing` and cannot be canceled, rather than silently releasing it.
 3. Connect the BFF's authenticated global actor and ownership version plus trusted
