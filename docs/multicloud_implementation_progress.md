@@ -673,6 +673,37 @@ enablement. The SQL commit barrier does not prove producer completeness.
 A bare persisted `prepared` phase is never a substitute for live financial status
 or the explicit commit authorization protocol.
 
+## Invoice period serialization qualification — 2026-09-01
+
+Runtime `f9921c1` prepares invoices in one transaction under the matching cloud
+account lock. Period transition, usage/pricing/profile reads, invoice lines and
+closed state cannot straddle another usage commit. Incomplete retries reacquire
+closing state. Migration 059 adds the late-write barrier after the existing
+account-locking triggers; the application precheck alone is no longer relied on.
+Expected missing-evidence outcomes retain incomplete diagnostics; unexpected
+storage failures roll back the attempt. No account is created by this path.
+
+Real PostgreSQL race tests (3.356s focused package run) observe actual blocking
+PIDs, not timing-only assertions: prior usage is included, late usage rejected,
+concurrent closes return one invoice, incomplete retries refence, a mismatched
+cloud/account is rejected, and an injected line failure leaves no partial period
+or invoice. Full PR-profile `local-billing-period-barrier` passed at `f9921c1`
+in **34.594s**, with **74.29%** overall coverage, all configured ratchets and
+artifact redaction passing. Report:
+`.artifacts/test-runs/local-billing-period-barrier/coverage/test_report.md` in
+the unpublished qualification checkout rooted at `d128eab`. Coverage SHA:
+`84d4726603cec2f34cd2c1a6112ae899dfb7dc44e0e4900565f22870f2ad6bf0`.
+Vet/build, OpenAPI/contracts checks and the 263-case catalog passed. Inventory
+has 393 requirements, 664 operations, 67 workflows, 91 nonblocking unspecified
+normative candidates and zero blocking findings. No base ref was supplied;
+differential coverage, default pre-PR and Linux CI remain unverified.
+
+This supersedes the local period precheck/retry gap recorded below, not the
+upstream collection gaps. Logger paging/cursors, producer restart durability,
+late-event and boundary-spanning usage reconciliation, Billing forwarding and
+actual settlement collector evidence are still required. These tests do not
+authorize ownership transfer or establish staging readiness. Nothing was deployed.
+
 ## Immutable usage qualification — 2026-09-01
 
 Runtime `20b3a6c` rejects any modified producer field on usage replay even when
