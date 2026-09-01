@@ -29,7 +29,18 @@ func (s *Store) CreateConsent(ctx context.Context, in CreateConsentInput) (payme
 		!required(in.AcceptedActorID) || in.AcceptedAt.IsZero() || !required(in.Locale) || !required(in.Source) {
 		return payment.PaymentConsent{}, ErrConflict
 	}
-	return scanConsent(s.db.QueryRow(ctx, `
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return payment.PaymentConsent{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := getAccountForUpdate(ctx, tx, in.AccountID); err != nil {
+		return payment.PaymentConsent{}, err
+	}
+	if err := requireNoHandoffTx(ctx, tx, in.AccountID); err != nil {
+		return payment.PaymentConsent{}, err
+	}
+	consent, err := scanConsent(tx.QueryRow(ctx, `
 		INSERT INTO payment_consents (
 			account_id, consent_type, text_version, text_sha256,
 			accepted_actor_type, accepted_actor_id, accepted_at, locale, source
@@ -39,6 +50,13 @@ func (s *Store) CreateConsent(ctx context.Context, in CreateConsentInput) (payme
 		in.AccountID, in.ConsentType, strings.TrimSpace(in.TextVersion), strings.ToLower(in.TextSHA256),
 		in.AcceptedActorType, in.AcceptedActorID, in.AcceptedAt.UTC(), in.Locale, in.Source,
 	))
+	if err != nil {
+		return payment.PaymentConsent{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return payment.PaymentConsent{}, err
+	}
+	return consent, nil
 }
 
 type CreatePaymentMethodInput struct {
@@ -79,6 +97,12 @@ func (s *Store) CreatePaymentMethod(ctx context.Context, in CreatePaymentMethodI
 	}
 	defer tx.Rollback(ctx)
 
+	if _, err := getAccountForUpdate(ctx, tx, in.AccountID); err != nil {
+		return payment.PaymentMethod{}, err
+	}
+	if err := requireNoHandoffTx(ctx, tx, in.AccountID); err != nil {
+		return payment.PaymentMethod{}, err
+	}
 	consent, err := getConsentForUpdate(ctx, tx, in.ConsentID)
 	if err != nil {
 		return payment.PaymentMethod{}, err
@@ -119,10 +143,12 @@ func getConsentForUpdate(ctx context.Context, tx pgx.Tx, consentID string) (paym
 }
 
 func getPaymentMethodForUpdate(ctx context.Context, tx pgx.Tx, methodID string) (payment.PaymentMethod, error) {
+	args := []any{methodID}
+	visibility := methodVisibility(ctx, &args, true)
 	return scanPaymentMethod(tx.QueryRow(ctx, `
 		SELECT `+paymentMethodColumns+`
 		FROM payment_methods
-		WHERE id = $1
+		WHERE id = $1 AND `+visibility+`
 		FOR UPDATE
-	`, methodID))
+	`, args...))
 }

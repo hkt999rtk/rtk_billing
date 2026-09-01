@@ -9,6 +9,433 @@ info:
   description: Provider-neutral pricing, wallet, payment, invoice, and billing access
     service.
 paths:
+  /v1/internal/billing/cloud-creations:
+    post:
+      tags: [Cloud Provisioning]
+      operationId: bootstrapBillingBrandCloud
+      security: [{ billingCloudCreationAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Atomically project a new cloud's immutable initial owner into Billing.
+      description: Dedicated AM creation-outbox credential only. No legacy-account adoption, current-owner inference, financial clearance or ownership transfer. Exact replay returns the original receipt even after later transfer or closure, without restoring access or balances. Future timestamps and changed event bindings are rejected. JSON is bounded to 16 KiB; responses are no-store. Absent configuration leaves the route at 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudCreationEvent' }
+      responses:
+        '200':
+          description: Exact committed initial-responsibility receipt, not current ownership authority.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudCreationReceipt' }
+        '400': { description: 'Invalid canonical binding, digest, timestamp or bounded JSON.' }
+        '401': { description: Missing or incorrect dedicated creation credential. }
+        '409': { description: Conflicting event or existing account without matching creation evidence. }
+        '503': { description: Uncertain persistence; retain and retry the original AM event. }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/prepare:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: prepareBillingCloudClosure
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Persist payer fence and provider-revocation tasks; requires AM durable resource fence.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosurePrepareRequest' }
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureOperationResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/status:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    get:
+      tags: [Cloud Closure]
+      operationId: getBillingCloudClosureStatus
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Read live closure evidence and blockers; never creates collector evidence.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureStatusResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/close:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: closeBillingCloud
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Atomically close zero-balance Billing using fresh settlement and verified AM resource-readiness decision.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosureCloseRequest' }
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureAckResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/cancel:
+    description: Pre-close cancellation is irreversible for this operation and never restores old payer authorization. Coordinator must first retire every outstanding close command, or finish AM tombstoning if closure already won. Producer/provider release acknowledgments remain independent prerequisites.
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: cancelBillingCloudClosure
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Begin durable cancellation; retain fence until independently verified release and revocations.
+      description: Dedicated AM coordinator only. Original durable commands are idempotent by operation ID and exact content; changed replay conflicts. No collector, provider-acknowledgment or hold-release write endpoint is exposed. Closed operations can only finish AM tombstoning by forward retry, never reopen Billing or cancel. Responses are no-store. JSON bodies are limited to 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosureCancelRequest' }
+      responses:
+        '200':
+          description: Scoped durable result; does not by itself prove AM deletion.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudClosureOperationResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/closures/{operationId}/retire-command:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+      - { $ref: '#/components/parameters/ClosureOwnerUserId' }
+    post:
+      tags: [Cloud Closure]
+      operationId: retireBillingCloudCloseCommand
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Atomically retire a pending close command or return its already-committed closure.
+      description: Serialized with closure on the account. Retirement permanently prohibits this exact settlement/readiness command, including delayed retries. It does not release the lifecycle fence or create settlement evidence. Only a scope-bound retired receipt permits replacement. If closure already won, finish AM tombstoning; do not cancel or reopen. Exact retirement retries return the persisted result. Ambiguous HTTP errors do not prove retirement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloudClosureCloseRequest' }
+      responses:
+        '200':
+          description: Durable, mutually exclusive retired or closed outcome.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudCloseResolutionResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-eligibility:
+    post:
+      tags: [Ownership Handoff]
+      operationId: checkBillingOwnershipEligibility
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Read-only financial eligibility for AM-authenticated transfer request or acceptance.
+      description: Requires current owner/version and fresh independently reconciled evidence. Nonnegative balance is necessary but insufficient. Creates no account, hold, receipt or ownership decision.
+      parameters:
+        - { $ref: '#/components/parameters/OrgId' }
+        - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+        - in: header
+          name: X-Billing-Owner-User-ID
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OwnershipEligibilityRequest' }
+      responses:
+        '200':
+          description: Bound advisory evidence; incomplete or blocked results never authorize transfer.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnershipEligibility' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/deletion-preflight:
+    get:
+      tags: [Ownership Handoff]
+      operationId: getBillingCloudDeletionPreflight
+      security: [{ billingHandoffAuth: [] }]
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-LIFECYCLE-001]
+      summary: Read-only, current-owner advisory closure blockers; never authorizes deletion.
+      parameters:
+        - { $ref: '#/components/parameters/OrgId' }
+        - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+        - in: header
+          name: X-Billing-Owner-User-ID
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Zero credit plus independently reconciled, fresh local-state-bound evidence is required. No account or hold is created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloudDeletionPreflight' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/prepare:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: prepareBillingOwnershipHandoff
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Install the durable monetary hold; does not certify settlement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffPrepareRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffPrepareResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/settlement:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    get:
+      tags: [Ownership Handoff]
+      operationId: getBillingOwnershipSettlement
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Read live settlement validity, minimal snapshot and blockers.
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffSettlementResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/confirm:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: confirmBillingOwnershipSnapshot
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Confirm an exact snapshot as a coordinator-authenticated participant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffConfirmRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffSettlementResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/authorize-commit:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: authorizeBillingOwnershipCommit
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Issue a persisted grant only after current settlement and both confirmations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffAuthorizeRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffAuthorizationResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/finalize:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: finalizeBillingOwnershipHandoff
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Apply a verified durable Account Manager commit; retry forward only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffFinalizeRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffProtocolResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/abort:
+    parameters:
+      - { $ref: '#/components/parameters/OrgId' }
+      - { $ref: '#/components/parameters/HandoffOperationId' }
+      - { $ref: '#/components/parameters/HandoffOwnershipVersion' }
+    post:
+      tags: [Ownership Handoff]
+      operationId: beginBillingOwnershipAbort
+      security:
+      - billingHandoffAuth: []
+      x-rtk-feature-id: FEAT-CONTRACT-MULTICLOUD-001
+      x-rtk-requirement-ids: [REQ-MULTICLOUD-HANDOFF-001]
+      summary: Record a verified precommit cancellation; does not certify hold release.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandoffAbortRequest' }
+      responses:
+        '200':
+          description: Scope-bound durable result. HTTP delivery never proves producer drain or owner commit.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoffProtocolResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /v1/internal/billing/pricing-versions:
     post:
       tags:
@@ -59,6 +486,18 @@ paths:
       tags:
       - Internal Billing
       summary: Idempotently ingest a digest-anchored usage fact
+      description: >-
+        Replay is accepted only when every producer field matches the immutable
+        stored fact, not merely its source SHA-256. Organization UUIDs and hex
+        digests are canonicalized; windows use UTC microsecond precision and must
+        remain nonempty. Changed scope, quantity, measurement, window, or source
+        returns 409 even when the caller reuses the original digest. The server
+        assigns the database row ID. Canonical metered-service delivery derives
+        `usage_id` from producer usage ID and metric code, and binds the complete
+        canonical producer event in `source_sha256`. Legacy trusted identifiers
+        remain accepted during migration. Acceptance proves only this immutable
+        fact; it does not certify producer drainage, source high-water
+        completeness, pricing, settlement or ownership-transfer readiness.
       operationId: putBillingUsageFact
       security:
       - billingInternalAuth: []
@@ -80,11 +519,22 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-LIFECYCLE-001
       - REQ-AM-INVOICE-ARITHMETIC-001
+      - REQ-BILL-USAGE-DELIVERY-001
   /v1/internal/billing/periods/close:
     post:
       tags:
       - Internal Billing
       summary: Close, price, issue, settle, and render one billing period
+      description: >-
+        Requires an already provisioned commercial account. Returns 503
+        BILLING_ACCOUNT_NOT_READY without invoice or account writes while
+        new-cloud provisioning is incomplete; retry the original period after
+        provisioning. Invoice preparation locks the matching cloud account from
+        the closing transition through usage reads and invoice-line commit.
+        Retrying an incomplete period reacquires this fence. Concurrent usage
+        either commits before the read or is rejected as INVOICE_IMMUTABLE;
+        concurrent closes return one immutable invoice. This local transaction
+        does not certify completeness of upstream usage delivery.
       operationId: closeBillingPeriod
       security:
       - billingInternalAuth: []
@@ -98,6 +548,8 @@ paths:
       responses:
         '200':
           description: Existing or newly closed invoice result.
+        '503':
+          description: Billing account provisioning is incomplete; retry later.
         '422':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
@@ -105,10 +557,13 @@ paths:
       - REQ-AM-INVOICE-LIFECYCLE-001
       - REQ-AM-INVOICE-ARITHMETIC-001
   /v1/orgs/{orgId}/billing/summary:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: Return tenant balance current cost runway and top-up health
+      description: Current sole-owner access only. The current period starts at the later of the calendar-month boundary and the current responsibility-period boundary. Usage, totals and forecasts use only authorized period inputs; the shared cloud balance does not authorize predecessor history.
       operationId: getBillingSummary
       security:
       - billingServiceAuth: []
@@ -135,10 +590,13 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-SUMMARY-001
   /v1/orgs/{orgId}/billing/usage:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: Return server-priced usage for the active billing period
+      description: Explicit date ranges are filtered to the current caller's proven responsibility periods before pricing or aggregation. Unproven and cross-period usage windows are withheld, not prorated. A returning owner cannot read an intervening owner's usage.
       operationId: getBillingUsage
       security:
       - billingServiceAuth: []
@@ -165,10 +623,13 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-SUMMARY-001
   /v1/orgs/{orgId}/billing/invoices:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: List tenant invoices with bounded filters
+      description: Items and pagination totals use the same responsibility-period filter and snapshot. Only invoices whose recipient version and entire interval match a proven period of the current caller are visible; unknown or mixed-period invoices are withheld.
       operationId: listBillingInvoices
       security:
       - billingServiceAuth: []
@@ -187,10 +648,13 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-LIFECYCLE-001
   /v1/orgs/{orgId}/billing/invoices/{invoiceId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: Get one tenant invoice and settlement links
+      description: Returns 404 for an invoice outside the current caller's proven responsibility periods, including predecessor and mixed-period invoices. Departed owners have no tenant access even to their historical invoices.
       operationId: getBillingInvoice
       security:
       - billingServiceAuth: []
@@ -214,10 +678,13 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-LIFECYCLE-001
   /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: Download an immutable issued invoice PDF
+      description: Applies the same period authorization as invoice detail before reading document bytes. A known invoice UUID does not authorize a predecessor document.
       operationId: downloadBillingInvoicePdf
       security:
       - billingServiceAuth: []
@@ -246,10 +713,13 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-DOCUMENT-001
   /v1/orgs/{orgId}/billing/activity:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: List normalized customer-safe billing activity
+      description: Activity items, filtered totals and summary counts include only resources proven to belong to the current caller's responsibility periods. Unknown and predecessor resources are withheld; payment metadata is independently period-filtered.
       operationId: listBillingActivity
       security:
       - billingServiceAuth: []
@@ -270,10 +740,13 @@ paths:
       - REQ-AM-BILLING-ACTIVITY-002
       - REQ-AM-BILLING-ACTIVITY-003
   /v1/orgs/{orgId}/billing/activity/{activityId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: Get one customer-safe billing activity timeline
+      description: Parent activity authorization and related timeline reads share an authorized snapshot. Predecessor or unproven resource IDs return 404.
       operationId: getBillingActivity
       security:
       - billingServiceAuth: []
@@ -299,10 +772,13 @@ paths:
       - REQ-AM-BILLING-ACTIVITY-002
       - REQ-AM-BILLING-ACTIVITY-003
   /v1/orgs/{orgId}/billing/profile:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: Get the prospective billing recipient profile
+      description: After ownership handoff, the active profile is blank with requires_configuration=true and the new ownership_version. Historical recipient snapshots are not copied to the incoming owner. A configured profile is required before new invoice issuance.
       operationId: getBillingProfile
       security:
       - billingServiceAuth: []
@@ -315,6 +791,16 @@ paths:
       responses:
         '200':
           description: Billing profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [billing_profile, profile]
+                properties:
+                  billing_profile:
+                    $ref: '#/components/schemas/BillingProfile'
+                  profile:
+                    $ref: '#/components/schemas/BillingProfile'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-PROFILE-001
@@ -322,6 +808,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Replace the prospective billing recipient profile
+      description: A successful replacement configures the current owner's profile. Finalization increments the profile version, invalidating pre-handoff If-Match values; clients cannot restore an old recipient using a stale form.
       operationId: putBillingProfile
       security:
       - billingServiceAuth: []
@@ -352,10 +839,13 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-BILLING-PROFILE-001
   /v1/orgs/{orgId}/billing/statements:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
       summary: Export tenant billing activity as UTF-8 CSV
+      description: Exports invoice statement rows using the same responsibility-period visibility as invoice lists, including returning-owner and unknown-record exclusions. Export permission alone does not authorize predecessor records.
       operationId: exportBillingStatement
       security:
       - billingServiceAuth: []
@@ -376,6 +866,8 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-DOCUMENT-001
   /v1/orgs/{orgId}/billing/account:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -405,6 +897,8 @@ paths:
         '503':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/billing/ledger:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -416,6 +910,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: List immutable customer-safe balance ledger entries.
+      description: Only entries with proven bindings to the current caller's responsibility periods are returned or counted. Invoice-linked entries also require the invoice's whole interval and recipient version to match that period. The confirmed opening balance does not expose its predecessor entries.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/Limit'
@@ -434,6 +929,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-methods:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -445,6 +942,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: List redacted organization payment methods.
+      description: Redaction is not authorization. Only methods bound to the current caller's proven responsibility periods are visible. Previous-period methods remain revoked and cannot be reused or mutated, even after that owner returns.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/Limit'
@@ -463,6 +961,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-methods/setup:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     post:
       tags:
       - Billing and Payments
@@ -505,6 +1005,8 @@ paths:
         '503':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-methods/{methodId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     delete:
       tags:
       - Billing and Payments
@@ -516,6 +1018,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Revoke a payment method and disable its active automatic top-up policy.
+      description: The method must belong to the current ownership version. Predecessor, unknown and the caller's previous-period method IDs return 404, including already-revoked methods.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/PaymentMethodId'
@@ -543,6 +1046,8 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/auto-topup:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -554,6 +1059,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Read the automatic top-up policy and Asia/Taipei safety-limit reset.
+      description: Returns auto_topup=null when no current-period policy exists. A retained predecessor policy is not the successor's configuration and is not disclosed.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       responses:
@@ -582,6 +1088,7 @@ paths:
       - billingServiceAuth: []
       summary: Replace the automatic top-up policy using optimistic concurrency and
         explicit consent.
+      description: Requires the current owner's active current-period method and new consent. If-Match 0 creates a logical new configuration, including replacement of a proven revoked and disabled predecessor configuration. That predecessor snapshot is archived internally and generations remain monotonic. Existing current-period configuration requires its exact version; unknown legacy configuration is not automatically adopted.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/IfMatchVersion'
@@ -623,6 +1130,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Disable automatic top-up and advance the policy generation.
+      description: Requires a current-period policy. A retained predecessor policy returns 404 even if already disabled; this endpoint cannot reveal its settings.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/IfMatchVersion'
@@ -656,6 +1164,8 @@ paths:
         '428':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/topups:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     post:
       tags:
       - Billing and Payments
@@ -698,6 +1208,8 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/topups/checkout:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     post:
       tags: [Billing and Payments]
       operationId: createHostedTopUp
@@ -728,6 +1240,8 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
   /v1/orgs/{orgId}/payment-intents:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -739,6 +1253,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: List customer-safe payment intent history.
+      description: Items and totals include only intents with immutable bindings to the current caller's proven responsibility periods. Predecessor and unproven legacy intents are withheld.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/Limit'
@@ -757,6 +1272,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
   /v1/orgs/{orgId}/payment-intents/{intentId}:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
     get:
       tags:
       - Billing and Payments
@@ -768,6 +1285,7 @@ paths:
       security:
       - billingServiceAuth: []
       summary: Read one customer-safe payment intent and its normalized attempts.
+      description: Both intent and attempts require proven period visibility. Known predecessor or unproven intent IDs return 404.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/PaymentIntentId'
@@ -799,7 +1317,9 @@ paths:
       summary: Post one authenticated idempotent invoice or usage-adjustment debit.
       description: Uses a dedicated billing-source credential. It does not calculate
         prices or invoices and cannot post credits, manual adjustments, refunds, or
-        chargebacks.
+        chargebacks. It never creates a commercial account. Until trusted new-cloud
+        provisioning has committed, returns 503 BILLING_ACCOUNT_NOT_READY; retry
+        the same idempotency key and payload after provisioning.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -999,11 +1519,21 @@ paths:
       - REQ-BILL-ACCESS-001
 components:
   securitySchemes:
+    billingCloudCreationAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: cloud-creation-outbox-token
+      description: Dedicated AM new-cloud event worker credential, distinct from tenant, internal, handoff, debit and provider credentials. Cannot adopt legacy history, mutate owners, certify financial settlement or release holds.
+    billingHandoffAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: handoff-coordinator-token
+      description: Dedicated Account Manager durable coordinator credential. Distinct from tenant, pricing/access, debit and provider credentials. May relay authenticated participant confirmations and verified AM decisions, but cannot initialize responsibility, certify settlement or release holds. Routes are absent unless explicitly configured. Never expose this credential to a browser.
     billingServiceAuth:
       type: http
       scheme: bearer
       bearerFormat: service-token
-      description: Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=user, a global Account Manager user ID in X-Billing-Actor-ID, X-Billing-Permissions, and X-Request-ID. The retired brand_cloud_user actor type is rejected; historical audit actors are not rewritten.
+      description: Dedicated Cloud Admin-to-Billing tenant API credential. Calls also require X-Billing-Actor-Type=user, a global Account Manager user ID in X-Billing-Actor-ID, X-Billing-Ownership-Version, X-Billing-Permissions, and X-Request-ID. Billing verifies the current sole owner and exact ownership version independently of permission headers. Platform privileges do not bypass this tenant boundary. The retired brand_cloud_user actor type is rejected; historical audit actors are not rewritten.
     billingInternalAuth:
       type: http
       scheme: bearer
@@ -1015,6 +1545,349 @@ components:
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    CloudCreationFields:
+      type: object
+      required: [event_id, cloud_id, owner_user_id, ownership_version, occurred_at, evidence_sha256]
+      properties:
+        event_id: { type: string, format: uuid }
+        cloud_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, const: 1 }
+        occurred_at: { type: string, format: date-time }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+      description: All UUIDs canonical lowercase and nonzero; time is nonzero, no later than DB time, and microsecond-exact. Digest is SHA-256 of newline-joined brand-cloud-created-v1, event_id, cloud_id, owner_user_id, literal 1, and UTC occurred_at formatted YYYY-MM-DDTHH:mm:ss.ffffffZ, without a trailing newline. Digest binds authenticated evidence; it is not a signature.
+    CloudCreationEvent:
+      allOf:
+        - { $ref: '#/components/schemas/CloudCreationFields' }
+      unevaluatedProperties: false
+    CloudCreationReceipt:
+      allOf:
+        - { $ref: '#/components/schemas/CloudCreationFields' }
+        - type: object
+          required: [account_id]
+          properties:
+            account_id: { type: string, format: uuid }
+      unevaluatedProperties: false
+    ClosureSHA256:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    CloudClosurePrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [cutoff, am_request_sha256]
+      properties:
+        cutoff: { type: string, format: date-time, description: Persisted resource-fence cutoff; must not be in the future. }
+        am_request_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    CloudClosureCloseRequest:
+      type: object
+      additionalProperties: false
+      required: [settlement_id, am_readiness_sha256]
+      properties:
+        settlement_id: { type: string, format: uuid }
+        am_readiness_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    CloudCloseResolutionResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [resolution]
+          properties:
+            resolution:
+              type: object
+              additionalProperties: false
+              required: [operation_id, settlement_id, am_readiness_sha256, outcome]
+              properties:
+                operation_id: { type: string, format: uuid }
+                settlement_id: { type: string, format: uuid }
+                am_readiness_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+                outcome: { type: string, enum: [retired, closed] }
+                receipt_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+                retired_at: { type: string, format: date-time }
+                acknowledgment:
+                  type: object
+                  required: [operation_id, phase, closed_at, receipt_sha256]
+                  properties:
+                    operation_id: { type: string, format: uuid }
+                    phase: { type: string, const: closed }
+                    closed_at: { type: string, format: date-time }
+                    receipt_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+              oneOf:
+                - required: [receipt_sha256, retired_at]
+                  properties: { outcome: { const: retired } }
+                  not: { required: [acknowledgment] }
+                - required: [acknowledgment]
+                  properties: { outcome: { const: closed } }
+                  not:
+                    anyOf:
+                      - required: [receipt_sha256]
+                      - required: [retired_at]
+    CloudClosureCancelRequest:
+      type: object
+      additionalProperties: false
+      required: [cancellation_id, am_cancellation_sha256]
+      properties:
+        cancellation_id: { type: string, format: uuid }
+        am_cancellation_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    CloudClosure:
+      type: object
+      additionalProperties: false
+      required: [id, account_id, owner_user_id, ownership_version, cutoff, phase, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+        cutoff: { type: string, format: date-time }
+        phase: { type: string, enum: [preparing, closed, canceling, canceled] }
+        version: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    CloudClosureResponseScope:
+      type: object
+      required: [cloud_id, owner_user_id, ownership_version, operation_id]
+      properties:
+        cloud_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+        operation_id: { type: string, format: uuid }
+    CloudClosureOperationResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [operation]
+          properties:
+            operation: { $ref: '#/components/schemas/CloudClosure' }
+    CloudClosureStatusResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [status]
+          properties:
+            status:
+              type: object
+              additionalProperties: false
+              required: [operation, ready, blockers]
+              properties:
+                operation: { $ref: '#/components/schemas/CloudClosure' }
+                ready: { type: boolean, description: True only for preparing with current zero-credit settlement and every provider revocation acknowledged. Terminal/canceling status is not readiness. }
+                receipt_id: { type: string, format: uuid }
+                blockers:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string }
+    CloudClosureAckResponse:
+      allOf:
+        - { $ref: '#/components/schemas/CloudClosureResponseScope' }
+        - type: object
+          required: [acknowledgment]
+          properties:
+            acknowledgment:
+              type: object
+              additionalProperties: false
+              required: [operation_id, phase, closed_at, receipt_sha256]
+              properties:
+                operation_id: { type: string, format: uuid }
+                phase: { type: string, const: closed }
+                closed_at: { type: string, format: date-time }
+                receipt_sha256: { $ref: '#/components/schemas/ClosureSHA256' }
+    OwnershipEligibilityRequest:
+      type: object
+      additionalProperties: false
+      required: [target_user_id, action]
+      properties:
+        target_user_id: { type: string, format: uuid }
+        action: { type: string, enum: [request, accept] }
+        transfer_id:
+          type: string
+          description: Empty or omitted for request; canonical nonzero UUID required for accept.
+      oneOf:
+        - properties:
+            action: { const: request }
+            transfer_id: { const: '' }
+        - required: [transfer_id]
+          properties:
+            action: { const: accept }
+            transfer_id: { type: string, format: uuid }
+    OwnershipEligibility:
+      type: object
+      additionalProperties: false
+      required: [request, complete, receipt_id, evidence_sha256, balance_minor, currency, blockers, observed_at, expires_at]
+      properties:
+        request:
+          type: object
+          additionalProperties: false
+          required: [cloud_id, source_user_id, target_user_id, ownership_version, action, transfer_id]
+          properties:
+            cloud_id: { type: string, format: uuid }
+            source_user_id: { type: string, format: uuid }
+            target_user_id: { type: string, format: uuid }
+            ownership_version: { type: integer, format: int64, minimum: 1 }
+            action: { type: string, enum: [request, accept] }
+            transfer_id: { type: string, description: Empty for request; canonical UUID for acceptance. }
+        complete: { type: boolean }
+        receipt_id: { type: string, description: Collector receipt UUID, or empty when evidence is unavailable. }
+        evidence_sha256: { type: string, description: Request-bound lowercase SHA-256, or empty when evidence is unavailable. }
+        balance_minor: { type: integer, format: int64 }
+        currency: { type: string, const: TWD }
+        blockers:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [balance_negative, usage_unsettled, debt_outstanding, payment_pending, refund_pending, dispute_pending, lifecycle_conflict, evidence_unavailable] }
+        observed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    CloudDeletionPreflight:
+      type: object
+      required: [cloud_id, owner_user_id, ownership_version, eligible, blockers, balance_minor, currency, observed_at, expires_at]
+      properties:
+        cloud_id: { type: string, format: uuid }
+        owner_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+        eligible: { type: boolean }
+        blockers:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [balance_nonzero, usage_unsettled, debt_outstanding, payment_pending, refund_pending, dispute_pending, lifecycle_conflict, evidence_unavailable] }
+        balance_minor: { type: integer, format: int64 }
+        currency: { type: string, enum: [TWD] }
+        observed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    HandoffPrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [source_user_id, target_user_id, cutoff]
+      properties:
+        source_user_id: { type: string, format: uuid }
+        target_user_id: { type: string, format: uuid }
+        cutoff: { type: string, format: date-time }
+    HandoffConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, snapshot_version, balance_minor, currency]
+      properties:
+        user_id: { type: string, format: uuid, description: Global source or target authenticated by Account Manager. }
+        snapshot_version: { type: integer, format: int64, minimum: 2 }
+        balance_minor: { type: integer, format: int64, minimum: 0 }
+        currency: { type: string, enum: [TWD] }
+    HandoffAuthorizeRequest:
+      type: object
+      additionalProperties: false
+      required: [authorization_id, snapshot_version]
+      properties:
+        authorization_id: { type: string, format: uuid }
+        snapshot_version: { type: integer, format: int64, minimum: 2 }
+    HandoffFinalizeRequest:
+      type: object
+      additionalProperties: false
+      required: [authorization_id, committed_owner_user_id, committed_ownership_version, committed_at, am_commit_sha256]
+      properties:
+        authorization_id: { type: string, format: uuid }
+        committed_owner_user_id: { type: string, format: uuid }
+        committed_ownership_version: { type: integer, format: int64, minimum: 2 }
+        committed_at: { type: string, format: date-time }
+        am_commit_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+    HandoffAbortRequest:
+      type: object
+      additionalProperties: false
+      required: [cancellation_id, am_cancellation_sha256]
+      properties:
+        cancellation_id: { type: string, format: uuid }
+        am_cancellation_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        authorization_id: { type: string, format: uuid, description: Required if Billing already issued a commit grant. May carry the durable AM attempted authorization ID before grant issuance so ambiguous delivery can be canceled with identical retries. An issued grant must match exactly. }
+    HandoffScopeResponse:
+      type: object
+      required: [cloud_id, operation_id, ownership_version]
+      properties:
+        cloud_id: { type: string, format: uuid }
+        operation_id: { type: string, format: uuid }
+        ownership_version: { type: integer, format: int64, minimum: 1 }
+    HandoffPreparedOperation:
+      type: object
+      required: [id, account_id, source_user_id, target_user_id, ownership_version, cutoff, phase, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        source_user_id: { type: string, format: uuid }
+        target_user_id: { type: string, format: uuid }
+        ownership_version: { type: integer, minimum: 1 }
+        cutoff: { type: string, format: date-time }
+        phase: { type: string }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    HandoffSettlement:
+      type: object
+      required: [operation_id, phase, blockers]
+      properties:
+        operation_id: { type: string, format: uuid }
+        phase: { type: string }
+        blockers: { type: array, items: { type: string } }
+        snapshot:
+          type: object
+          required: [version, balance_minor, currency, cutoff, source_confirmed, target_confirmed]
+          properties:
+            version: { type: integer, format: int64, minimum: 2 }
+            balance_minor: { type: integer, format: int64, minimum: 0 }
+            currency: { type: string, enum: [TWD] }
+            cutoff: { type: string, format: date-time }
+            source_confirmed: { type: boolean }
+            target_confirmed: { type: boolean }
+    HandoffPrepareResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [operation]
+          properties:
+            operation: { $ref: '#/components/schemas/HandoffPreparedOperation' }
+    HandoffSettlementResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [settlement]
+          properties:
+            settlement: { $ref: '#/components/schemas/HandoffSettlement' }
+    HandoffAuthorizationResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [authorization]
+          properties:
+            authorization:
+              type: object
+              required: [operation_id, authorization_id, snapshot_version, created_at]
+              properties:
+                operation_id: { type: string, format: uuid }
+                authorization_id: { type: string, format: uuid }
+                snapshot_version: { type: integer, format: int64, minimum: 2 }
+                created_at: { type: string, format: date-time }
+    HandoffProtocolResponse:
+      allOf:
+        - { $ref: '#/components/schemas/HandoffScopeResponse' }
+        - type: object
+          required: [operation]
+          properties:
+            operation:
+              type: object
+              required: [operation_id, phase]
+              properties:
+                operation_id: { type: string, format: uuid }
+                phase: { type: string, enum: [abort_pending, aborted, finalized] }
+    BillingProfile:
+      type: object
+      required: [legal_name, locale, timezone, delivery_preference, version, requires_configuration]
+      properties:
+        organization_id: {type: string, format: uuid, readOnly: true}
+        ownership_version: {type: integer, minimum: 1, readOnly: true}
+        requires_configuration:
+          type: boolean
+          readOnly: true
+          description: True for an unset current-owner profile; invoice issuance is blocked until the owner supplies a replacement.
+        legal_name: {type: string}
+        tax_identifier: {type: string}
+        billing_address: {type: string}
+        contact_email: {type: string}
+        locale: {type: string}
+        timezone: {type: string}
+        delivery_preference: {type: string, enum: [portal, portal_and_email]}
+        version: {type: integer, minimum: 1, readOnly: true}
+        created_at: {type: string, format: date-time, readOnly: true}
+        updated_at: {type: string, format: date-time, readOnly: true}
     BillingForecast:
       type: object
       required: [state, observation_days, confidence, calculated_at]
@@ -1782,6 +2655,32 @@ components:
         duplicate:
           type: boolean
   parameters:
+    ClosureOwnerUserId:
+      in: header
+      name: X-Billing-Owner-User-ID
+      required: true
+      schema: { type: string, format: uuid }
+      description: Exactly one canonical global owner UUID header; bound to original closure responsibility even on closed-command replay.
+    HandoffOperationId:
+      name: operationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    HandoffOwnershipVersion:
+      name: X-Billing-Ownership-Version
+      in: header
+      required: true
+      description: Exact source ownership version of this persisted operation, including finalize and abort retries. Does not imply current tenant Billing authority.
+      schema: { type: integer, format: int64, minimum: 1 }
+    OwnershipVersion:
+      name: X-Billing-Ownership-Version
+      in: header
+      required: true
+      description: Exact current Account Manager ownership version. Billing independently checks the global actor against its proven sole-owner projection; permission or claimed role headers cannot substitute for ownership. Missing proof fails closed.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
     OrgId:
       name: orgId
       in: path

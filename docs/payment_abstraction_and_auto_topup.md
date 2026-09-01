@@ -408,6 +408,12 @@ reference and `Idempotency-Key`, and records the configured source as the
 ledger actor. It cannot create credits, refunds, chargebacks, manual
 adjustments, prices, or invoices.
 
+Debit ingestion does not create accounts. If the immutable new-cloud creation
+event has not provisioned Billing yet, it returns
+`503 BILLING_ACCOUNT_NOT_READY` without ledger or account writes. Retry the
+same idempotency key and payload after provisioning; do not initialize an
+owner from a debit request. Internal period closing has the same prerequisite.
+
 Stable error codes:
 
 ```text

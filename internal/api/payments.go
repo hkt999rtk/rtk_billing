@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentservice"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
@@ -29,7 +30,6 @@ const maxPaymentWebhookBytes = 1 << 20
 
 type paymentPersistence interface {
 	paymentservice.Store
-	EnsureCommercialAccount(context.Context, string, payment.Currency) (payment.CommercialAccount, bool, error)
 	GetCommercialAccountByOrganization(context.Context, string, payment.Currency) (payment.CommercialAccount, error)
 	ListLedgerEntriesPage(context.Context, string, int, int) (paymentstore.LedgerEntryPage, error)
 	ListPaymentMethods(context.Context, string, int, int) (paymentstore.PaymentMethodPage, error)
@@ -113,6 +113,12 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 	options.SimulatorCallbackSecret = strings.TrimSpace(options.SimulatorCallbackSecret)
 	options.HostedChargeNotifyURL = strings.TrimSpace(options.HostedChargeNotifyURL)
 	options.HostedChargeReturnURL = strings.TrimSpace(options.HostedChargeReturnURL)
+	if s.handoff != nil && (options.BillingDebitToken == s.handoff.token || options.SimulatorCallbackSecret == s.handoff.token) {
+		return fmt.Errorf("handoff credential must be distinct from payment credentials")
+	}
+	if s.cloudCreationToken != "" && (options.BillingDebitToken == s.cloudCreationToken || options.SimulatorCallbackSecret == s.cloudCreationToken) {
+		return fmt.Errorf("cloud creation credential must be distinct from payment credentials")
+	}
 	if (options.BillingDebitToken == "") != (options.BillingDebitSource == "") {
 		return fmt.Errorf("billing debit token and source must be configured together")
 	}
@@ -184,7 +190,7 @@ func (s *Server) paymentAccount(c *gin.Context) (payment.CommercialAccount, bool
 		writeError(c, http.StatusServiceUnavailable, "PAYMENT_PROVIDER_NOT_CONFIGURED", "Payment service is not configured")
 		return payment.CommercialAccount{}, false
 	}
-	account, _, err := s.payments.store.EnsureCommercialAccount(c.Request.Context(), c.Param("orgId"), payment.CurrencyTWD)
+	account, err := s.payments.store.GetCommercialAccountByOrganization(c.Request.Context(), c.Param("orgId"), payment.CurrencyTWD)
 	if err != nil {
 		writePaymentError(c, err)
 		return payment.CommercialAccount{}, false
@@ -351,7 +357,10 @@ func (s *Server) setupPaymentMethod(c *gin.Context) {
 		methodDigest := sha256.Sum256([]byte(setup.ProviderMethodRef))
 		completeInput.ProviderMethodRefSHA256 = hex.EncodeToString(methodDigest[:])
 	}
-	completed, err := s.payments.store.CompletePaymentMethodSetup(c.Request.Context(), completeInput)
+	// This is the validated adapter response for the original persisted session,
+	// not browser input. Preserve reconciliation even if ownership changed while
+	// waiting for the provider; invalidated sessions can never reactivate a method.
+	completed, err := s.payments.store.CompletePaymentMethodSetup(billingidentity.ForProviderReconciliation(c.Request.Context()), completeInput)
 	if err != nil {
 		writePaymentSetupError(c, err)
 		return
@@ -361,6 +370,9 @@ func (s *Server) setupPaymentMethod(c *gin.Context) {
 		"provider": providerName, "state": completed.Method.Status, "duplicate": duplicate,
 		"consent_text_version": begin.Consent.TextVersion, "consent_text_sha256": begin.Consent.TextSHA256,
 	}) {
+		return
+	}
+	if !s.revalidateOwnerResponse(c) {
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"payment_method": completed.Method, "hosted_url": setup.HostedURL, "duplicate": duplicate})
@@ -648,6 +660,9 @@ func (s *Server) createHostedTopUp(c *gin.Context) {
 	if result.Duplicate {
 		status = http.StatusOK
 	}
+	if !s.revalidateOwnerResponse(c) {
+		return
+	}
 	c.JSON(status, gin.H{"payment_intent": paymentIntentResponse(result.Intent), "duplicate": result.Duplicate, "payment_action": gin.H{"method": "POST", "url": action.EndpointURL, "fields": action.Fields}})
 }
 
@@ -794,6 +809,13 @@ func (s *Server) handlePaymentSimulatorSetupCallback(c *gin.Context) {
 		input.ProviderMethodRefSHA256 = hex.EncodeToString(methodDigest[:])
 	}
 	result, err := s.payments.store.CompletePaymentMethodSetup(c.Request.Context(), input)
+	if errors.Is(err, paymentstore.ErrSetupInvalidated) {
+		// The authenticated provider result was durably recorded without activating
+		// a method. Acknowledge it so the provider need not retry forever. Browser
+		// setup requests still receive the explicit unusable-setup conflict.
+		c.JSON(http.StatusOK, gin.H{"accepted": true, "duplicate": result.Duplicate})
+		return
+	}
 	if err != nil {
 		writePaymentSetupError(c, err)
 		return
@@ -913,7 +935,14 @@ func (s *Server) writePaymentAudit(c *gin.Context, eventType, subjectType, subje
 }
 
 func writePaymentError(c *gin.Context, err error) {
+	if writeOwnershipError(c, err) {
+		return
+	}
 	switch {
+	case errors.Is(err, paymentstore.ErrHandoffFenced):
+		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_HANDOFF_FENCED", "Payment changes are paused during ownership handoff")
+	case errors.Is(err, paymentstore.ErrSetupInvalidated):
+		writeError(c, http.StatusConflict, "PAYMENT_SETUP_INVALIDATED", "Payment setup is no longer usable")
 	case errors.Is(err, paymentstore.ErrNotFound):
 		writeError(c, http.StatusNotFound, "not_found", "Payment resource not found")
 	case errors.Is(err, payment.ErrInvalidAmount):

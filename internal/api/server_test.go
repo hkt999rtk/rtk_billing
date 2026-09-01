@@ -12,9 +12,17 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hkt999rtk/rtk_billing/internal/accessstore"
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 )
 
 type testAudit struct{}
+
+// Only an API wiring stub; database-backed authorization is tested separately.
+type testOwnership struct{}
+
+func (testOwnership) AuthorizeOwner(_ context.Context, org, user string, version int64) (billingidentity.Scope, error) {
+	return billingidentity.Scope{OrganizationID: org, UserID: user, OwnershipVersion: version}, nil
+}
 
 func TestTenantContextRequiresGlobalUserIdentity(t *testing.T) {
 	server := &Server{}
@@ -65,7 +73,7 @@ func (a *testAccess) Put(_ context.Context, organizationID, state, reason, actor
 
 func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 	access := &testAccess{}
-	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: access})
+	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: access, Ownership: testOwnership{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +85,7 @@ func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 			req.Header.Set("X-Billing-Actor-Type", "user")
 			req.Header.Set("X-Billing-Actor-ID", "test-user")
 			req.Header.Set("X-Request-ID", "test-request")
+			req.Header.Set("X-Billing-Ownership-Version", "1")
 		}
 		res := httptest.NewRecorder()
 		server.Router().ServeHTTP(res, req)
@@ -108,7 +117,7 @@ func TestServiceAuthenticationPermissionAndAccessStateFailClosed(t *testing.T) {
 
 func TestInternalAccessStateIsOwnedByBilling(t *testing.T) {
 	access := &testAccess{}
-	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: access})
+	server, err := New(Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: access, Ownership: testOwnership{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,9 +149,14 @@ func TestInternalAccessStateIsOwnedByBilling(t *testing.T) {
 }
 
 func TestServerRejectsMissingOrReusedCredentialBoundaries(t *testing.T) {
-	base := Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: &testAccess{}}
+	base := Options{ServiceToken: strings.Repeat("s", 32), InternalToken: strings.Repeat("i", 32), Audit: testAudit{}, Access: &testAccess{}, Ownership: testOwnership{}}
 	if _, err := New(base); err != nil {
 		t.Fatal(err)
+	}
+	withoutOwner := base
+	withoutOwner.Ownership = nil
+	if _, err := New(withoutOwner); err == nil {
+		t.Fatal("missing owner verification passed")
 	}
 	base.InternalToken = ""
 	if _, err := New(base); err == nil {
@@ -161,10 +175,16 @@ func TestOpenAPIPreservesTenantInternalAndDebitSecuritySchemes(t *testing.T) {
 	}
 	document := string(raw)
 	for operation, scheme := range map[string]string{
-		"getBillingAccount":           "billingServiceAuth",
-		"createBillingPricingVersion": "billingInternalAuth",
-		"getBillingAccess":            "billingInternalAuth",
-		"postInternalBillingDebit":    "billingDebitAuth",
+		"getBillingAccount":               "billingServiceAuth",
+		"createBillingPricingVersion":     "billingInternalAuth",
+		"getBillingAccess":                "billingInternalAuth",
+		"postInternalBillingDebit":        "billingDebitAuth",
+		"prepareBillingOwnershipHandoff":  "billingHandoffAuth",
+		"getBillingOwnershipSettlement":   "billingHandoffAuth",
+		"confirmBillingOwnershipSnapshot": "billingHandoffAuth",
+		"authorizeBillingOwnershipCommit": "billingHandoffAuth",
+		"finalizeBillingOwnershipHandoff": "billingHandoffAuth",
+		"beginBillingOwnershipAbort":      "billingHandoffAuth",
 	} {
 		start := strings.Index(document, "operationId: "+operation)
 		if start < 0 {

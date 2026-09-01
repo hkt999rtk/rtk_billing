@@ -3,6 +3,7 @@ package billingstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 )
 
 type ActivityFilter struct {
@@ -33,6 +35,9 @@ type ActivityPage struct {
 }
 
 func (s *Store) ListActivities(ctx context.Context, organizationID string, filter ActivityFilter) (ActivityPage, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (ActivityPage, error) { return view.ListActivities(ctx, organizationID, filter) })
+	}
 	if filter.Limit <= 0 || filter.Limit > 100 {
 		filter.Limit = 25
 	}
@@ -92,6 +97,9 @@ func (s *Store) ListActivities(ctx context.Context, organizationID string, filte
 }
 
 func (s *Store) GetActivity(ctx context.Context, organizationID, activityID string) (billing.Activity, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (billing.Activity, error) { return view.GetActivity(ctx, organizationID, activityID) })
+	}
 	activity, err := s.getPaymentActivity(ctx, organizationID, activityID)
 	if err == nil {
 		return activity, nil
@@ -133,7 +141,9 @@ func (s *Store) GetActivity(ctx context.Context, organizationID, activityID stri
 }
 
 func (s *Store) listStoredActivities(ctx context.Context, organizationID string) ([]billing.Activity, error) {
-	rows, err := s.db.Query(ctx, storedActivitySelect+` WHERE organization_id = $1 ORDER BY occurred_at DESC LIMIT 500`, organizationID)
+	args := []any{organizationID}
+	visibility := storedActivityVisibility(ctx, &args)
+	rows, err := s.db.Query(ctx, storedActivitySelect+` WHERE organization_id = $1 AND `+visibility+` ORDER BY occurred_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -150,13 +160,15 @@ func (s *Store) listStoredActivities(ctx context.Context, organizationID string)
 }
 
 func (s *Store) getStoredActivity(ctx context.Context, organizationID, activityID string) (billing.Activity, error) {
-	return scanStoredActivity(s.db.QueryRow(ctx, storedActivitySelect+` WHERE organization_id = $1 AND id = $2`, organizationID, activityID))
+	args := []any{organizationID, activityID}
+	visibility := storedActivityVisibility(ctx, &args)
+	return scanStoredActivity(s.db.QueryRow(ctx, storedActivitySelect+` WHERE organization_id = $1 AND id = $2 AND `+visibility, args...))
 }
 
 const storedActivitySelect = `
 	SELECT id::text, customer_reference, activity_type, state, currency, amount_minor, balance_effect,
 	       action, COALESCE(message_key, ''), retry_scheduled, next_retry_at, occurred_at, updated_at
-	FROM billing_activity_events`
+	FROM billing_activity_events AS events`
 
 func scanStoredActivity(row rowScanner) (billing.Activity, error) {
 	var out billing.Activity
@@ -171,7 +183,10 @@ func scanStoredActivity(row rowScanner) (billing.Activity, error) {
 }
 
 func (s *Store) listPaymentActivities(ctx context.Context, organizationID string) ([]billing.Activity, error) {
-	rows, err := s.db.Query(ctx, paymentActivitySelect+` WHERE accounts.organization_id = $1 ORDER BY intents.created_at DESC LIMIT 500`, organizationID)
+	args := []any{organizationID}
+	visibility := paymentVisibility(ctx, &args)
+	query := paymentActivityQuery(ctx, &args)
+	rows, err := s.db.Query(ctx, query+` WHERE accounts.organization_id = $1 AND `+visibility+` ORDER BY intents.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +203,10 @@ func (s *Store) listPaymentActivities(ctx context.Context, organizationID string
 }
 
 func (s *Store) getPaymentActivity(ctx context.Context, organizationID, intentID string) (billing.Activity, error) {
-	activity, err := scanPaymentActivity(s.db.QueryRow(ctx, paymentActivitySelect+` WHERE accounts.organization_id = $1 AND intents.id = $2`, organizationID, intentID))
+	args := []any{organizationID, intentID}
+	visibility := paymentVisibility(ctx, &args)
+	query := paymentActivityQuery(ctx, &args)
+	activity, err := scanPaymentActivity(s.db.QueryRow(ctx, query+` WHERE accounts.organization_id = $1 AND intents.id = $2 AND `+visibility, args...))
 	if err != nil {
 		return billing.Activity{}, err
 	}
@@ -274,6 +292,39 @@ const paymentActivitySelect = `
 	JOIN commercial_accounts AS accounts ON accounts.id = intents.account_id
 	LEFT JOIN payment_methods AS methods ON methods.id = intents.payment_method_id
 	LEFT JOIN auto_topup_policies AS policy ON policy.account_id = intents.account_id`
+
+func storedActivityVisibility(ctx context.Context, args *[]any) string {
+	scope, ok := billingidentity.FromContext(ctx)
+	if !ok {
+		return "true"
+	}
+	invoice := invoiceVisibility(ctx, args)
+	payment := paymentVisibility(ctx, args)
+	*args = append(*args, scope.UserID, scope.AccountID)
+	return fmt.Sprintf(`((events.resource_type='invoice' AND EXISTS(SELECT 1 FROM billing_invoices invoices WHERE invoices.id=events.resource_id AND invoices.organization_id=events.organization_id AND %s))
+		OR (events.resource_type='payment_intent' AND EXISTS(SELECT 1 FROM payment_intents intents JOIN commercial_accounts accounts ON accounts.id=intents.account_id WHERE intents.id=events.resource_id AND accounts.organization_id=events.organization_id AND %s))
+		OR (events.resource_type='balance_ledger' AND EXISTS(SELECT 1 FROM billing_ledger_responsibility b JOIN billing_responsibility_periods p ON p.id=b.period_id
+		JOIN balance_ledger_entries entry ON entry.id=b.entry_id AND entry.account_id=b.account_id
+		WHERE b.entry_id=events.resource_id AND p.owner_user_id=$%d AND b.account_id=$%d
+		AND (entry.external_type IS DISTINCT FROM 'invoice' OR EXISTS(SELECT 1 FROM billing_invoices invoice
+		WHERE invoice.id::text=entry.external_id AND invoice.account_id=entry.account_id
+		AND invoice.recipient_snapshot->>'ownership_version'=p.ownership_version::text
+		AND invoice.period_start>=p.effective_from AND invoice.period_end<=COALESCE(p.effective_until,'infinity'::timestamptz))))))`, invoice, payment, len(*args)-1, len(*args))
+}
+
+func paymentActivityQuery(ctx context.Context, args *[]any) string {
+	scope, ok := billingidentity.FromContext(ctx)
+	if !ok {
+		return paymentActivitySelect
+	}
+	*args = append(*args, scope.UserID, scope.OwnershipVersion)
+	// Even a visible intent must not disclose an unproven method's card metadata
+	// or a predecessor's retained auto-topup policy projection.
+	query := strings.Replace(paymentActivitySelect, "methods.id = intents.payment_method_id",
+		fmt.Sprintf(`methods.id = intents.payment_method_id AND EXISTS(SELECT 1 FROM billing_payment_method_responsibility b JOIN billing_responsibility_periods p ON p.id=b.period_id WHERE b.method_id=methods.id AND b.account_id=intents.account_id AND p.owner_user_id=$%d)`, len(*args)-1), 1)
+	return strings.Replace(query, "policy.account_id = intents.account_id",
+		fmt.Sprintf(`policy.account_id = intents.account_id AND EXISTS(SELECT 1 FROM billing_payment_method_responsibility b JOIN billing_responsibility_periods p ON p.id=b.period_id WHERE b.method_id=policy.payment_method_id AND b.account_id=intents.account_id AND p.owner_user_id=$%d AND p.ownership_version=$%d)`, len(*args)-1, len(*args)), 1)
+}
 
 func scanPaymentActivity(row rowScanner) (billing.Activity, error) {
 	var out billing.Activity

@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
@@ -19,7 +21,8 @@ var (
 )
 
 type Store struct {
-	db *pgxpool.Pool
+	db         database.Connection
+	tenantRead bool
 }
 
 func New(db *pgxpool.Pool) *Store {
@@ -31,6 +34,10 @@ type rowScanner interface {
 }
 
 func mapNotFound(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55000" && (pgErr.ConstraintName == "billing_handoff_commit_barrier" || pgErr.ConstraintName == "billing_cloud_closure_barrier") {
+		return ErrHandoffFenced
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

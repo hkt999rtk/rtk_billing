@@ -21,7 +21,7 @@ type Store interface {
 }
 
 type PaymentStore interface {
-	EnsureCommercialAccount(context.Context, string, payment.Currency) (payment.CommercialAccount, bool, error)
+	GetCommercialAccountByOrganization(context.Context, string, payment.Currency) (payment.CommercialAccount, error)
 	PostLedgerEntry(context.Context, paymentstore.PostLedgerEntryInput) (paymentstore.PostLedgerEntryResult, error)
 }
 
@@ -71,7 +71,7 @@ func (s *Service) ClosePeriod(ctx context.Context, in ClosePeriodInput) (ClosePe
 		return ClosePeriodResult{}, billingstore.ErrConflict
 	}
 	now := s.now().UTC()
-	account, _, err := s.paymentStore.EnsureCommercialAccount(ctx, in.OrganizationID, payment.CurrencyTWD)
+	account, err := s.paymentStore.GetCommercialAccountByOrganization(ctx, in.OrganizationID, payment.CurrencyTWD)
 	if err != nil {
 		return ClosePeriodResult{}, err
 	}

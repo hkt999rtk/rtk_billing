@@ -2,14 +2,17 @@ package billingstore
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 )
 
 type CreatePricingVersionInput struct {
@@ -159,8 +162,22 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		fact.QuantityScale < 0 || fact.QuantityScale > 9 || !fact.WindowEnd.After(fact.WindowStart) {
 		return billing.UsageFact{}, false, ErrConflict
 	}
+	if _, err := hex.DecodeString(fact.SourceSHA256); err != nil {
+		return billing.UsageFact{}, false, ErrConflict
+	}
+	var organization pgtype.UUID
+	if err := organization.Scan(fact.OrganizationID); err != nil || !organization.Valid || organization.Bytes == [16]byte{} {
+		return billing.UsageFact{}, false, ErrConflict
+	}
+	fact.OrganizationID = organization.String()
+	fact.SourceSHA256 = strings.ToLower(fact.SourceSHA256)
+	fact.WindowStart = fact.WindowStart.UTC().Truncate(time.Microsecond)
+	fact.WindowEnd = fact.WindowEnd.UTC().Truncate(time.Microsecond)
+	if fact.WindowStart.IsZero() || !fact.WindowEnd.After(fact.WindowStart) {
+		return billing.UsageFact{}, false, ErrConflict
+	}
 	if stored, err := s.GetUsageFact(ctx, fact.UsageID); err == nil {
-		if stored.SourceSHA256 != strings.ToLower(fact.SourceSHA256) {
+		if !sameUsageFact(stored, fact) {
 			return billing.UsageFact{}, false, ErrConflict
 		}
 		return stored, false, nil
@@ -191,37 +208,57 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256)).Scan(&id)
 	created := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		var constraint *pgconn.PgError
+		if errors.As(err, &constraint) && constraint.ConstraintName == "billing_usage_period_barrier" {
+			return billing.UsageFact{}, false, ErrInvoiceImmutable
+		}
 		return billing.UsageFact{}, false, err
 	}
 	stored, err := s.GetUsageFact(ctx, fact.UsageID)
 	if err != nil {
 		return billing.UsageFact{}, false, err
 	}
-	if !created && stored.SourceSHA256 != strings.ToLower(fact.SourceSHA256) {
+	if !sameUsageFact(stored, fact) {
 		return billing.UsageFact{}, false, ErrConflict
 	}
 	return stored, created, nil
 }
 
 func (s *Store) GetUsageFact(ctx context.Context, usageID string) (billing.UsageFact, error) {
+	args := []any{usageID}
+	visibility := "true"
+	if scope, ok := billingidentity.FromContext(ctx); ok {
+		if !s.tenantRead {
+			return tenantRead(ctx, s, scope.OrganizationID, func(view *Store) (billing.UsageFact, error) { return view.GetUsageFact(ctx, usageID) })
+		}
+		args = append(args, scope.OrganizationID)
+		visibility = "organization_id=$2 AND " + usageVisibility(ctx, &args)
+	}
 	var out billing.UsageFact
 	err := s.db.QueryRow(ctx, `
 		SELECT id::text, usage_id, organization_id::text, service_code, metric_code, quantity, quantity_scale,
 		       unit, window_start, window_end, source, source_sha256
-		FROM billing_usage_facts WHERE usage_id = $1
-	`, usageID).Scan(&out.ID, &out.UsageID, &out.OrganizationID, &out.ServiceCode, &out.MetricCode, &out.Quantity,
+		FROM billing_usage_facts WHERE usage_id = $1 AND `+visibility,
+		args...).Scan(&out.ID, &out.UsageID, &out.OrganizationID, &out.ServiceCode, &out.MetricCode, &out.Quantity,
 		&out.QuantityScale, &out.Unit, &out.WindowStart, &out.WindowEnd, &out.Source, &out.SourceSHA256)
 	return out, mapNotFound(err)
 }
 
 func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start, end time.Time) ([]billing.UsageFact, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) ([]billing.UsageFact, error) {
+			return view.ListUsageFacts(ctx, organizationID, start, end)
+		})
+	}
+	args := []any{organizationID, start.UTC(), end.UTC()}
+	visibility := usageVisibility(ctx, &args)
 	rows, err := s.db.Query(ctx, `
 		SELECT id::text, usage_id, organization_id::text, service_code, metric_code, quantity, quantity_scale,
 		       unit, window_start, window_end, source, source_sha256
 		FROM billing_usage_facts
-		WHERE organization_id = $1 AND window_start >= $2 AND window_end <= $3
+		WHERE organization_id = $1 AND window_start >= $2 AND window_end <= $3 AND `+visibility+`
 		ORDER BY service_code, metric_code, unit, window_start, usage_id
-	`, organizationID, start.UTC(), end.UTC())
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -238,9 +275,12 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	return out, rows.Err()
 }
 
-func canonicalUsageDigest(fact billing.UsageFact) (string, error) {
-	encoded, err := json.Marshal(fact)
-	return string(encoded), err
+func sameUsageFact(a, b billing.UsageFact) bool {
+	// The upstream digest is provenance, not authority to change any persisted
+	// field. ID is assigned by this service and is not part of producer input.
+	return a.UsageID == b.UsageID && a.OrganizationID == b.OrganizationID &&
+		a.ServiceCode == b.ServiceCode && a.MetricCode == b.MetricCode &&
+		a.Quantity == b.Quantity && a.QuantityScale == b.QuantityScale && a.Unit == b.Unit &&
+		a.WindowStart.Equal(b.WindowStart) && a.WindowEnd.Equal(b.WindowEnd) &&
+		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256
 }
-
-var _ = canonicalUsageDigest

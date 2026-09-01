@@ -39,6 +39,9 @@ func (s *Store) PostLedgerEntry(ctx context.Context, in PostLedgerEntryInput) (P
 	if err := validateLedgerInput(in); err != nil {
 		return PostLedgerEntryResult{}, err
 	}
+	if isSettlementReversal(in.Reason) {
+		return PostLedgerEntryResult{}, ErrProviderReversalRequired
+	}
 	if in.Now.IsZero() {
 		in.Now = time.Now().UTC()
 	} else {
@@ -80,6 +83,13 @@ func (s *Store) PostLedgerEntry(ctx context.Context, in PostLedgerEntryInput) (P
 	if !errors.Is(err, ErrNotFound) {
 		return PostLedgerEntryResult{}, err
 	}
+	// Provider reconciliation credits use transitionIntentTx. Manual credit is
+	// not an escape hatch for topping up during handoff preparation.
+	if in.Direction == payment.LedgerDirectionCredit {
+		if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+			return PostLedgerEntryResult{}, err
+		}
+	}
 
 	entry, account, err := insertLedgerEntryTx(ctx, tx, account, in)
 	if err != nil {
@@ -87,12 +97,7 @@ func (s *Store) PostLedgerEntry(ctx context.Context, in PostLedgerEntryInput) (P
 	}
 
 	var intent *payment.PaymentIntent
-	if in.Direction == payment.LedgerDirectionDebit && isSettlementReversal(in.Reason) {
-		account, err = disarmAutoTopUpAfterSettlementReversalTx(ctx, tx, account)
-		if err != nil {
-			return PostLedgerEntryResult{}, err
-		}
-	} else if in.Direction == payment.LedgerDirectionDebit && account.State == payment.AccountStateActive {
+	if in.Direction == payment.LedgerDirectionDebit && account.State == payment.AccountStateActive {
 		created, evalErr := evaluateAutoTopUpTx(ctx, tx, account, entry, in.Now, in.RequestID)
 		if evalErr != nil {
 			return PostLedgerEntryResult{}, evalErr
@@ -212,6 +217,12 @@ func sameLedgerRequest(existing payment.LedgerEntry, in PostLedgerEntryInput) bo
 }
 
 func evaluateAutoTopUpTx(ctx context.Context, tx pgx.Tx, account payment.CommercialAccount, trigger payment.LedgerEntry, now time.Time, correlationID string) (*payment.PaymentIntent, error) {
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		if errors.Is(err, ErrHandoffFenced) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	policy, err := getPolicyForUpdate(ctx, tx, account.ID)
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
@@ -303,6 +314,12 @@ func evaluateAutoTopUpTx(ctx context.Context, tx pgx.Tx, account payment.Commerc
 }
 
 func rearmPolicyAfterCreditTx(ctx context.Context, tx pgx.Tx, account payment.CommercialAccount) (payment.CommercialAccount, error) {
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		if errors.Is(err, ErrHandoffFenced) {
+			return account, nil
+		}
+		return payment.CommercialAccount{}, err
+	}
 	policy, err := getPolicyForUpdate(ctx, tx, account.ID)
 	if errors.Is(err, ErrNotFound) {
 		return account, nil
@@ -336,16 +353,21 @@ func rearmPolicyAfterCreditTx(ctx context.Context, tx pgx.Tx, account payment.Co
 }
 
 func (s *Store) ListLedgerEntries(ctx context.Context, accountID string, limit int) ([]payment.LedgerEntry, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) ([]payment.LedgerEntry, error) { return view.ListLedgerEntries(ctx, accountID, limit) })
+	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	args := []any{accountID, limit}
+	visibility := ledgerVisibility(ctx, &args)
 	rows, err := s.db.Query(ctx, `
 		SELECT `+ledgerColumns+`
 		FROM balance_ledger_entries
-		WHERE account_id = $1
+		WHERE account_id = $1 AND `+visibility+`
 		ORDER BY created_at, id
 		LIMIT $2
-	`, accountID, limit)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -367,21 +389,28 @@ type LedgerEntryPage struct {
 }
 
 func (s *Store) ListLedgerEntriesPage(ctx context.Context, accountID string, limit, offset int) (LedgerEntryPage, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) (LedgerEntryPage, error) {
+			return view.ListLedgerEntriesPage(ctx, accountID, limit, offset)
+		})
+	}
 	if !required(accountID) {
 		return LedgerEntryPage{}, ErrConflict
 	}
 	limit, offset = boundedPage(limit, offset)
+	args := []any{accountID}
+	visibility := ledgerVisibility(ctx, &args)
 	var total int
-	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM balance_ledger_entries WHERE account_id = $1`, accountID).Scan(&total); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM balance_ledger_entries WHERE account_id = $1 AND `+visibility, args...).Scan(&total); err != nil {
 		return LedgerEntryPage{}, err
 	}
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(ctx, `
 		SELECT `+ledgerColumns+`
 		FROM balance_ledger_entries
-		WHERE account_id = $1
+		WHERE account_id = $1 AND `+visibility+`
 		ORDER BY created_at DESC, id DESC
-		LIMIT $2 OFFSET $3
-	`, accountID, limit, offset)
+		`+fmt.Sprintf("LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return LedgerEntryPage{}, err
 	}

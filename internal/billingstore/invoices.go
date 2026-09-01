@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/database"
 )
 
 type PrepareInvoiceInput struct {
@@ -42,6 +43,34 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		!in.PeriodEnd.After(in.PeriodStart) {
 		return billing.Invoice{}, false, ErrConflict
 	}
+	// Hold the same account lock as usage/financial database barriers from the
+	// first period transition through the final invoice and line writes. Helpers
+	// must use this transaction, never escape to the pool for a newer snapshot.
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return billing.Invoice{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	var accountID string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM commercial_accounts
+		WHERE id=$1 AND organization_id=$2 AND currency=$3 FOR UPDATE`, in.AccountID, in.OrganizationID, in.Currency).Scan(&accountID); err != nil {
+		return billing.Invoice{}, false, mapNotFound(err)
+	}
+	view := *s
+	view.db = database.TransactionConnection{Tx: tx}
+	invoice, created, err := view.prepareInvoice(ctx, in)
+	if err != nil && !errors.Is(err, ErrPricingUnavailable) && !errors.Is(err, ErrIncomplete) && !errors.Is(err, billing.ErrProfileConfigurationRequired) {
+		return billing.Invoice{}, false, err
+	}
+	// These domain failures deliberately retain an incomplete diagnostic period;
+	// unexpected storage failures roll back the entire attempt.
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return billing.Invoice{}, false, commitErr
+	}
+	return invoice, created, err
+}
+
+func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (billing.Invoice, bool, error) {
 	if in.Now.IsZero() {
 		in.Now = time.Now().UTC()
 	}
@@ -53,7 +82,9 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		INSERT INTO billing_periods (organization_id, currency, period_start, period_end, state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, 'closing', $5, $5)
 		ON CONFLICT (organization_id, currency, period_start, period_end)
-		DO UPDATE SET updated_at = billing_periods.updated_at
+		DO UPDATE SET state = CASE WHEN billing_periods.state='closed' THEN 'closed' ELSE 'closing' END,
+		    close_error_code = CASE WHEN billing_periods.state='closed' THEN billing_periods.close_error_code ELSE NULL END,
+		    updated_at = EXCLUDED.updated_at
 		RETURNING id::text, state
 	`, in.OrganizationID, in.Currency, in.PeriodStart.UTC(), in.PeriodEnd.UTC(), in.Now.UTC()).Scan(&periodID, &periodState)
 	if err != nil {
@@ -84,6 +115,10 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	if err != nil {
 		_ = s.markPeriodIncomplete(ctx, periodID, "billing_profile_missing", in.Now)
 		return billing.Invoice{}, false, err
+	}
+	if profile.RequiresConfiguration {
+		_ = s.markPeriodIncomplete(ctx, periodID, "billing_profile_configuration_required", in.Now)
+		return billing.Invoice{}, false, billing.ErrProfileConfigurationRequired
 	}
 	draft, err := billing.BuildDraftInvoice(billing.Invoice{
 		OrganizationID: in.OrganizationID, AccountID: in.AccountID, PeriodID: periodID,
@@ -175,6 +210,11 @@ func (s *Store) markPeriodIncomplete(ctx context.Context, periodID, code string,
 }
 
 func (s *Store) GetInvoiceByPeriod(ctx context.Context, organizationID, periodID string) (billing.Invoice, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (billing.Invoice, error) {
+			return view.GetInvoiceByPeriod(ctx, organizationID, periodID)
+		})
+	}
 	var id string
 	err := s.db.QueryRow(ctx, `SELECT id::text FROM billing_invoices WHERE organization_id = $1 AND period_id = $2`, organizationID, periodID).Scan(&id)
 	if err != nil {
@@ -184,7 +224,12 @@ func (s *Store) GetInvoiceByPeriod(ctx context.Context, organizationID, periodID
 }
 
 func (s *Store) GetInvoice(ctx context.Context, organizationID, invoiceID string) (billing.Invoice, error) {
-	invoice, err := scanInvoice(s.db.QueryRow(ctx, invoiceSelect+` WHERE invoices.organization_id = $1 AND invoices.id = $2`, organizationID, invoiceID))
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (billing.Invoice, error) { return view.GetInvoice(ctx, organizationID, invoiceID) })
+	}
+	args := []any{organizationID, invoiceID}
+	visibility := invoiceVisibility(ctx, &args)
+	invoice, err := scanInvoice(s.db.QueryRow(ctx, invoiceSelect+` WHERE invoices.organization_id = $1 AND invoices.id = $2 AND `+visibility, args...))
 	if err != nil {
 		return billing.Invoice{}, err
 	}
@@ -203,6 +248,9 @@ func (s *Store) GetInvoice(ctx context.Context, organizationID, invoiceID string
 }
 
 func (s *Store) ListInvoices(ctx context.Context, organizationID string, filter InvoiceFilter) (InvoicePage, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (InvoicePage, error) { return view.ListInvoices(ctx, organizationID, filter) })
+	}
 	if filter.Limit <= 0 || filter.Limit > 100 {
 		filter.Limit = 25
 	}
@@ -211,6 +259,7 @@ func (s *Store) ListInvoices(ctx context.Context, organizationID string, filter 
 	}
 	args := []any{organizationID}
 	conditions := []string{"invoices.organization_id = $1"}
+	conditions = append(conditions, invoiceVisibility(ctx, &args))
 	appendCondition := func(sql string, value any) {
 		args = append(args, value)
 		conditions = append(conditions, fmt.Sprintf(sql, len(args)))
@@ -352,14 +401,21 @@ func (s *Store) PutInvoiceDocument(ctx context.Context, organizationID, invoiceI
 }
 
 func (s *Store) GetInvoiceDocument(ctx context.Context, organizationID, invoiceID string) (InvoiceDocumentRecord, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, organizationID, func(view *Store) (InvoiceDocumentRecord, error) {
+			return view.GetInvoiceDocument(ctx, organizationID, invoiceID)
+		})
+	}
+	args := []any{organizationID, invoiceID}
+	visibility := invoiceVisibility(ctx, &args)
 	var out InvoiceDocumentRecord
 	err := s.db.QueryRow(ctx, `
 		SELECT documents.content_type, documents.byte_length, documents.sha256, documents.renderer_version,
 		       documents.invoice_version, documents.generated_at, documents.document_bytes
 		FROM billing_invoice_documents AS documents
 		JOIN billing_invoices AS invoices ON invoices.id = documents.invoice_id
-		WHERE invoices.organization_id = $1 AND invoices.id = $2
-	`, organizationID, invoiceID).Scan(&out.Metadata.ContentType, &out.Metadata.ByteLength, &out.Metadata.SHA256,
+		WHERE invoices.organization_id = $1 AND invoices.id = $2 AND `+visibility,
+		args...).Scan(&out.Metadata.ContentType, &out.Metadata.ByteLength, &out.Metadata.SHA256,
 		&out.Metadata.RendererVersion, &out.Metadata.InvoiceVersion, &out.Metadata.GeneratedAt, &out.Bytes)
 	return out, mapNotFound(err)
 }

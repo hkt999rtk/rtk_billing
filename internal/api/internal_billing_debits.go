@@ -47,7 +47,16 @@ func (s *Server) handleInternalBillingDebit(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "BILLING_DEBIT_REASON_INVALID", "Billing debit reason must be invoice_debit or usage_adjustment_debit")
 		return
 	}
-	account, _, err := s.payments.store.EnsureCommercialAccount(c.Request.Context(), request.OrganizationID, request.Currency)
+	// Do not race AM creation delivery by creating an account without its owner.
+	if err := payment.ValidateChargeAmount(request.Currency, request.AmountMinor); err != nil {
+		writePaymentError(c, err)
+		return
+	}
+	account, err := s.payments.store.GetCommercialAccountByOrganization(c.Request.Context(), request.OrganizationID, request.Currency)
+	if errors.Is(err, paymentstore.ErrNotFound) {
+		writeError(c, http.StatusServiceUnavailable, "BILLING_ACCOUNT_NOT_READY", "Billing account provisioning is incomplete; retry later")
+		return
+	}
 	if err != nil {
 		writePaymentError(c, err)
 		return

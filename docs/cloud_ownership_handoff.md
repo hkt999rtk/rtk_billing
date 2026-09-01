@@ -128,6 +128,131 @@ Test delayed setup completion across prepare/commit/finalize, and duplicate/reor
 post-finalization chargebacks/refunds: old methods remain unusable, new-owner balance
 and historical snapshots unchanged, compensation appears once in the correct ledger.
 
+## Internal HTTP transport
+
+### New-cloud responsibility provisioning
+
+Tenant account reads, internal debit ingestion and period closing must not
+implicitly create commercial accounts. Debit and close-period requests for an
+unprovisioned cloud return retryable `503 BILLING_ACCOUNT_NOT_READY` without
+account, invoice or ledger writes. Retry the original request after the creation
+event commits; this prevents ordinary billing work from racing ahead of the
+initial owner evidence. Existing accounts still require the reviewed history
+migration; these routes never infer or overwrite their ownership.
+
+AM's new-cloud transaction persists the cloud UUID, initial unique global owner,
+version 1, creation time and immutable event UUID. Migration 066 emits this event
+only for newly inserted Brand Clouds after the owner transaction is complete; it
+does not scan or attribute legacy clouds. Pending activation does not remove the
+designated owner, but normal authentication/operational checks still prohibit use.
+
+The optional dedicated `BILLING_CLOUD_CREATION_TOKEN` accepts these events at
+`POST /v1/internal/billing/cloud-creations`, separate from handoff/tenant/internal/
+debit/provider authority. Migration 057 stores append-only creation receipts.
+Account, initial responsibility, receipt and audit commit atomically; an existing
+account without the exact receipt is rejected even if its balance is zero. No
+funds, payment consent, legal profile or access override is provisioned.
+
+AM retries the same event after timeout or worker restart. Only the full matching
+receipt is acknowledged under the current delivery lease. Billing's replay reads
+the original receipt and never reopens a closed account, resets a balance, or
+overwrites later ownership periods. Changed owner/time/event/cloud/digest conflicts.
+This path cannot bootstrap existing historical accounts; the reviewed provenance
+and migration workflow remains necessary. It also supplies no usage/provider
+completeness or financial eligibility evidence.
+
+### Advisory request/acceptance eligibility
+
+Usage replay requires exact equality of every immutable fact field, not just a
+caller-supplied source hash. The receipt binds cloud, service, metric, quantity,
+scale, unit, window and source. Source hashes must be hexadecimal SHA-256 values;
+UUIDs and UTC microsecond timestamps are normalized before insertion/replay.
+Forward migration 058 prevents rewriting/deleting accepted usage facts without
+changing earlier migration markers or historical values. Corrections require
+new auditable facts. This integrity gate is not producer completeness: source
+drain, durable forwarding, lateness and provider/invoice reconciliation still
+need independent collector proof before ownership can change.
+
+`POST /v1/internal/billing/clouds/{orgId}/ownership-eligibility` is a read-only
+financial query under the same dedicated handoff credential and 15-second
+deadline. Headers bind `X-Billing-Owner-User-ID` and the canonical positive
+`X-Billing-Ownership-Version`; JSON supplies `target_user_id`, `action` (`request`
+or `accept`) and `transfer_id` (absent/empty for request, mandatory UUID for
+acceptance). Source and target must differ. AM independently authenticates both
+identities and validates its persisted transfer; Billing does not own user records.
+
+The response echoes the complete request binding and returns `complete`,
+`receipt_id`, `evidence_sha256`, currency, signed minor-unit balance, stable
+blockers, observation time and expiry. Only current responsibility and a fresh,
+local-state-matching collector receipt can provide complete evidence. The evidence
+digest binds that receipt to the action, target and transfer ID. Missing/expired
+evidence returns `complete=false` with `evidence_unavailable`; it never becomes
+approval just because local tables are empty. Negative balance returns
+`balance_negative`; zero and positive credit remain subject to every independent
+financial and lifecycle blocker. This does not reuse deletion's zero-only rule.
+
+Invoice preparation holds the matching cloud's commercial account row from the
+initial closing transition through pricing/usage/profile reads and invoice/line
+commit, using one database transaction (nested helpers use savepoints, not pool
+connections). An incomplete retry transitions back to closing under that same
+lock. Expected missing-evidence failures retain an incomplete diagnostic period;
+storage failures roll back the attempt. Forward migration 059 checks overlapping
+closing/closed periods after the existing account-locking financial triggers,
+so a READ COMMITTED usage insert that waited for closure cannot pass an earlier
+unlocked application precheck. Accepted facts and exact replay remain immutable.
+This local barrier does not establish Logger completeness, producer drainage or
+late-event correction policy; those remain prerequisites to transfer approval.
+
+The query does not create an account, hold, receipt, consent or ownership period.
+It exposes no payment/invoice/provider or predecessor PII. AM checks echo, bounded
+lifetime and completeness before using the response. Later fenced settlement and
+commit revalidate everything; this endpoint neither reserves credit nor certifies
+producer drain. Collector ingestion remains a separate trusted workflow, with no
+coordinator endpoint for manufacturing evidence. Production admission stays
+disabled until the actual participant inventory and collectors are installed.
+
+The Billing implementation exposes the following optional coordinator operations
+under `/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}`:
+
+| Method / suffix | Authority and result |
+| --- | --- |
+| POST `/prepare` | Source/target/cutoff from AM's persisted acceptance. Installs a hold, not settled readiness. |
+| GET `/settlement` | Live validity, minimal amount/version snapshot and blockers. No invoice, payment-method or predecessor identity details. |
+| POST `/confirm` | AM-authenticated source/target confirms exact amount, currency and snapshot. Billing independently checks participant and persisted live evidence. |
+| POST `/authorize-commit` | Returns a durable grant only with both current confirmations and matching settlement. AM must also verify every producer's hold/drain evidence. |
+| POST `/finalize` | Verified durable AM commit, grant ID and committed boundary. A known commit remains recorded even when local finalization fails. |
+| POST `/abort` | Verified precommit AM cancellation. Returns `abort_pending`; delivery alone does not release Billing's hold. |
+
+Every operation requires the dedicated `BILLING_HANDOFF_TOKEN` plus the original
+`X-Billing-Ownership-Version`. Responses echo cloud/operation/version and carry
+`Cache-Control: no-store`. Request JSON is bounded to 16 KiB, rejects unknown
+fields/trailing documents, and all handlers have a 15-second context deadline.
+Identical retries reuse the durable IDs/payload; unexpected or unavailable evidence
+never becomes approval. Tenant, pricing/access, debit and provider credentials
+cannot enter this group; the handoff credential cannot enter those other groups.
+No handoff route exists unless the dedicated runtime is configured before serving.
+
+There is deliberately no coordinator route for responsibility bootstrap,
+settlement-receipt ingestion or hold-release certification. Those require separate
+trusted provisioning/collector/provider workflows. An emailed token or browser
+confirmation is not one of these proofs. Production coordinator wiring, verified
+producer inventory/checkpoints and global-session enforcement remain release gates.
+
+The AM transport uses HTTPS (literal loopback HTTP is allowed only for isolated
+tests), refuses redirects, bounds responses and validates the echoed scope and
+nested snapshot/grant/acknowledgment. It does not autonomously retry, change an
+operation ID or infer a successful commit from a timeout. Durable workers own retry.
+
+### Cross-repository transport verification
+
+`TestHandoffAccountManagerClientContract` optionally receives
+`ACCOUNT_MANAGER_HANDOFF_CLIENT_DIR` pointing to the isolated AM implementation
+checkout. It starts a loopback Billing router with isolated PostgreSQL fixtures,
+then invokes AM's `TestLiveBillingTransportContract` against that HTTP server.
+This proves the actual independently compiled client/server serialization and
+Billing persistence, not an AM membership commit, browser session or real provider
+settlement. The test never targets staging; its AM side rejects non-loopback URLs.
+
 ## Deletion and evidence
 
 Deletion preparation requires zero balance, settled usage and no pending monetary

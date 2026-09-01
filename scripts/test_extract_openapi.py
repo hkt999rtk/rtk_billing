@@ -21,15 +21,41 @@ class ExtractOpenAPITests(unittest.TestCase):
         schemes = imported["components"]["securitySchemes"]
         description = schemes["billingServiceAuth"]["description"]
         self.assertIn("X-Billing-Actor-Type=user", description)
+        self.assertIn("X-Billing-Ownership-Version", description)
         self.assertNotIn("X-Billing-Actor-Type=brand_cloud_user", description)
         self.assertEqual(schemes, checked_in["components"]["securitySchemes"])
+        for path, item in imported["paths"].items():
+            if path.startswith("/v1/orgs/"):
+                parameters = [imported["components"]["parameters"][p["$ref"].split("/")[-1]] if "$ref" in p else p for p in item.get("parameters", [])]
+                versions = [p for p in parameters if p.get("name") == "X-Billing-Ownership-Version"]
+                self.assertEqual(len(versions), 1, path)
+                self.assertTrue(versions[0]["required"], path)
         for path, method, scheme in (
             ("/v1/orgs/{orgId}/billing/account", "get", "billingServiceAuth"),
             ("/v1/internal/billing/access/{orgId}", "get", "billingInternalAuth"),
             ("/v1/internal/billing/debits", "post", "billingDebitAuth"),
+            ("/v1/internal/billing/cloud-creations", "post", "billingCloudCreationAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/deletion-preflight", "get", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/prepare", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/status", "get", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/close", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/retire-command", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/closures/{operationId}/cancel", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/prepare", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/settlement", "get", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/confirm", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/authorize-commit", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/finalize", "post", "billingHandoffAuth"),
+            ("/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}/abort", "post", "billingHandoffAuth"),
         ):
             with self.subTest(path=path):
                 self.assertEqual(imported["paths"][path][method]["security"], [{scheme: []}])
+        for suffix in ("billing/usage", "billing/invoices", "billing/invoices/{invoiceId}",
+                       "billing/invoices/{invoiceId}/pdf", "billing/activity", "billing/ledger",
+                       "billing/statements", "payment-methods", "payment-intents"):
+            path = "/v1/orgs/{orgId}/" + suffix
+            self.assertEqual(imported["paths"][path]["get"]["description"],
+                             checked_in["paths"][path]["get"]["description"])
 
 
 if __name__ == "__main__":

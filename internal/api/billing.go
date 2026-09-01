@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/billingservice"
 	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
@@ -120,6 +122,9 @@ func (s *Server) currentBillingUsage(ctx context.Context, organizationID string)
 	startLocal := time.Date(localNow.Year(), localNow.Month(), 1, 0, 0, 0, 0, location)
 	endLocal := startLocal.AddDate(0, 1, 0)
 	start, end := startLocal.UTC(), endLocal.UTC()
+	if scope, ok := billingidentity.FromContext(ctx); ok && scope.CurrentPeriodStart.After(start) {
+		start = scope.CurrentPeriodStart
+	}
 	return s.billingUsageForPeriod(ctx, organizationID, profile, start, end)
 }
 
@@ -531,6 +536,10 @@ func (s *Server) closeBillingPeriod(c *gin.Context) {
 		OrganizationID: request.OrganizationID, PeriodStart: request.PeriodStart, PeriodEnd: request.PeriodEnd,
 		DueAt: request.DueAt, RequestID: strings.TrimSpace(c.GetHeader("X-Request-ID")),
 	})
+	if errors.Is(err, paymentstore.ErrNotFound) {
+		writeError(c, http.StatusServiceUnavailable, "BILLING_ACCOUNT_NOT_READY", "Billing account provisioning is incomplete; retry later")
+		return
+	}
 	if err != nil {
 		writeBillingError(c, err)
 		return
@@ -560,7 +569,17 @@ func parseBillingVersion(value string) (int64, bool) {
 }
 
 func writeBillingError(c *gin.Context, err error) {
+	if writeOwnershipError(c, err) {
+		return
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55000" && pgErr.ConstraintName == "billing_handoff_commit_barrier" {
+		writeError(c, http.StatusConflict, "BILLING_OWNERSHIP_HANDOFF_FENCED", "Billing changes are paused during ownership handoff")
+		return
+	}
 	switch {
+	case errors.Is(err, billing.ErrProfileConfigurationRequired):
+		writeError(c, http.StatusConflict, "BILLING_PROFILE_CONFIGURATION_REQUIRED", "The current owner must configure a billing profile")
 	case errors.Is(err, billingstore.ErrNotFound):
 		writeError(c, http.StatusNotFound, "BILLING_RESOURCE_NOT_FOUND", "Billing resource was not found")
 	case errors.Is(err, billingstore.ErrConflict), errors.Is(err, billing.ErrInvalidInvoice), errors.Is(err, billing.ErrInvalidScale), errors.Is(err, billing.ErrRateNotFound):

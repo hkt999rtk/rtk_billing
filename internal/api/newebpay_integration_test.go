@@ -64,6 +64,7 @@ func TestIntegrationNewebPayHostedWebhookQueryCreditsExactlyOnce(t *testing.T) {
 		options.HostedChargeReturnURL = "https://admin.test/console/billing/activity"
 	}, provider)
 	organizationID := testutil.OrganizationID("newebpay-hosted-credit")
+	env.provisionOwner(t, organizationID)
 	base := "/v1/orgs/" + organizationID
 	if response := env.request(t, http.MethodGet, base+"/billing/account", "billing_account.read", "", nil); response.Code != http.StatusOK {
 		t.Fatalf("create account status=%d body=%s", response.Code, response.Body.String())

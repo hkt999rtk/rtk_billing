@@ -76,6 +76,9 @@ func (s *Store) BeginPaymentMethodSetup(ctx context.Context, in BeginPaymentMeth
 	if account.State == payment.AccountStateClosed {
 		return BeginPaymentMethodSetupResult{}, ErrAccountClosed
 	}
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		return BeginPaymentMethodSetupResult{}, err
+	}
 	existing, err := getPaymentMethodSetupByKey(ctx, tx, in.AccountID, in.Provider, in.IdempotencyKey)
 	if err == nil {
 		if existing.RequestSHA256 != in.RequestSHA256 {
@@ -208,6 +211,32 @@ func (s *Store) CompletePaymentMethodSetup(ctx context.Context, in CompletePayme
 	}
 	method, err := getPaymentMethodForUpdate(ctx, tx, session.PaymentMethodID)
 	if err != nil {
+		return CompletePaymentMethodSetupResult{}, err
+	}
+	var invalidated bool
+	if err := tx.QueryRow(ctx, `SELECT invalidated_by_handoff IS NOT NULL OR invalidated_by_closure IS NOT NULL FROM payment_method_setup_sessions WHERE id=$1`, session.ID).Scan(&invalidated); err != nil {
+		return CompletePaymentMethodSetupResult{}, err
+	}
+	if invalidated {
+		// Retain deduplicated evidence, not provider credentials or card details.
+		// The method/consent remain revoked even if the operation is later aborted.
+		digest, err := handoffDigest(struct{ State, Code, HostedSHA, MethodSHA string }{
+			string(in.State), in.ProviderCode, in.HostedURLSHA256, in.ProviderMethodRefSHA256,
+		})
+		if err != nil {
+			return CompletePaymentMethodSetupResult{}, err
+		}
+		observed, err := tx.Exec(ctx, `INSERT INTO billing_handoff_setup_observations(session_id,result_sha256,provider_state)
+			VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, session.ID, digest, in.State)
+		if err != nil {
+			return CompletePaymentMethodSetupResult{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return CompletePaymentMethodSetupResult{}, err
+		}
+		return CompletePaymentMethodSetupResult{Session: session, Method: method, Duplicate: observed.RowsAffected() == 0}, ErrSetupInvalidated
+	}
+	if err := requireNoHandoffTx(ctx, tx, in.AccountID); err != nil {
 		return CompletePaymentMethodSetupResult{}, err
 	}
 	if session.State != payment.PaymentIntentStateCreated {

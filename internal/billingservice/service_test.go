@@ -18,9 +18,11 @@ type fakeStore struct {
 	document     *billingstore.InvoiceDocumentRecord
 	settleCalls  int
 	documentPuts int
+	prepareCalls int
 }
 
 func (s *fakeStore) PrepareInvoice(context.Context, billingstore.PrepareInvoiceInput) (billing.Invoice, bool, error) {
+	s.prepareCalls++
 	return s.invoice, s.created, nil
 }
 func (s *fakeStore) RecordInvoiceSettlement(_ context.Context, _, _, ledgerID string, now time.Time) (billing.Invoice, error) {
@@ -45,13 +47,14 @@ func (s *fakeStore) GetInvoiceDocument(context.Context, string, string) (billing
 }
 
 type fakePaymentStore struct {
-	postCalls int
-	duplicate bool
-	postErr   error
+	postCalls  int
+	duplicate  bool
+	postErr    error
+	accountErr error
 }
 
-func (s *fakePaymentStore) EnsureCommercialAccount(context.Context, string, payment.Currency) (payment.CommercialAccount, bool, error) {
-	return payment.CommercialAccount{ID: "account-1", Currency: payment.CurrencyTWD}, false, nil
+func (s *fakePaymentStore) GetCommercialAccountByOrganization(context.Context, string, payment.Currency) (payment.CommercialAccount, error) {
+	return payment.CommercialAccount{ID: "account-1", Currency: payment.CurrencyTWD}, s.accountErr
 }
 func (s *fakePaymentStore) PostLedgerEntry(_ context.Context, in paymentstore.PostLedgerEntryInput) (paymentstore.PostLedgerEntryResult, error) {
 	s.postCalls++
@@ -109,5 +112,19 @@ func TestClosePeriodRetryReusesSettlementAndDocument(t *testing.T) {
 	}
 	if payments.postCalls != 0 || store.settleCalls != 0 || store.documentPuts != 0 || !result.Duplicate {
 		t.Fatalf("result=%+v payments=%d settle=%d docs=%d", result, payments.postCalls, store.settleCalls, store.documentPuts)
+	}
+}
+
+func TestClosePeriodWaitsForAccountProvisioningBeforeAnyInvoiceWrites(t *testing.T) {
+	now := time.Now().UTC()
+	store := &fakeStore{}
+	payments := &fakePaymentStore{accountErr: paymentstore.ErrNotFound}
+	service, err := New(Options{Store: store, PaymentStore: payments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ClosePeriod(context.Background(), ClosePeriodInput{OrganizationID: "cloud", PeriodStart: now.Add(-time.Hour), PeriodEnd: now})
+	if !errors.Is(err, paymentstore.ErrNotFound) || store.prepareCalls != 0 || store.settleCalls != 0 || store.documentPuts != 0 || payments.postCalls != 0 {
+		t.Fatal("unprovisioned account triggered invoice or monetary writes", err)
 	}
 }

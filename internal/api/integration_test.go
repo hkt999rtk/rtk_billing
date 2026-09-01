@@ -20,6 +20,7 @@ import (
 
 	"github.com/hkt999rtk/rtk_billing/internal/accessstore"
 	"github.com/hkt999rtk/rtk_billing/internal/auditstore"
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/billingservice"
 	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
@@ -99,6 +100,7 @@ func newIntegrationAPIWithOptions(t *testing.T, configure func(*PaymentAPIOption
 		InternalToken: integrationInternalToken,
 		Audit:         AuditAdapter{Store: auditstore.New(db)},
 		Access:        accessstore.New(db),
+		Ownership:     billingidentity.New(db),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +164,8 @@ func (a integrationAPI) request(t *testing.T, method, path, permission, idempote
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Billing-Permissions", permission)
 	req.Header.Set("X-Billing-Actor-Type", "user")
-	req.Header.Set("X-Billing-Actor-ID", "integration-admin")
+	req.Header.Set("X-Billing-Actor-ID", testutil.OrganizationID("integration-owner"))
+	req.Header.Set("X-Billing-Ownership-Version", "1")
 	req.Header.Set("X-Request-Id", "integration-request")
 	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
@@ -170,6 +173,23 @@ func (a integrationAPI) request(t *testing.T, method, path, permission, idempote
 	response := httptest.NewRecorder()
 	a.server.Router().ServeHTTP(response, req)
 	return response
+}
+
+// Explicit synthetic provisioning, never an HTTP-request side effect or fallback.
+func (a integrationAPI) provisionOwner(t *testing.T, organizationID string) {
+	t.Helper()
+	ctx := context.Background()
+	store := paymentstore.New(a.db)
+	account, _, err := store.EnsureCommercialAccount(ctx, organizationID, payment.CurrencyTWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InitializeResponsibility(ctx, paymentstore.InitialResponsibilityInput{
+		AccountID: account.ID, OwnerUserID: testutil.OrganizationID("integration-owner"), OwnershipVersion: 1,
+		EffectiveFrom: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), SourceEvidenceSHA256: strings.Repeat("a", 64),
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestIntegrationInternalBillingDebitAuthenticationAndIdempotency(t *testing.T) {
@@ -180,6 +200,7 @@ func TestIntegrationInternalBillingDebitAuthenticationAndIdempotency(t *testing.
 		t.Fatalf("reused debit credential error = %v", err)
 	}
 	organizationID := testutil.OrganizationID("billing-api-debit")
+	env.provisionOwner(t, organizationID)
 	path := "/v1/internal/billing/debits"
 	body := map[string]any{
 		"organization_id": organizationID,
@@ -238,6 +259,15 @@ func TestIntegrationInternalBillingDebitAuthenticationAndIdempotency(t *testing.
 func TestIntegrationBillingHTTPPricingInvoiceAndTenantReadLifecycle(t *testing.T) {
 	env := newIntegrationAPI(t)
 	organizationID := testutil.OrganizationID("billing-api-invoice")
+	env.provisionOwner(t, organizationID)
+	profileStore := billingstore.New(env.db)
+	profile, _, err := profileStore.EnsureBillingProfile(context.Background(), organizationID, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profileStore.PutBillingProfile(context.Background(), billingstore.PutProfileInput{OrganizationID: organizationID, LegalName: "Verified test owner", Locale: "zh-TW", Timezone: "Asia/Taipei", DeliveryPreference: "portal", ExpectedVersion: profile.Version}); err != nil {
+		t.Fatal(err)
+	}
 	periodStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	periodEnd := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 
@@ -331,6 +361,7 @@ func TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction(t *testing.T) {
 	}})
 	env := newIntegrationAPI(t, provider)
 	organizationID := testutil.OrganizationID("billing-api-setup")
+	env.provisionOwner(t, organizationID)
 	path := "/v1/orgs/" + organizationID + "/payment-methods/setup"
 	body := map[string]any{
 		"provider": "fake",
@@ -373,7 +404,8 @@ func TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction(t *testing.T) {
 	if err := env.db.QueryRow(ctx, `SELECT count(*) FROM payment_consents`).Scan(&consents); err != nil {
 		t.Fatal(err)
 	}
-	if err := env.db.QueryRow(ctx, `SELECT count(*) FROM billing_audit_events`).Scan(&audits); err != nil {
+	// Synthetic ownership provisioning has its own audit, outside this payment lifecycle.
+	if err := env.db.QueryRow(ctx, `SELECT count(*) FROM billing_audit_events WHERE event_type <> 'billing.responsibility.initialize'`).Scan(&audits); err != nil {
 		t.Fatal(err)
 	}
 	if err := env.db.QueryRow(ctx, `SELECT hosted_url_sha256 FROM payment_method_setup_sessions LIMIT 1`).Scan(&storedURL); err != nil {
@@ -427,6 +459,7 @@ func TestIntegrationPaymentSimulatorHostedSetupActivatesMethodWithoutPersistingR
 	}
 
 	organizationID := testutil.OrganizationID("billing-api-simulator")
+	env.provisionOwner(t, organizationID)
 	path := "/v1/orgs/" + organizationID + "/payment-methods/setup"
 	body := map[string]any{
 		"provider": "simulator",

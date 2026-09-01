@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
@@ -17,21 +19,28 @@ type PaymentMethodPage struct {
 }
 
 func (s *Store) ListPaymentMethods(ctx context.Context, accountID string, limit, offset int) (PaymentMethodPage, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) (PaymentMethodPage, error) {
+			return view.ListPaymentMethods(ctx, accountID, limit, offset)
+		})
+	}
 	if !required(accountID) {
 		return PaymentMethodPage{}, ErrConflict
 	}
 	limit, offset = boundedPage(limit, offset)
+	args := []any{accountID}
+	visibility := methodVisibility(ctx, &args, false)
 	var total int
-	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM payment_methods WHERE account_id = $1`, accountID).Scan(&total); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM payment_methods WHERE account_id = $1 AND `+visibility, args...).Scan(&total); err != nil {
 		return PaymentMethodPage{}, err
 	}
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(ctx, `
 		SELECT `+paymentMethodColumns+`
 		FROM payment_methods
-		WHERE account_id = $1
+		WHERE account_id = $1 AND `+visibility+`
 		ORDER BY created_at DESC, id DESC
-		LIMIT $2 OFFSET $3
-	`, accountID, limit, offset)
+		`+fmt.Sprintf("LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return PaymentMethodPage{}, err
 	}
@@ -48,14 +57,21 @@ func (s *Store) ListPaymentMethods(ctx context.Context, accountID string, limit,
 }
 
 func (s *Store) GetPaymentMethod(ctx context.Context, accountID, methodID string) (payment.PaymentMethod, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) (payment.PaymentMethod, error) {
+			return view.GetPaymentMethod(ctx, accountID, methodID)
+		})
+	}
 	if !required(accountID) || !required(methodID) {
 		return payment.PaymentMethod{}, ErrConflict
 	}
+	args := []any{accountID, methodID}
+	visibility := methodVisibility(ctx, &args, false)
 	return scanPaymentMethod(s.db.QueryRow(ctx, `
 		SELECT `+paymentMethodColumns+`
 		FROM payment_methods
-		WHERE account_id = $1 AND id = $2
-	`, accountID, methodID))
+		WHERE account_id = $1 AND id = $2 AND `+visibility,
+		args...))
 }
 
 type RevokePaymentMethodInput struct {
@@ -160,6 +176,13 @@ func (s *Store) DisableAutoTopUpPolicy(ctx context.Context, in DisableAutoTopUpP
 	if err != nil {
 		return payment.AutoTopUpPolicy{}, err
 	}
+	// A retained predecessor policy is not the current owner's configuration,
+	// even when already disabled. Never disclose it through DELETE's response.
+	if _, scoped := billingidentity.FromContext(ctx); scoped {
+		if _, err := getPaymentMethodForUpdate(ctx, tx, policy.PaymentMethodID); err != nil {
+			return payment.AutoTopUpPolicy{}, err
+		}
+	}
 	if in.ExpectedVersion > 0 && policy.Version != in.ExpectedVersion {
 		return payment.AutoTopUpPolicy{}, ErrConflict
 	}
@@ -236,11 +259,17 @@ func (s *Store) CreateHostedTopUp(ctx context.Context, in CreateHostedTopUpInput
 	if account.State == payment.AccountStateClosed || account.State == payment.AccountStateSuspended {
 		return CreateManualTopUpResult{}, ErrAccountClosed
 	}
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		return CreateManualTopUpResult{}, err
+	}
 	if account.Currency != in.Currency {
 		return CreateManualTopUpResult{}, ErrConflict
 	}
 	existing, existingErr := scanIntent(tx.QueryRow(ctx, `SELECT `+intentColumns+` FROM payment_intents WHERE account_id=$1 AND idempotency_key=$2 FOR UPDATE`, in.AccountID, strings.TrimSpace(in.IdempotencyKey)))
 	if existingErr == nil {
+		if err := requireCurrentIntentReplay(ctx, tx, existing.ID); err != nil {
+			return CreateManualTopUpResult{}, err
+		}
 		if existing.AmountMinor != in.AmountMinor || existing.Currency != in.Currency || existing.Provider != in.Provider || existing.PaymentMethodID != "" || existing.Reason != payment.PaymentIntentReasonManualTopUp {
 			return CreateManualTopUpResult{}, ErrIdempotencyConflict
 		}
@@ -298,6 +327,9 @@ func (s *Store) CreateManualTopUp(ctx context.Context, in CreateManualTopUpInput
 	if account.State == payment.AccountStateClosed || account.State == payment.AccountStateSuspended {
 		return CreateManualTopUpResult{}, ErrAccountClosed
 	}
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		return CreateManualTopUpResult{}, err
+	}
 	if account.Currency != in.Currency {
 		return CreateManualTopUpResult{}, ErrConflict
 	}
@@ -308,6 +340,9 @@ func (s *Store) CreateManualTopUp(ctx context.Context, in CreateManualTopUpInput
 		FOR UPDATE
 	`, in.AccountID, strings.TrimSpace(in.IdempotencyKey)))
 	if existingErr == nil {
+		if err := requireCurrentIntentReplay(ctx, tx, existing.ID); err != nil {
+			return CreateManualTopUpResult{}, err
+		}
 		if existing.AmountMinor != in.AmountMinor || existing.Currency != in.Currency ||
 			existing.PaymentMethodID != in.PaymentMethodID || existing.Reason != payment.PaymentIntentReasonManualTopUp {
 			return CreateManualTopUpResult{}, ErrIdempotencyConflict
@@ -362,21 +397,28 @@ type PaymentIntentPage struct {
 }
 
 func (s *Store) ListPaymentIntents(ctx context.Context, accountID string, limit, offset int) (PaymentIntentPage, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) (PaymentIntentPage, error) {
+			return view.ListPaymentIntents(ctx, accountID, limit, offset)
+		})
+	}
 	if !required(accountID) {
 		return PaymentIntentPage{}, ErrConflict
 	}
 	limit, offset = boundedPage(limit, offset)
+	args := []any{accountID}
+	visibility := intentVisibility(ctx, &args)
 	var total int
-	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM payment_intents WHERE account_id = $1`, accountID).Scan(&total); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT count(*)::int FROM payment_intents WHERE account_id = $1 AND `+visibility, args...).Scan(&total); err != nil {
 		return PaymentIntentPage{}, err
 	}
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(ctx, `
 		SELECT `+intentColumns+`
 		FROM payment_intents
-		WHERE account_id = $1
+		WHERE account_id = $1 AND `+visibility+`
 		ORDER BY created_at DESC, id DESC
-		LIMIT $2 OFFSET $3
-	`, accountID, limit, offset)
+		`+fmt.Sprintf("LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return PaymentIntentPage{}, err
 	}
@@ -393,17 +435,32 @@ func (s *Store) ListPaymentIntents(ctx context.Context, accountID string, limit,
 }
 
 func (s *Store) GetPaymentIntentForAccount(ctx context.Context, accountID, intentID string) (payment.PaymentIntent, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) (payment.PaymentIntent, error) {
+			return view.GetPaymentIntentForAccount(ctx, accountID, intentID)
+		})
+	}
 	if !required(accountID) || !required(intentID) {
 		return payment.PaymentIntent{}, ErrConflict
 	}
+	args := []any{accountID, intentID}
+	visibility := intentVisibility(ctx, &args)
 	return scanIntent(s.db.QueryRow(ctx, `
 		SELECT `+intentColumns+`
 		FROM payment_intents
-		WHERE account_id = $1 AND id = $2
-	`, accountID, intentID))
+		WHERE account_id = $1 AND id = $2 AND `+visibility,
+		args...))
 }
 
 func (s *Store) ListPaymentAttempts(ctx context.Context, intentID string) ([]payment.PaymentAttempt, error) {
+	if scope, ok := billingidentity.FromContext(ctx); ok {
+		if !s.tenantRead {
+			return tenantRead(ctx, s, scope.AccountID, func(view *Store) ([]payment.PaymentAttempt, error) { return view.ListPaymentAttempts(ctx, intentID) })
+		}
+		if _, err := s.GetPaymentIntentForAccount(ctx, scope.AccountID, intentID); err != nil {
+			return nil, err
+		}
+	}
 	if !required(intentID) {
 		return nil, ErrConflict
 	}

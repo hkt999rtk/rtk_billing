@@ -135,7 +135,8 @@ func transitionIntentTx(ctx context.Context, tx pgx.Tx, account payment.Commerci
 		if policyErr != nil && !errors.Is(policyErr, ErrNotFound) {
 			return TransitionIntentResult{}, policyErr
 		}
-		if policyErr == nil {
+		// A completed manual top-up must not rearm or rewrite a retired policy.
+		if policyErr == nil && policy.Enabled {
 			armed := account.AvailableBalanceMinor >= policy.ThresholdMinor
 			resetFailures := intent.Reason == payment.PaymentIntentReasonAutoTopUp &&
 				intent.PolicyGeneration != nil && *intent.PolicyGeneration == policy.Generation

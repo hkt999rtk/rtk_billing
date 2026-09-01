@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
@@ -42,6 +43,9 @@ func (s *Store) PutAutoTopUpPolicy(ctx context.Context, in PutAutoTopUpPolicyInp
 	if account.State == payment.AccountStateClosed {
 		return payment.AutoTopUpPolicy{}, ErrAccountClosed
 	}
+	if err := requireNoHandoffTx(ctx, tx, account.ID); err != nil {
+		return payment.AutoTopUpPolicy{}, err
+	}
 	if account.Currency != in.Currency {
 		return payment.AutoTopUpPolicy{}, ErrConflict
 	}
@@ -70,9 +74,35 @@ func (s *Store) PutAutoTopUpPolicy(ctx context.Context, in PutAutoTopUpPolicyInp
 		return payment.AutoTopUpPolicy{}, currentErr
 	}
 	createdBy := in.ActorID
+	replacesRetired := false
 	generation, version := int64(1), int64(1)
 	if currentErr == nil {
-		if in.ExpectedVersion > 0 && current.Version != in.ExpectedVersion {
+		if scope, scoped := billingidentity.FromContext(ctx); scoped {
+			_, methodErr := getPaymentMethodForUpdate(ctx, tx, current.PaymentMethodID)
+			if errors.Is(methodErr, ErrNotFound) {
+				// Logical creation may replace only proven, fully revoked predecessor
+				// configuration. Unknown legacy policies require reviewed migration.
+				if err := tx.QueryRow(ctx, `SELECT EXISTS(
+					SELECT 1 FROM billing_payment_method_responsibility binding
+					JOIN billing_responsibility_periods period ON period.id=binding.period_id
+					JOIN payment_methods method ON method.id=binding.method_id
+					JOIN payment_consents consent ON consent.id=$3
+					WHERE binding.account_id=$1 AND binding.method_id=$2
+					AND period.effective_until IS NOT NULL AND period.ownership_version<$4
+					AND method.status='revoked' AND consent.account_id=$1 AND consent.revoked_at IS NOT NULL
+				)`, in.AccountID, current.PaymentMethodID, current.ConsentID, scope.OwnershipVersion).Scan(&replacesRetired); err != nil {
+					return payment.AutoTopUpPolicy{}, err
+				}
+				if !replacesRetired || current.Enabled || current.Armed || in.ExpectedVersion != 0 {
+					return payment.AutoTopUpPolicy{}, ErrConflict
+				}
+			} else if methodErr != nil {
+				return payment.AutoTopUpPolicy{}, methodErr
+			} else if in.ExpectedVersion != current.Version {
+				return payment.AutoTopUpPolicy{}, ErrConflict
+			}
+		}
+		if !replacesRetired && in.ExpectedVersion > 0 && current.Version != in.ExpectedVersion {
 			return payment.AutoTopUpPolicy{}, ErrConflict
 		}
 		generation = current.Generation + 1
@@ -120,13 +150,15 @@ func (s *Store) PutAutoTopUpPolicy(ctx context.Context, in PutAutoTopUpPolicyInp
 				last_triggered_at = NULL,
 				last_succeeded_at = NULL,
 				consent_id = $12,
-				updated_by = $13
+				updated_by = $13,
+				created_by = CASE WHEN $14 THEN $13 ELSE created_by END,
+				created_at = CASE WHEN $14 THEN now() ELSE created_at END
 			WHERE account_id = $1
 			RETURNING `+policyColumns,
 			in.AccountID, in.Enabled, in.ThresholdMinor, in.TopUpAmountMinor,
 			in.Currency, in.PaymentMethodID, in.DailyAttemptLimit,
 			in.DailyAmountLimitMinor, in.CooldownSeconds, generation, version,
-			in.ConsentID, in.ActorID,
+			in.ConsentID, in.ActorID, replacesRetired,
 		))
 	} else {
 		policy, err = scanPolicy(tx.QueryRow(ctx, `
@@ -154,11 +186,16 @@ func (s *Store) PutAutoTopUpPolicy(ctx context.Context, in PutAutoTopUpPolicyInp
 }
 
 func (s *Store) GetAutoTopUpPolicy(ctx context.Context, accountID string) (payment.AutoTopUpPolicy, error) {
+	if needsTenantRead(ctx, s) {
+		return tenantRead(ctx, s, accountID, func(view *Store) (payment.AutoTopUpPolicy, error) { return view.GetAutoTopUpPolicy(ctx, accountID) })
+	}
+	args := []any{accountID}
+	visibility := periodVisibility(ctx, &args, "billing_payment_method_responsibility", "privacy_binding.method_id=auto_topup_policies.payment_method_id AND privacy_binding.account_id=auto_topup_policies.account_id", true)
 	return scanPolicy(s.db.QueryRow(ctx, `
 		SELECT `+policyColumns+`
 		FROM auto_topup_policies
-		WHERE account_id = $1
-	`, accountID))
+		WHERE account_id = $1 AND `+visibility,
+		args...))
 }
 
 func getPolicyForUpdate(ctx context.Context, tx pgx.Tx, accountID string) (payment.AutoTopUpPolicy, error) {

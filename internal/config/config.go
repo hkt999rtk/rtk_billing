@@ -14,6 +14,8 @@ type Config struct {
 	DatabaseURL                   string
 	ServiceToken                  string
 	InternalToken                 string
+	HandoffToken                  string
+	CloudCreationToken            string
 	BillingDebitToken             string
 	BillingDebitSource            string
 	PaymentReferenceEncryptionKey string
@@ -39,6 +41,8 @@ func Load() (Config, error) {
 		Port: env("PORT", "8080"), Environment: strings.ToLower(env("ENVIRONMENT", "development")), DatabaseURL: strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		ServiceToken:                  strings.TrimSpace(os.Getenv("BILLING_SERVICE_TOKEN")),
 		InternalToken:                 strings.TrimSpace(os.Getenv("BILLING_INTERNAL_TOKEN")),
+		HandoffToken:                  strings.TrimSpace(os.Getenv("BILLING_HANDOFF_TOKEN")),
+		CloudCreationToken:            strings.TrimSpace(os.Getenv("BILLING_CLOUD_CREATION_TOKEN")),
 		BillingDebitToken:             strings.TrimSpace(os.Getenv("BILLING_DEBIT_TOKEN")),
 		BillingDebitSource:            strings.TrimSpace(os.Getenv("BILLING_DEBIT_SOURCE")),
 		PaymentReferenceEncryptionKey: strings.TrimSpace(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY")),
@@ -59,6 +63,24 @@ func Load() (Config, error) {
 	}
 	if credentialReuse(cfg.ServiceToken, cfg.InternalToken, cfg.BillingDebitToken) {
 		return Config{}, errors.New("billing service, internal, and debit credentials must be distinct")
+	}
+	if cfg.HandoffToken != "" {
+		if len(cfg.HandoffToken) < 32 || strings.ContainsAny(cfg.HandoffToken, " \t\r\n") || credentialReuse(cfg.HandoffToken, cfg.ServiceToken) ||
+			credentialReuse(cfg.HandoffToken, cfg.InternalToken) || credentialReuse(cfg.HandoffToken, cfg.BillingDebitToken) ||
+			credentialReuse(cfg.HandoffToken, cfg.SimulatorSharedSecret) || credentialReuse(cfg.HandoffToken, cfg.SimulatorCallbackSecret) ||
+			credentialReuse(cfg.HandoffToken, cfg.NewebPayHashKey) || credentialReuse(cfg.HandoffToken, cfg.PaymentReferenceEncryptionKey) {
+			return Config{}, errors.New("BILLING_HANDOFF_TOKEN must contain at least 32 characters and be distinct from other service credentials")
+		}
+	}
+	if cfg.CloudCreationToken != "" {
+		if len(cfg.CloudCreationToken) < 32 || strings.ContainsAny(cfg.CloudCreationToken, " \t\r\n") {
+			return Config{}, errors.New("BILLING_CLOUD_CREATION_TOKEN must contain at least 32 characters")
+		}
+		for _, secret := range []string{cfg.ServiceToken, cfg.InternalToken, cfg.HandoffToken, cfg.BillingDebitToken, cfg.SimulatorSharedSecret, cfg.SimulatorCallbackSecret, cfg.NewebPayHashKey, cfg.PaymentReferenceEncryptionKey} {
+			if secret != "" && secret == cfg.CloudCreationToken {
+				return Config{}, errors.New("BILLING_CLOUD_CREATION_TOKEN must not reuse another service credential")
+			}
+		}
 	}
 	if (cfg.BillingDebitToken == "") != (cfg.BillingDebitSource == "") {
 		return Config{}, errors.New("BILLING_DEBIT_TOKEN and BILLING_DEBIT_SOURCE must be configured together")
