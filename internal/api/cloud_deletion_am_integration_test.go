@@ -36,8 +36,8 @@ func exerciseCloudDeletionRecovery(t *testing.T, mode string) {
 		t.Skip("requires isolated AM checkout and database")
 	}
 	u, err := url.Parse(amDB)
-	if err != nil || u.Scheme != "postgres" || u.Host != "127.0.0.1:63229" || (u.Path != "/multicloud_am_public_http_test" && u.Path != "/multicloud_am_deletion_http_test" && u.Path != "/multicloud_am_deletion_recovery_http_test") || amDB == os.Getenv("TEST_DATABASE_URL") {
-		t.Fatal("requires dedicated local disposable AM DB")
+	if err != nil || u.Scheme != "postgres" || u.Hostname() != "127.0.0.1" || strings.TrimPrefix(u.Path, "/") == "" || samePostgresEndpoint(amDB, os.Getenv("TEST_DATABASE_URL")) {
+		t.Fatal("requires a separate named AM PostgreSQL database on literal loopback")
 	}
 	env := newIntegrationAPI(t)
 	s := paymentstore.New(env.db)
