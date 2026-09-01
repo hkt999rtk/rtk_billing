@@ -35,10 +35,10 @@ func exerciseAccountManagerPublicAPIContract(t *testing.T, mode string) {
 		t.Skip("requires isolated Account Manager checkout and separate fixture database")
 	}
 	parsed, err := url.Parse(amDB)
-	if err != nil || parsed.Scheme != "postgres" || parsed.Host != "127.0.0.1:63229" || parsed.Path != "/multicloud_am_public_http_test" {
-		t.Fatal("AM fixture requires the dedicated local disposable database")
+	if err != nil || parsed.Scheme != "postgres" || parsed.Hostname() != "127.0.0.1" || strings.TrimPrefix(parsed.Path, "/") == "" {
+		t.Fatal("AM fixture requires a named PostgreSQL database on literal loopback")
 	}
-	if amDB == os.Getenv("TEST_DATABASE_URL") {
+	if samePostgresEndpoint(amDB, os.Getenv("TEST_DATABASE_URL")) {
 		t.Fatal("AM and Billing must use separate databases")
 	}
 	env := newIntegrationAPI(t)
