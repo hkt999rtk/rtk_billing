@@ -19,7 +19,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const digestDomain = "mqtt-usage-settlement-checkpoint-v1"
+const (
+	digestDomain     = "mqtt-usage-settlement-checkpoint-v1"
+	maximumClockSkew = 30 * time.Second
+)
 
 var ErrUnavailable = errors.New("MQTT usage settlement checkpoint unavailable")
 
@@ -112,7 +115,7 @@ func (c *Client) Checkpoint(ctx context.Context, scope Scope) (Evidence, error) 
 	var evidence Evidence
 	now := time.Now().UTC()
 	if decoder.Decode(&evidence) != nil || decoder.Decode(new(any)) != io.EOF || evidence.Scope != scope || !evidence.Complete || !canonicalUUID(evidence.ReceiptID) || evidence.AppliedEvents < 0 || evidence.LegacyWindows < 0 ||
-		!validDigest(evidence.SourceCheckpointSHA256) || evidence.CheckpointSHA256 != evidence.digest() || evidence.ObservedAt.After(now) || !evidence.ObservedAt.After(now.Add(-5*time.Minute)) ||
+		!validDigest(evidence.SourceCheckpointSHA256) || evidence.CheckpointSHA256 != evidence.digest() || evidence.ObservedAt.After(now.Add(maximumClockSkew)) || !evidence.ObservedAt.After(now.Add(-5*time.Minute)) ||
 		!evidence.ExpiresAt.After(now) || evidence.ExpiresAt.After(evidence.ObservedAt.Add(5*time.Minute)) {
 		return Evidence{}, ErrUnavailable
 	}
