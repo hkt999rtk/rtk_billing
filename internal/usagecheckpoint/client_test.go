@@ -42,6 +42,34 @@ func TestClientValidatesBoundCheckpoint(t *testing.T) {
 	}
 }
 
+func TestClientCanonicalizesEquivalentUTCZone(t *testing.T) {
+	scope := testScope()
+	scope.CoveredThrough = time.Date(2026, time.September, 2, 4, 40, 0, 123456000, time.FixedZone("database-utc", 0))
+	canonical := scope
+	canonical.CoveredThrough = scope.CoveredThrough.UTC()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var got Scope
+		if err := json.NewDecoder(request.Body).Decode(&got); err != nil || got != canonical {
+			t.Fatalf("scope = %+v, %v", got, err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		evidence := Evidence{Scope: got, Complete: true, ReceiptID: "33333333-3333-4333-8333-333333333333",
+			SourceCheckpointSHA256: strings.Repeat("a", 64), ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+		evidence.CheckpointSHA256 = evidence.digest()
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(evidence)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, strings.Repeat("s", 32), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := client.Checkpoint(context.Background(), scope)
+	if err != nil || evidence.Scope != canonical {
+		t.Fatalf("checkpoint = %+v, %v", evidence, err)
+	}
+}
+
 func TestClientFailsClosedOnTransportOrEvidenceMismatch(t *testing.T) {
 	scope := testScope()
 	for name, mutate := range map[string]func(http.ResponseWriter, *Evidence){

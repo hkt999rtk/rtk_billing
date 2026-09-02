@@ -76,10 +76,15 @@ func trustedOrigin(u *url.URL) bool {
 }
 
 func (c *Client) Checkpoint(ctx context.Context, scope Scope) (Evidence, error) {
+	coveredThrough := scope.CoveredThrough.UTC().Truncate(time.Microsecond)
 	if c == nil || c.http == nil || !canonicalUUID(scope.CloudID) || !canonicalUUID(scope.OwnerUserID) || scope.OwnershipVersion <= 0 ||
-		scope.CoveredThrough.IsZero() || !scope.CoveredThrough.Equal(scope.CoveredThrough.UTC().Truncate(time.Microsecond)) {
+		scope.CoveredThrough.IsZero() || !scope.CoveredThrough.Equal(coveredThrough) {
 		return Evidence{}, ErrUnavailable
 	}
+	// pgx may scan a UTC timestamptz using a zero-offset location other than
+	// time.UTC. Canonicalize before JSON round-tripping so the response remains
+	// structurally bound to the request without rejecting the same instant.
+	scope.CoveredThrough = coveredThrough
 	raw, err := json.Marshal(scope)
 	if err != nil {
 		return Evidence{}, ErrUnavailable
