@@ -198,6 +198,11 @@ TWD `amount_minor` unit is NT$1. UI and provider adapters do not multiply or
 divide TWD by 100. Stored timestamps are UTC. Provider references are treated as opaque,
 length-bounded strings.
 
+The ownership, collector-evidence and cloud-closure tables added by migrations
+049-059 are documented in [PostgreSQL schema: multi-cloud ownership and
+settlement](postgres-schema.md). The SQL migrations remain executable truth;
+staging reset does not replace a forward upgrade path.
+
 ### `commercial_accounts`
 
 | Column | Notes |
