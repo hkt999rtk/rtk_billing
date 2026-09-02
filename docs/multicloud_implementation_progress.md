@@ -4,6 +4,27 @@ This is implementation evidence, not replacement normative design. The approved
 target remains `cloud_ownership_handoff.md`. No runtime PR or staging deployment
 has been made for this implementation branch.
 
+## Trusted settlement collector checkpoint — 2026-09-02
+
+The current local candidate adds `cmd/settlement-collector`, an authenticated
+Video Cloud usage-checkpoint client and Billing-side reconciliation of usage,
+invoice and provider-work domains. The worker captures local state before the
+producer call, requires the same digest in a new repeatable-read transaction,
+and records only the existing append-only migration-050/054 receipt shapes.
+Empty Billing tables become complete only when paired with the producer's exact
+cloud/owner/version/cutoff checkpoint; wrong, stale or unavailable evidence
+fails closed.
+
+The Docker image now contains `/rtk-billing-settlement-collector`. Unit tests
+cover the strict bounded client, orchestration binding/failure behavior and
+PostgreSQL reconciliation with empty, unrated/open and mutated states. The
+matching Video Cloud endpoint and schema upgrade are separate release
+dependencies. No Billing schema migration is required for this worker; the
+updated [schema document](postgres-schema.md) identifies the existing tables,
+constraints and reset/forward-upgrade boundary. Deployment wiring, CI images,
+cross-service staging evidence and the explicitly authorized staging reset are
+still pending and must not be inferred from this local checkpoint.
+
 ## New-cloud responsibility bootstrap checkpoint — 2026-09-01
 
 Runtime `cbbf60d` adds migration 057 and a dedicated creation-event HTTP receiver.

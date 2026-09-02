@@ -208,8 +208,32 @@ It exposes no payment/invoice/provider or predecessor PII. AM checks echo, bound
 lifetime and completeness before using the response. Later fenced settlement and
 commit revalidate everything; this endpoint neither reserves credit nor certifies
 producer drain. Collector ingestion remains a separate trusted workflow, with no
-coordinator endpoint for manufacturing evidence. Production admission stays
-disabled until the actual participant inventory and collectors are installed.
+coordinator endpoint for manufacturing evidence.
+
+### Trusted settlement collector
+
+The separately deployed `cmd/settlement-collector` enumerates current Billing
+responsibility scopes and active handoffs. It first captures Billing's complete
+local financial-state digest, then calls Video Cloud's dedicated
+`POST /v1/internal/mqtt-usage-settlement/checkpoint` using a collector-only
+credential. That checkpoint binds the cloud, owner, ownership version and exact
+cutoff to the retained Logger horizon and acknowledged Billing usage outbox.
+
+After the producer response, Billing reopens a repeatable-read snapshot and
+requires its local state digest to be unchanged. It independently proves all
+accepted usage through the cutoff is linked to settled invoice lines, all
+relevant periods/invoices are closed or settled, and no unresolved provider
+intent, job, attempt, setup, webhook or reversal remains. Only then does it write
+the three checkpoint hashes into the existing append-only preflight or handoff
+receipt tables. A later local mutation invalidates that receipt during the
+recording transaction or eligibility read. Missing endpoint, wrong scope,
+stale evidence, a digest change or any incomplete domain fails closed.
+
+The collector is not an ownership authority and does not install the MQTT
+handoff fence; Account Manager's producer participant still performs prepare,
+drain, commit/finalize and release. Production admission additionally requires
+the collector deployment, its isolated credential and network policy, the full
+producer participant inventory and staging acceptance.
 
 The Billing implementation exposes the following optional coordinator operations
 under `/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}`:

@@ -54,6 +54,23 @@ internal pricing/access and debit routes use their separate credentials.
 Provider webhook and simulator callback routes authenticate their signed
 payloads instead of accepting a bearer token.
 
+The settlement collector is a separate process in the same image. It consumes
+the authenticated Video Cloud usage horizon and independently reconciles local
+usage, invoice and provider work before writing short-lived preflight or handoff
+evidence:
+
+```sh
+export DATABASE_URL='postgres://rtk_billing:...@localhost:5432/rtk_billing'
+export MQTT_USAGE_SETTLEMENT_BASE_URL='http://mqttusage.video-cloud.svc.cluster.local:8082'
+export MQTT_USAGE_SETTLEMENT_TOKEN='dedicated-at-least-32-character-token'
+go run ./cmd/settlement-collector
+```
+
+The token is collector-only and must not be reused for Billing tenant/internal,
+Video Cloud ingest, Billing fact delivery or ownership-handoff authority. See
+[PostgreSQL schema](docs/postgres-schema.md) and
+[handoff protocol](docs/cloud_ownership_handoff.md) for the evidence boundary.
+
 For local/staging NewebPay wire-contract testing, `cmd/payment-simulator`
 optionally exposes synthetic MPG and Query endpoints when
 `NEWEBPAY_MERCHANT_ID`, `NEWEBPAY_HASH_KEY`, `NEWEBPAY_HASH_IV`, and a
