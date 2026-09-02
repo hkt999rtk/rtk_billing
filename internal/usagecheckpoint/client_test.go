@@ -70,6 +70,34 @@ func TestClientCanonicalizesEquivalentUTCZone(t *testing.T) {
 	}
 }
 
+func TestClientAllowsBoundedProducerClockSkew(t *testing.T) {
+	scope := testScope()
+	for name, skew := range map[string]time.Duration{
+		"within bound": maximumClockSkew - time.Second,
+		"past bound":   maximumClockSkew + time.Second,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				now := time.Now().UTC().Add(skew).Truncate(time.Microsecond)
+				evidence := Evidence{Scope: scope, Complete: true, ReceiptID: "33333333-3333-4333-8333-333333333333",
+					SourceCheckpointSHA256: strings.Repeat("a", 64), ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+				evidence.CheckpointSHA256 = evidence.digest()
+				w.Header().Set("Cache-Control", "no-store")
+				_ = json.NewEncoder(w).Encode(evidence)
+			}))
+			defer server.Close()
+			client, err := New(server.URL, strings.Repeat("s", 32), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Checkpoint(context.Background(), scope)
+			if (err == nil) != (skew < maximumClockSkew) {
+				t.Fatalf("skew %s checkpoint error = %v", skew, err)
+			}
+		})
+	}
+}
+
 func TestClientFailsClosedOnTransportOrEvidenceMismatch(t *testing.T) {
 	scope := testScope()
 	for name, mutate := range map[string]func(http.ResponseWriter, *Evidence){
