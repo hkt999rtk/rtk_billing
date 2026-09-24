@@ -48,7 +48,7 @@ func TestBillingPersistenceInvoiceLifecycle(t *testing.T) {
 	periodStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	periodEnd := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	pricing, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
-		PlanKey: "default", Version: 1, Currency: billing.CurrencyTWD, EffectiveFrom: periodStart,
+		PlanKey: "default", Version: 1, Currency: billing.CurrencyTWD, EffectiveFrom: periodStart.AddDate(0, -1, 0),
 		CreatedBy: "integration-test", Now: now,
 		Rates: []billing.PricingRate{{ServiceCode: "video", MetricCode: "relay_minutes", Description: "Video relay", Unit: "minute", UnitPriceMinor: 2, RoundingMode: billing.RoundingHalfUp}},
 	})
@@ -78,6 +78,17 @@ func TestBillingPersistenceInvoiceLifecycle(t *testing.T) {
 	}
 	if err := store.PutInvoiceDocument(ctx, organizationID, invoice.ID, metadata, data); err != nil {
 		t.Fatal(err)
+	}
+	retroactive, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
+		PlanKey: "default", Version: 2, Currency: billing.CurrencyTWD,
+		EffectiveFrom: periodStart.Add(-24 * time.Hour), CreatedBy: "integration-test", Now: now,
+		Rates: []billing.PricingRate{{ServiceCode: "video", MetricCode: "relay_minutes", Description: "Video relay", Unit: "minute", UnitPriceMinor: 3}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivatePricingVersion(ctx, retroactive.ID, now); err != ErrConflict {
+		t.Fatalf("cutover affecting an issued invoice must conflict, got %v", err)
 	}
 	settled, err := store.RecordInvoiceSettlement(ctx, organizationID, invoice.ID, "", now)
 	if err != nil || settled.State != billing.InvoiceStateSettled {
@@ -160,5 +171,13 @@ func TestPricingHistoryKeepsOldPeriodsAndRejectsAmbiguity(t *testing.T) {
 		Rates: []billing.PricingRate{{ServiceCode: "mqtt", MetricCode: "publish_count", Description: "Published messages", Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6}},
 	}); err != ErrConflict {
 		t.Fatalf("USD pricing must remain unavailable, got %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE pricing_plan_versions SET status='retired', effective_until=$2 WHERE id=$1`, newVersion.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	gapStart := now.Add(48 * time.Hour)
+	gap := create(3, gapStart)
+	if _, err := store.ActivatePricingVersion(ctx, gap.ID, gapStart.Add(time.Hour)); err != ErrConflict {
+		t.Fatalf("activation after an uncovered pricing gap must conflict, got %v", err)
 	}
 }

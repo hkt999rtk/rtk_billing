@@ -128,6 +128,18 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 		return billing.PricingVersion{}, err
 	}
 	rows.Close()
+	if previousID == "" {
+		var previousEnd pgtype.Timestamptz
+		err := tx.QueryRow(ctx, `SELECT effective_until FROM pricing_plan_versions
+			WHERE currency=$1 AND status IN ('active','retired') AND effective_from<$2
+			ORDER BY effective_from DESC LIMIT 1 FOR UPDATE`, code, effectiveFrom.UTC()).Scan(&previousEnd)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return billing.PricingVersion{}, err
+		}
+		if err == nil && (!previousEnd.Valid || !previousEnd.Time.Equal(effectiveFrom.UTC())) {
+			return billing.PricingVersion{}, ErrConflict
+		}
+	}
 	if previousID != "" {
 		var invoiced bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_invoices
