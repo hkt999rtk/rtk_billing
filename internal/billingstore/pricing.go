@@ -170,6 +170,13 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		return billing.UsageFact{}, false, ErrConflict
 	}
 	fact.OrganizationID = organization.String()
+	if fact.ProductID != "" {
+		var product pgtype.UUID
+		if err := product.Scan(fact.ProductID); err != nil || !product.Valid || product.Bytes == [16]byte{} {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		fact.ProductID = product.String()
+	}
 	fact.SourceSHA256 = strings.ToLower(fact.SourceSHA256)
 	fact.WindowStart = fact.WindowStart.UTC().Truncate(time.Microsecond)
 	fact.WindowEnd = fact.WindowEnd.UTC().Truncate(time.Microsecond)
@@ -200,12 +207,12 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 	var id string
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO billing_usage_facts (usage_id, organization_id, service_code, metric_code, quantity,
-		    quantity_scale, unit, window_start, window_end, source, source_sha256)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		    quantity_scale, unit, window_start, window_end, source, source_sha256, product_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid)
 		ON CONFLICT (usage_id) DO NOTHING
 		RETURNING id::text
 	`, fact.UsageID, fact.OrganizationID, fact.ServiceCode, fact.MetricCode, fact.Quantity, fact.QuantityScale,
-		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256)).Scan(&id)
+		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256), fact.ProductID).Scan(&id)
 	created := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		var constraint *pgconn.PgError
@@ -236,10 +243,10 @@ func (s *Store) GetUsageFact(ctx context.Context, usageID string) (billing.Usage
 	}
 	var out billing.UsageFact
 	err := s.db.QueryRow(ctx, `
-		SELECT id::text, usage_id, organization_id::text, service_code, metric_code, quantity, quantity_scale,
+		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
 		       unit, window_start, window_end, source, source_sha256
 		FROM billing_usage_facts WHERE usage_id = $1 AND `+visibility,
-		args...).Scan(&out.ID, &out.UsageID, &out.OrganizationID, &out.ServiceCode, &out.MetricCode, &out.Quantity,
+		args...).Scan(&out.ID, &out.UsageID, &out.OrganizationID, &out.ProductID, &out.ServiceCode, &out.MetricCode, &out.Quantity,
 		&out.QuantityScale, &out.Unit, &out.WindowStart, &out.WindowEnd, &out.Source, &out.SourceSHA256)
 	return out, mapNotFound(err)
 }
@@ -253,7 +260,7 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	args := []any{organizationID, start.UTC(), end.UTC()}
 	visibility := usageVisibility(ctx, &args)
 	rows, err := s.db.Query(ctx, `
-		SELECT id::text, usage_id, organization_id::text, service_code, metric_code, quantity, quantity_scale,
+		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
 		       unit, window_start, window_end, source, source_sha256
 		FROM billing_usage_facts
 		WHERE organization_id = $1 AND window_start >= $2 AND window_end <= $3 AND `+visibility+`
@@ -266,7 +273,7 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	out := make([]billing.UsageFact, 0)
 	for rows.Next() {
 		var fact billing.UsageFact
-		if err := rows.Scan(&fact.ID, &fact.UsageID, &fact.OrganizationID, &fact.ServiceCode, &fact.MetricCode, &fact.Quantity,
+		if err := rows.Scan(&fact.ID, &fact.UsageID, &fact.OrganizationID, &fact.ProductID, &fact.ServiceCode, &fact.MetricCode, &fact.Quantity,
 			&fact.QuantityScale, &fact.Unit, &fact.WindowStart, &fact.WindowEnd, &fact.Source, &fact.SourceSHA256); err != nil {
 			return nil, err
 		}
@@ -278,7 +285,7 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 func sameUsageFact(a, b billing.UsageFact) bool {
 	// The upstream digest is provenance, not authority to change any persisted
 	// field. ID is assigned by this service and is not part of producer input.
-	return a.UsageID == b.UsageID && a.OrganizationID == b.OrganizationID &&
+	return a.UsageID == b.UsageID && a.OrganizationID == b.OrganizationID && a.ProductID == b.ProductID &&
 		a.ServiceCode == b.ServiceCode && a.MetricCode == b.MetricCode &&
 		a.Quantity == b.Quantity && a.QuantityScale == b.QuantityScale && a.Unit == b.Unit &&
 		a.WindowStart.Equal(b.WindowStart) && a.WindowEnd.Equal(b.WindowEnd) &&

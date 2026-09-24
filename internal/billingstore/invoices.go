@@ -181,13 +181,13 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		err = tx.QueryRow(ctx, `
 			INSERT INTO billing_invoice_lines (invoice_id, pricing_rate_id, service_code, metric_code, description,
 			    quantity, quantity_scale, unit, unit_price_minor, unit_price_scale, subtotal_minor, tax_minor,
-			    total_minor, rounding_mode, usage_fact_refs, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			    total_minor, rounding_mode, usage_fact_refs, created_at, product_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULLIF($17,'')::uuid)
 			RETURNING id::text
 		`, issued.ID, issued.Lines[i].PricingRateID, issued.Lines[i].ServiceCode, issued.Lines[i].MetricCode,
 			issued.Lines[i].Description, issued.Lines[i].Quantity, issued.Lines[i].QuantityScale, issued.Lines[i].Unit,
 			issued.Lines[i].UnitPriceMinor, issued.Lines[i].UnitPriceScale, issued.Lines[i].SubtotalMinor,
-			issued.Lines[i].TaxMinor, issued.Lines[i].TotalMinor, issued.Lines[i].RoundingMode, refs, in.Now.UTC()).Scan(&issued.Lines[i].ID)
+			issued.Lines[i].TaxMinor, issued.Lines[i].TotalMinor, issued.Lines[i].RoundingMode, refs, in.Now.UTC(), issued.Lines[i].ProductID).Scan(&issued.Lines[i].ID)
 		if err != nil {
 			return billing.Invoice{}, false, err
 		}
@@ -345,7 +345,7 @@ func scanInvoice(row rowScanner) (billing.Invoice, error) {
 
 func (s *Store) listInvoiceLines(ctx context.Context, invoiceID string) ([]billing.InvoiceLine, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id::text, pricing_rate_id::text, service_code, metric_code, description, quantity, quantity_scale,
+		SELECT id::text, pricing_rate_id::text, COALESCE(product_id::text,''), service_code, metric_code, description, quantity, quantity_scale,
 		       unit, unit_price_minor, unit_price_scale, subtotal_minor, tax_minor, total_minor, rounding_mode, usage_fact_refs
 		FROM billing_invoice_lines WHERE invoice_id = $1 ORDER BY service_code, metric_code, id
 	`, invoiceID)
@@ -357,7 +357,7 @@ func (s *Store) listInvoiceLines(ctx context.Context, invoiceID string) ([]billi
 	for rows.Next() {
 		var line billing.InvoiceLine
 		var refs []byte
-		if err := rows.Scan(&line.ID, &line.PricingRateID, &line.ServiceCode, &line.MetricCode, &line.Description,
+		if err := rows.Scan(&line.ID, &line.PricingRateID, &line.ProductID, &line.ServiceCode, &line.MetricCode, &line.Description,
 			&line.Quantity, &line.QuantityScale, &line.Unit, &line.UnitPriceMinor, &line.UnitPriceScale,
 			&line.SubtotalMinor, &line.TaxMinor, &line.TotalMinor, &line.RoundingMode, &refs); err != nil {
 			return nil, err
