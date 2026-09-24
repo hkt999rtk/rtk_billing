@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 )
 
 // CloudCreation is an immutable event emitted by AM in the new cloud/owner
@@ -72,7 +74,7 @@ func (s *Store) BootstrapBrandCloud(ctx context.Context, in CloudCreation) (Clou
 		return CloudCreationReceipt{}, ErrConflict
 	}
 	var accountID string
-	err = tx.QueryRow(ctx, `INSERT INTO commercial_accounts(organization_id,currency) VALUES($1,'TWD') ON CONFLICT(organization_id,currency) DO NOTHING RETURNING id::text`, in.OrganizationID).Scan(&accountID)
+	err = tx.QueryRow(ctx, `INSERT INTO commercial_accounts(organization_id,currency) VALUES($1,$2) ON CONFLICT(organization_id,currency) DO NOTHING RETURNING id::text`, in.OrganizationID, currency.Settlement).Scan(&accountID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CloudCreationReceipt{}, ErrOwnershipEvidenceMissing
 	}

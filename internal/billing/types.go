@@ -1,10 +1,18 @@
 package billing
 
-import "time"
+import (
+	"time"
 
-type Currency string
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
+)
 
-const CurrencyTWD Currency = "TWD"
+type Currency = currency.Code
+
+const (
+	CurrencyTWD Currency = currency.TWD
+	CurrencyUSD Currency = currency.USD
+	CurrencyCNY Currency = currency.CNY
+)
 
 type RoundingMode string
 

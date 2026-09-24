@@ -10,6 +10,7 @@ import (
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 )
 
 type PutProfileInput struct {
@@ -48,7 +49,7 @@ func (s *Store) EnsureBillingProfile(ctx context.Context, organizationID string,
 	err = tx.QueryRow(ctx, `
 		WITH responsibility AS (
 			SELECT r.ownership_version FROM billing_responsibility_periods r JOIN commercial_accounts a ON a.id=r.account_id
-			WHERE a.organization_id=$1 AND a.currency='TWD' AND r.effective_until IS NULL
+			WHERE a.organization_id=$1 AND a.currency=$3 AND r.effective_until IS NULL
 		), inserted AS (
 			INSERT INTO billing_profiles (organization_id, legal_name, ownership_version, requires_configuration, locale, timezone, delivery_preference, created_at, updated_at)
 			VALUES ($1::uuid, CASE WHEN EXISTS(SELECT 1 FROM responsibility) THEN '' ELSE $1::uuid::text END,
@@ -57,7 +58,7 @@ func (s *Store) EnsureBillingProfile(ctx context.Context, organizationID string,
 			RETURNING true
 		)
 		SELECT COALESCE((SELECT true FROM inserted), false)
-	`, organizationID, now.UTC()).Scan(&created)
+	`, organizationID, now.UTC(), currency.Settlement).Scan(&created)
 	if err != nil {
 		return billing.BillingProfile{}, false, err
 	}

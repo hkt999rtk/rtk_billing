@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/jackc/pgx/v5"
 )
@@ -53,7 +54,7 @@ func loadCloudPreflightAccountTx(ctx context.Context, tx pgx.Tx, in CloudPreflig
 	if lock {
 		suffix = " FOR UPDATE"
 	}
-	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency='TWD'`+suffix, in.OrganizationID))
+	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency=$2`+suffix, in.OrganizationID, currency.Settlement))
 	if err != nil {
 		return account, err
 	}

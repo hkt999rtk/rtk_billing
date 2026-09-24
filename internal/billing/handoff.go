@@ -1,5 +1,7 @@
 package billing
 
+import "github.com/hkt999rtk/rtk_billing/internal/currency"
+
 // FinancialEvidence is a Billing-side snapshot, never browser input. The
 // completeness flags must be backed by reconciled, persisted checkpoints for
 // the operation's cutoff. Zero rows or elapsed time are not completeness proof.
@@ -29,7 +31,7 @@ func OwnershipTransferBlockers(e FinancialEvidence) []string {
 	if !e.BalanceKnown {
 		blockers = append(blockers, "balance_evidence_missing")
 	} else {
-		if e.Currency != CurrencyTWD {
+		if !currency.CanSettle(e.Currency) {
 			blockers = append(blockers, "currency_unsupported")
 		}
 		if e.BalanceMinor < 0 {

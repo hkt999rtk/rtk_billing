@@ -198,6 +198,12 @@ TWD `amount_minor` unit is NT$1. UI and provider adapters do not multiply or
 divide TWD by 100. Stored timestamps are UTC. Provider references are treated as opaque,
 length-bounded strings.
 
+USD and CNY have two fractional digits in the currency representation, but
+neither is accepted for account creation, payment, ledger posting or invoices
+in this release. A later base-currency cutover must qualify those operations
+and preserve historical TWD snapshots. The fixed US$1 = NT$32 planning
+conversion used for the retail proposal never runs in payment or invoicing.
+
 The ownership, collector-evidence and cloud-closure tables added by migrations
 049-059 are documented in [PostgreSQL schema: multi-cloud ownership and
 settlement](postgres-schema.md). The SQL migrations remain executable truth;

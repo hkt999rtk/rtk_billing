@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
@@ -128,7 +129,7 @@ func (s *Store) PrepareOwnershipHandoff(ctx context.Context, in PrepareOwnership
 	}
 	defer tx.Rollback(ctx)
 	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+`
-		FROM commercial_accounts WHERE organization_id=$1 AND currency='TWD' FOR UPDATE`, in.OrganizationID))
+		FROM commercial_accounts WHERE organization_id=$1 AND currency=$2 FOR UPDATE`, in.OrganizationID, currency.Settlement))
 	if err != nil {
 		return OwnershipHandoff{}, err
 	}

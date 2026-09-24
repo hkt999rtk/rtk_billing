@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 )
 
 var (
@@ -82,7 +84,7 @@ func (s *Store) AuthorizeOwner(ctx context.Context, organizationID, userID strin
 		(SELECT 1 FROM billing_handoff_commit_authorizations g WHERE g.operation_id=h.id))))
 		OR EXISTS(SELECT 1 FROM billing_cloud_closures c WHERE c.account_id=a.id AND c.phase<>'canceled')
 		FROM commercial_accounts a LEFT JOIN billing_responsibility_periods p ON p.account_id=a.id AND p.effective_until IS NULL
-		WHERE a.organization_id=$1 AND a.currency='TWD'`, organizationID).
+		WHERE a.organization_id=$1 AND a.currency=$2`, organizationID, currency.Settlement).
 		Scan(&scope.AccountID, &state, &owner, &currentVersion, &periodStart, &committing)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && (owner == nil || currentVersion == nil || periodStart == nil) {
 		return Scope{}, ErrUnavailable

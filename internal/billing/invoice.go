@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 )
 
 var (
@@ -17,7 +19,7 @@ var (
 
 func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) (Invoice, error) {
 	if strings.TrimSpace(invoice.OrganizationID) == "" || strings.TrimSpace(invoice.PricingVersionID) == "" ||
-		invoice.Currency != CurrencyTWD || !invoice.PeriodEnd.After(invoice.PeriodStart) {
+		!currency.CanSettle(invoice.Currency) || !invoice.PeriodEnd.After(invoice.PeriodStart) {
 		return Invoice{}, ErrInvalidInvoice
 	}
 	if invoice.State != "" && invoice.State != InvoiceStateDraft {

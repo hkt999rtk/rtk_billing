@@ -1,10 +1,12 @@
 package payment
 
+import "github.com/hkt999rtk/rtk_billing/internal/currency"
+
 import "time"
 
-type Currency string
+type Currency = currency.Code
 
-const CurrencyTWD Currency = "TWD"
+const CurrencyTWD Currency = currency.TWD
 
 type AccountState string
 

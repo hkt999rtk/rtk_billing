@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -183,7 +184,7 @@ func (s *Server) confirmHandoff(c *gin.Context) {
 	if !bindHandoff(c, &req) {
 		return
 	}
-	if !handoffUUID(req.UserID) || req.SnapshotVersion < 2 || req.BalanceMinor == nil || *req.BalanceMinor < 0 || req.Currency != billing.CurrencyTWD {
+	if !handoffUUID(req.UserID) || req.SnapshotVersion < 2 || req.BalanceMinor == nil || *req.BalanceMinor < 0 || !currency.CanSettle(req.Currency) {
 		writeError(c, http.StatusBadRequest, "BILLING_HANDOFF_REQUEST_INVALID", "Exact nonnegative amount, currency, snapshot version and participant are required")
 		return
 	}

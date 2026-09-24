@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
 )
 
@@ -39,7 +40,7 @@ type InvoicePage struct {
 }
 
 func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (billing.Invoice, bool, error) {
-	if !required(in.OrganizationID) || !required(in.AccountID) || in.Currency != billing.CurrencyTWD ||
+	if !required(in.OrganizationID) || !required(in.AccountID) || !currency.CanSettle(in.Currency) ||
 		!in.PeriodEnd.After(in.PeriodStart) {
 		return billing.Invoice{}, false, ErrConflict
 	}
@@ -427,9 +428,13 @@ func (s *Store) RecordInvoiceSettlement(ctx context.Context, organizationID, inv
 	}
 	defer tx.Rollback(ctx)
 	var total int64
-	err = tx.QueryRow(ctx, `SELECT total_minor FROM billing_invoices WHERE id = $1 AND organization_id = $2 FOR UPDATE`, invoiceID, organizationID).Scan(&total)
+	var invoiceCurrency billing.Currency
+	err = tx.QueryRow(ctx, `SELECT total_minor,currency FROM billing_invoices WHERE id = $1 AND organization_id = $2 FOR UPDATE`, invoiceID, organizationID).Scan(&total, &invoiceCurrency)
 	if err != nil {
 		return billing.Invoice{}, mapNotFound(err)
+	}
+	if !currency.CanSettle(invoiceCurrency) {
+		return billing.Invoice{}, ErrConflict
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO invoice_settlement_links (invoice_id, ledger_entry_id, state, attempt_count, created_at, updated_at)
@@ -451,12 +456,12 @@ func (s *Store) RecordInvoiceSettlement(ctx context.Context, organizationID, inv
 		INSERT INTO billing_activity_events (organization_id, customer_reference, activity_type, state,
 		    amount_minor, currency, balance_effect, action, message_key, resource_type, resource_id,
 		    occurred_at, updated_at)
-		VALUES ($1, $2, 'invoice', 'completed', $3, 'TWD', 'debit', 'none', 'billing.invoice.settled',
+		VALUES ($1, $2, 'invoice', 'completed', $3, $6, 'debit', 'none', 'billing.invoice.settled',
 		    'invoice', $4, $5, $5)
 		ON CONFLICT (organization_id, resource_type, resource_id) WHERE resource_id IS NOT NULL
 		DO UPDATE SET state = 'completed', amount_minor = EXCLUDED.amount_minor,
 		    balance_effect = 'debit', message_key = EXCLUDED.message_key, updated_at = EXCLUDED.updated_at
-	`, organizationID, "invoice-"+invoiceID, total, invoiceID, now.UTC()); err != nil {
+	`, organizationID, "invoice-"+invoiceID, total, invoiceID, now.UTC(), invoiceCurrency); err != nil {
 		return billing.Invoice{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

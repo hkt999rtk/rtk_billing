@@ -18,6 +18,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/billingservice"
 	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
 )
 
@@ -132,9 +133,9 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	if !end.After(start) {
 		return billingUsageResponse{}, billingstore.ErrConflict
 	}
-	pricing, err := s.billing.store.ActivePricingVersion(ctx, start, billing.CurrencyTWD)
+	pricing, err := s.billing.store.ActivePricingVersion(ctx, start, currency.Settlement)
 	if errors.Is(err, billingstore.ErrPricingUnavailable) {
-		return billingUsageResponse{PeriodStart: start, PeriodEnd: end, Currency: billing.CurrencyTWD, Lines: []billing.InvoiceLine{}, Estimated: true}, nil
+		return billingUsageResponse{PeriodStart: start, PeriodEnd: end, Currency: currency.Settlement, Lines: []billing.InvoiceLine{}, Estimated: true}, nil
 	}
 	if err != nil {
 		return billingUsageResponse{}, err
@@ -151,7 +152,7 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 		}
 	}
 	draft, err := billing.BuildDraftInvoice(billing.Invoice{
-		OrganizationID: organizationID, PricingVersionID: pricing.ID, Currency: billing.CurrencyTWD,
+		OrganizationID: organizationID, PricingVersionID: pricing.ID, Currency: currency.Settlement,
 		PeriodStart: start, PeriodEnd: end, Recipient: profile,
 	}, facts, pricing.Rates)
 	if err != nil {
@@ -278,7 +279,7 @@ func (s *Server) getBillingUsage(c *gin.Context) {
 		return
 	}
 	pricingVersionID := ""
-	if pricing, pricingErr := s.billing.store.ActivePricingVersion(c.Request.Context(), usage.PeriodStart, billing.CurrencyTWD); pricingErr == nil {
+	if pricing, pricingErr := s.billing.store.ActivePricingVersion(c.Request.Context(), usage.PeriodStart, currency.Settlement); pricingErr == nil {
 		pricingVersionID = pricing.ID
 	}
 	c.JSON(http.StatusOK, gin.H{"usage": billingUsageContractLines(usage, pricingVersionID), "period_start": usage.PeriodStart, "period_end": usage.PeriodEnd, "currency": usage.Currency, "subtotal_minor": usage.Subtotal, "tax_minor": usage.Tax, "total_minor": usage.Total, "lines": usage.Lines, "estimated": usage.Estimated, "fact_count": usage.FactCount, "usage_through": usage.UsageThrough})

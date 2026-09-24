@@ -4,6 +4,8 @@ import (
 	"errors"
 	"math"
 	"testing"
+
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 )
 
 func TestPriceUsageUsesFixedPrecisionAndHalfUpRounding(t *testing.T) {
@@ -14,6 +16,28 @@ func TestPriceUsageUsesFixedPrecisionAndHalfUpRounding(t *testing.T) {
 	}
 	if subtotal != 521 || tax != 26 || total != 547 {
 		t.Fatalf("subtotal=%d tax=%d total=%d", subtotal, tax, total)
+	}
+}
+
+func TestFutureTwoDecimalCurrenciesUseIntegerMinorUnitArithmetic(t *testing.T) {
+	for _, code := range []currency.Code{currency.USD, currency.CNY} {
+		digits, ok := currency.MinorDigits(code)
+		if !ok || digits != 2 {
+			t.Fatalf("%s minor digits = %d, %t", code, digits, ok)
+		}
+		unit := int64(1)
+		for range digits {
+			unit *= 10
+		}
+		// 1.25 major units is 125 minor units; two units plus 5% tax
+		// must remain exact without floating-point conversion.
+		subtotal, tax, total, err := PriceUsage(PricingRate{
+			UnitPriceMinor: unit + unit/4, TaxRateBasisPoints: 500,
+			RoundingMode: RoundingHalfUp,
+		}, 2, 0)
+		if err != nil || subtotal != 250 || tax != 13 || total != 263 {
+			t.Fatalf("%s subtotal=%d tax=%d total=%d err=%v", code, subtotal, tax, total, err)
+		}
 	}
 }
 

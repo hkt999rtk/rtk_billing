@@ -29,6 +29,25 @@ func TestBuildDraftInvoiceAggregatesUsageAndReconciles(t *testing.T) {
 	}
 }
 
+func TestTWDPerMillionPriceRoundsAfterMonthlyAggregation(t *testing.T) {
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	rate := PricingRate{ID: "mqtt-rate", PricingVersionID: "twd-v2", ServiceCode: "mqtt", MetricCode: "publish_count", Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6, RoundingMode: RoundingHalfUp}
+	facts := []UsageFact{
+		{UsageID: "first", OrganizationID: "org-1", ServiceCode: "mqtt", MetricCode: "publish_count", Unit: "requests", Quantity: 10000, WindowStart: start, WindowEnd: start.Add(time.Hour)},
+		{UsageID: "second", OrganizationID: "org-1", ServiceCode: "mqtt", MetricCode: "publish_count", Unit: "requests", Quantity: 10000, WindowStart: start.Add(time.Hour), WindowEnd: start.Add(2 * time.Hour)},
+	}
+	invoice, err := BuildDraftInvoice(Invoice{OrganizationID: "org-1", PricingVersionID: "twd-v2", Currency: CurrencyTWD, PeriodStart: start, PeriodEnd: end}, facts, []PricingRate{rate})
+	if err != nil || invoice.SubtotalMinor != 1 || invoice.TotalMinor != 1 || len(invoice.Lines) != 1 || invoice.Lines[0].Quantity != 20000 {
+		t.Fatalf("monthly aggregate: invoice=%+v err=%v", invoice, err)
+	}
+	for _, unsupported := range []Currency{CurrencyUSD, CurrencyCNY} {
+		if _, err := BuildDraftInvoice(Invoice{OrganizationID: "org-1", PricingVersionID: "twd-v2", Currency: unsupported, PeriodStart: start, PeriodEnd: end}, facts, []PricingRate{rate}); !errors.Is(err, ErrInvalidInvoice) {
+			t.Fatalf("%s must not issue before settlement qualification: %v", unsupported, err)
+		}
+	}
+}
+
 func TestBuildDraftInvoiceRejectsMissingRateAndCrossTenantFact(t *testing.T) {
 	start := time.Now().UTC().Truncate(time.Hour)
 	base := Invoice{OrganizationID: "org-1", PricingVersionID: "price-1", Currency: CurrencyTWD, PeriodStart: start, PeriodEnd: start.Add(time.Hour)}
