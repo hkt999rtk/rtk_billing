@@ -42,6 +42,19 @@ func TestBuildDraftInvoiceRejectsMissingRateAndCrossTenantFact(t *testing.T) {
 	}
 }
 
+func TestBuildDraftInvoiceKeepsProductDetailsAndTotals(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	facts := []UsageFact{
+		{UsageID: "a", OrganizationID: "org", ProductID: "product-a", ServiceCode: "logger", MetricCode: "ingest_gib", Quantity: 2, Unit: "GiB", WindowStart: start, WindowEnd: start.Add(time.Hour)},
+		{UsageID: "b", OrganizationID: "org", ProductID: "product-b", ServiceCode: "logger", MetricCode: "ingest_gib", Quantity: 3, Unit: "GiB", WindowStart: start, WindowEnd: start.Add(time.Hour)},
+	}
+	invoice, err := BuildDraftInvoice(Invoice{OrganizationID: "org", PricingVersionID: "price", Currency: CurrencyTWD, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0)}, facts,
+		[]PricingRate{{ServiceCode: "logger", MetricCode: "ingest_gib", Unit: "GiB", UnitPriceMinor: 10, RoundingMode: RoundingHalfUp}})
+	if err != nil || len(invoice.Lines) != 2 || invoice.SubtotalMinor != 50 || invoice.Lines[0].ProductID != "product-a" || invoice.Lines[1].ProductID != "product-b" {
+		t.Fatalf("invoice=%+v err=%v", invoice, err)
+	}
+}
+
 func TestIssuedInvoiceCannotBeRebuiltAndSettlementIsExact(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	invoice := Invoice{

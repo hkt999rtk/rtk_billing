@@ -71,6 +71,7 @@ type UsageFact struct {
 	ID             string    `json:"id,omitempty"`
 	UsageID        string    `json:"usage_id"`
 	OrganizationID string    `json:"organization_id"`
+	ProductID      string    `json:"product_id,omitempty"`
 	ServiceCode    string    `json:"service_code"`
 	MetricCode     string    `json:"metric_code"`
 	Quantity       int64     `json:"quantity"`
@@ -85,6 +86,7 @@ type UsageFact struct {
 type InvoiceLine struct {
 	ID             string       `json:"id"`
 	PricingRateID  string       `json:"pricing_rate_id,omitempty"`
+	ProductID      string       `json:"product_id,omitempty"`
 	ServiceCode    string       `json:"service_code"`
 	MetricCode     string       `json:"metric_code"`
 	Description    string       `json:"description"`

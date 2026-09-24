@@ -44,10 +44,11 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 		if fact.OrganizationID != invoice.OrganizationID || fact.WindowStart.Before(invoice.PeriodStart) || fact.WindowEnd.After(invoice.PeriodEnd) || !fact.WindowEnd.After(fact.WindowStart) {
 			return Invoice{}, ErrInvalidInvoice
 		}
-		key := fact.ServiceCode + "\x00" + fact.MetricCode + "\x00" + fact.Unit
-		if _, ok := rateByMetric[key]; !ok {
+		rateKey := fact.ServiceCode + "\x00" + fact.MetricCode + "\x00" + fact.Unit
+		if _, ok := rateByMetric[rateKey]; !ok {
 			return Invoice{}, fmt.Errorf("%w: %s/%s/%s", ErrRateNotFound, fact.ServiceCode, fact.MetricCode, fact.Unit)
 		}
+		key := rateKey + "\x00" + fact.ProductID
 		agg := aggregates[key]
 		if len(agg.refs) > 0 && agg.scale != fact.QuantityScale {
 			return Invoice{}, ErrInvalidScale
@@ -71,7 +72,8 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 	invoice.TaxMinor = 0
 	invoice.TotalMinor = 0
 	for _, key := range keys {
-		rate := rateByMetric[key]
+		parts := strings.Split(key, "\x00")
+		rate := rateByMetric[strings.Join(parts[:3], "\x00")]
 		agg := aggregates[key]
 		subtotal, tax, total, err := PriceUsage(rate, agg.quantity, agg.scale)
 		if err != nil {
@@ -79,6 +81,7 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 		}
 		sort.Strings(agg.refs)
 		line := InvoiceLine{
+			ProductID:     parts[3],
 			PricingRateID: rate.ID, ServiceCode: rate.ServiceCode, MetricCode: rate.MetricCode,
 			Description: rate.Description, Quantity: agg.quantity, QuantityScale: agg.scale, Unit: rate.Unit,
 			UnitPriceMinor: rate.UnitPriceMinor, UnitPriceScale: rate.UnitPriceScale,
