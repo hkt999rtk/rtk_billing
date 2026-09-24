@@ -7,7 +7,9 @@ info:
   title: RTK Billing API
   version: 1.0.0
   description: Provider-neutral pricing, wallet, payment, invoice, and billing access
-    service.
+    service. Transactions are TWD only in this release; amount_minor is integer NT$.
+    Fractional unit prices use unit_price_scale, and USD/CNY require a separately
+    qualified account, tax, provider, and pricing cutover.
 paths:
   /v1/internal/billing/cloud-creations:
     post:

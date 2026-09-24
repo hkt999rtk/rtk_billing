@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/jackc/pgx/v5"
 )
@@ -64,7 +65,7 @@ func (s *Store) PrepareCloudClosure(ctx context.Context, in PrepareCloudClosureI
 		return CloudClosure{}, err
 	}
 	defer tx.Rollback(ctx)
-	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency='TWD' FOR UPDATE`, in.Scope.OrganizationID))
+	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency=$2 FOR UPDATE`, in.Scope.OrganizationID, currency.Settlement))
 	if err != nil {
 		return CloudClosure{}, err
 	}
@@ -127,7 +128,7 @@ func (s *Store) PrepareCloudClosure(ctx context.Context, in PrepareCloudClosureI
 }
 
 func loadCloudClosureTx(ctx context.Context, tx pgx.Tx, scope CloudClosureScope) (payment.CommercialAccount, CloudClosure, error) {
-	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency='TWD' FOR UPDATE`, scope.OrganizationID))
+	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency=$2 FOR UPDATE`, scope.OrganizationID, currency.Settlement))
 	if err != nil {
 		return account, CloudClosure{}, err
 	}

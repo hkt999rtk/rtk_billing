@@ -9,6 +9,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/billingdocument"
 	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
 )
@@ -71,16 +72,22 @@ func (s *Service) ClosePeriod(ctx context.Context, in ClosePeriodInput) (ClosePe
 		return ClosePeriodResult{}, billingstore.ErrConflict
 	}
 	now := s.now().UTC()
-	account, err := s.paymentStore.GetCommercialAccountByOrganization(ctx, in.OrganizationID, payment.CurrencyTWD)
+	account, err := s.paymentStore.GetCommercialAccountByOrganization(ctx, in.OrganizationID, currency.Settlement)
 	if err != nil {
 		return ClosePeriodResult{}, err
 	}
+	if !currency.CanSettle(account.Currency) {
+		return ClosePeriodResult{}, payment.ErrInvalidCurrency
+	}
 	invoice, created, err := s.store.PrepareInvoice(ctx, billingstore.PrepareInvoiceInput{
-		OrganizationID: in.OrganizationID, AccountID: account.ID, Currency: billing.CurrencyTWD,
+		OrganizationID: in.OrganizationID, AccountID: account.ID, Currency: account.Currency,
 		PeriodStart: in.PeriodStart.UTC(), PeriodEnd: in.PeriodEnd.UTC(), DueAt: in.DueAt, Now: now,
 	})
 	if err != nil {
 		return ClosePeriodResult{}, err
+	}
+	if invoice.Currency != account.Currency {
+		return ClosePeriodResult{}, billing.ErrInvalidInvoice
 	}
 	ledgerID := invoice.SettlementLedgerID
 	paymentIntentID := ""
@@ -88,7 +95,7 @@ func (s *Service) ClosePeriod(ctx context.Context, in ClosePeriodInput) (ClosePe
 	if invoice.TotalMinor > 0 && ledgerID == "" {
 		result, err := s.paymentStore.PostLedgerEntry(ctx, paymentstore.PostLedgerEntryInput{
 			AccountID: account.ID, Direction: payment.LedgerDirectionDebit,
-			AmountMinor: invoice.TotalMinor, Currency: payment.CurrencyTWD, Reason: payment.LedgerReasonInvoiceDebit,
+			AmountMinor: invoice.TotalMinor, Currency: account.Currency, Reason: payment.LedgerReasonInvoiceDebit,
 			IdempotencyScope: "billing_invoice", IdempotencyKey: invoice.ID,
 			ExternalType: "invoice", ExternalID: invoice.ID,
 			ActorType: "service", ActorID: s.actorID, RequestID: in.RequestID, Now: now,

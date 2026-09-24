@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
@@ -71,7 +72,7 @@ func validHandoffScope(scope HandoffScope) bool {
 
 func lockHandoffOperationTx(ctx context.Context, tx pgx.Tx, scope HandoffScope) (payment.CommercialAccount, OwnershipHandoff, error) {
 	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts
-		WHERE organization_id=$1 AND currency='TWD' FOR UPDATE`, scope.OrganizationID))
+		WHERE organization_id=$1 AND currency=$2 FOR UPDATE`, scope.OrganizationID, currency.Settlement))
 	if err != nil {
 		return account, OwnershipHandoff{}, err
 	}
@@ -331,7 +332,7 @@ type ConfirmHandoffSnapshotInput struct {
 // phase, ownership version, exact amount and live settlement evidence. It grants
 // no general Billing access and does not switch ownership or release any fence.
 func (s *Store) ConfirmHandoffSnapshot(ctx context.Context, in ConfirmHandoffSnapshotInput) (HandoffSettlementStatus, error) {
-	if !validHandoffScope(in.Scope) || !canonicalUUID(in.UserID) || in.SnapshotVersion < 2 || in.BalanceMinor < 0 || in.Currency != billing.CurrencyTWD {
+	if !validHandoffScope(in.Scope) || !canonicalUUID(in.UserID) || in.SnapshotVersion < 2 || in.BalanceMinor < 0 || !currency.CanSettle(in.Currency) {
 		return HandoffSettlementStatus{}, ErrConflict
 	}
 	tx, err := s.db.Begin(ctx)

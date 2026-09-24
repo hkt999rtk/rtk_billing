@@ -1,14 +1,18 @@
 package payment
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
+)
 
 const (
 	maxInt64 = int64(^uint64(0) >> 1)
 	minInt64 = -maxInt64 - 1
 )
 
-func ValidateCurrency(currency Currency) error {
-	if currency != CurrencyTWD {
+func ValidateCurrency(code Currency) error {
+	if !currency.CanSettle(code) {
 		return ErrInvalidCurrency
 	}
 	return nil

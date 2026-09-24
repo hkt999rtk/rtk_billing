@@ -5,6 +5,9 @@ creation, unique-owner responsibility, deletion and ownership handoff. The SQL
 migrations remain the executable source of truth; this page records the intended
 relationships and invariants so a fresh database, a forward upgrade and the
 service design can be reviewed together.
+TWD remains the only transactional currency; the terminal currency-policy
+migration checks existing rows and indexes historical pricing intervals without
+enabling USD/CNY accounts or invoices.
 
 Account Manager owns `users`, Brand Clouds and the unique owner membership.
 Billing does not copy membership rows or provide an owner-edit API. It stores an
@@ -13,7 +16,7 @@ evidence-backed responsibility projection against the opaque Brand Cloud UUID.
 ## Current migration boundary
 
 A fresh database applies migrations through
-`059_usage_period_barrier.sql`. Existing databases must apply every forward
+`060_twd_currency_policy_and_pricing_history.sql`. Existing databases must apply every forward
 migration in order. Resetting staging is useful for recovery rehearsal but is
 not a substitute for forward migration verification and is never the production
 upgrade strategy.

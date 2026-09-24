@@ -13,6 +13,7 @@ import (
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 )
 
 type CreatePricingVersionInput struct {
@@ -26,7 +27,9 @@ type CreatePricingVersionInput struct {
 }
 
 func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersionInput) (billing.PricingVersion, error) {
-	if !required(in.PlanKey) || in.Version < 1 || in.Currency != billing.CurrencyTWD || in.EffectiveFrom.IsZero() || !required(in.CreatedBy) || len(in.Rates) == 0 {
+	if !required(in.PlanKey) || in.Version < 1 ||
+		!currency.CanSettle(in.Currency) ||
+		in.EffectiveFrom.IsZero() || !required(in.CreatedBy) || len(in.Rates) == 0 {
 		return billing.PricingVersion{}, ErrConflict
 	}
 	if in.Now.IsZero() {
@@ -84,14 +87,61 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 		return billing.PricingVersion{}, err
 	}
 	defer tx.Rollback(ctx)
-	var planKey string
-	if err := tx.QueryRow(ctx, `SELECT plan_key FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&planKey); err != nil {
-		return billing.PricingVersion{}, mapNotFound(err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE pricing_plan_versions SET status = 'retired', effective_until = $2 WHERE plan_key = $1 AND status = 'active' AND id <> $3`, planKey, now.UTC(), id); err != nil {
+	// Serialize activations across plan keys. There is one settlement currency and
+	// therefore one unambiguous rate set for each billing period.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('billing-pricing-activation'))`); err != nil {
 		return billing.PricingVersion{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE pricing_plan_versions SET status = 'active', activated_at = $2 WHERE id = $1 AND status = 'draft'`, id, now.UTC()); err != nil {
+	var code billing.Currency
+	var status string
+	var effectiveFrom time.Time
+	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom); err != nil {
+		return billing.PricingVersion{}, mapNotFound(err)
+	}
+	if status != "draft" || !currency.CanSettle(code) || effectiveFrom.After(now.UTC()) {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	rows, err := tx.Query(ctx, `SELECT id::text, status, effective_from FROM pricing_plan_versions
+		WHERE currency=$1 AND id<>$2 AND status IN ('active','retired')
+		  AND (effective_until IS NULL OR effective_until>$3)
+		FOR UPDATE`, code, id, effectiveFrom.UTC())
+	if err != nil {
+		return billing.PricingVersion{}, err
+	}
+	var previousID string
+	for rows.Next() {
+		var candidateID string
+		var previousStatus string
+		var previousFrom time.Time
+		if err := rows.Scan(&candidateID, &previousStatus, &previousFrom); err != nil {
+			rows.Close()
+			return billing.PricingVersion{}, err
+		}
+		if previousID != "" || previousStatus != "active" || !effectiveFrom.After(previousFrom) {
+			rows.Close()
+			return billing.PricingVersion{}, ErrConflict
+		}
+		previousID = candidateID
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return billing.PricingVersion{}, err
+	}
+	rows.Close()
+	if previousID != "" {
+		var invoiced bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_invoices
+			WHERE pricing_version_id=$1 AND period_start >= $2)`, previousID, effectiveFrom.UTC()).Scan(&invoiced); err != nil {
+			return billing.PricingVersion{}, err
+		}
+		if invoiced {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		if _, err := tx.Exec(ctx, `UPDATE pricing_plan_versions SET status='retired', effective_until=$2 WHERE id=$1`, previousID, effectiveFrom.UTC()); err != nil {
+			return billing.PricingVersion{}, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE pricing_plan_versions SET status='active', activated_at=$2 WHERE id=$1 AND status='draft'`, id, now.UTC()); err != nil {
 		return billing.PricingVersion{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -118,19 +168,33 @@ func (s *Store) GetPricingVersion(ctx context.Context, id string) (billing.Prici
 }
 
 func (s *Store) ActivePricingVersion(ctx context.Context, at time.Time, currency billing.Currency) (billing.PricingVersion, error) {
-	var id string
-	err := s.db.QueryRow(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id::text FROM pricing_plan_versions
-		WHERE status = 'active' AND currency = $1 AND effective_from <= $2
+		WHERE status IN ('active', 'retired') AND currency = $1 AND effective_from <= $2
 		  AND (effective_until IS NULL OR effective_until > $2)
-		ORDER BY effective_from DESC, version DESC LIMIT 1
-	`, currency, at.UTC()).Scan(&id)
+		ORDER BY effective_from DESC, version DESC LIMIT 2
+	`, currency, at.UTC())
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return billing.PricingVersion{}, ErrPricingUnavailable
-		}
 		return billing.PricingVersion{}, err
 	}
+	defer rows.Close()
+	var id string
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return billing.PricingVersion{}, err
+		}
+		return billing.PricingVersion{}, ErrPricingUnavailable
+	}
+	if err := rows.Scan(&id); err != nil {
+		return billing.PricingVersion{}, err
+	}
+	if rows.Next() {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	if err := rows.Err(); err != nil {
+		return billing.PricingVersion{}, err
+	}
+	rows.Close()
 	return s.GetPricingVersion(ctx, id)
 }
 

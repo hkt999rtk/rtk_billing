@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentservice"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
@@ -190,7 +191,7 @@ func (s *Server) paymentAccount(c *gin.Context) (payment.CommercialAccount, bool
 		writeError(c, http.StatusServiceUnavailable, "PAYMENT_PROVIDER_NOT_CONFIGURED", "Payment service is not configured")
 		return payment.CommercialAccount{}, false
 	}
-	account, err := s.payments.store.GetCommercialAccountByOrganization(c.Request.Context(), c.Param("orgId"), payment.CurrencyTWD)
+	account, err := s.payments.store.GetCommercialAccountByOrganization(c.Request.Context(), c.Param("orgId"), currency.Settlement)
 	if err != nil {
 		writePaymentError(c, err)
 		return payment.CommercialAccount{}, false

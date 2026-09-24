@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -59,7 +60,7 @@ func (s *Store) ReconcileSettlementEvidence(ctx context.Context, in ReconcileSet
 		return ReconciledSettlementEvidence{}, err
 	}
 	defer tx.Rollback(ctx)
-	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency='TWD'`, in.OrganizationID))
+	account, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM commercial_accounts WHERE organization_id=$1 AND currency=$2`, in.OrganizationID, currency.Settlement))
 	if err != nil {
 		return ReconciledSettlementEvidence{}, err
 	}

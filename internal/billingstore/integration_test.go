@@ -96,3 +96,69 @@ func TestBillingPersistenceInvoiceLifecycle(t *testing.T) {
 		t.Fatalf("closed-period usage must be immutable, got %v", err)
 	}
 }
+
+func TestPricingHistoryKeepsOldPeriodsAndRejectsAmbiguity(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := database.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	testutil.LockIntegrationDatabase(t, db)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `TRUNCATE billing_activity_events, invoice_settlement_links, billing_invoice_documents,
+		billing_invoice_lines, billing_invoices, billing_periods, billing_usage_facts, pricing_rates,
+		pricing_plan_versions, billing_profiles, balance_ledger_entries, commercial_accounts
+		RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	store := New(db)
+	oldStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	cutover := oldStart.AddDate(0, 1, 0)
+	now := cutover.Add(24 * time.Hour)
+	create := func(version int64, from time.Time) billing.PricingVersion {
+		t.Helper()
+		v, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
+			PlanKey: "history", Version: version, Currency: billing.CurrencyTWD,
+			EffectiveFrom: from, CreatedBy: "integration-test", Now: now,
+			Rates: []billing.PricingRate{{ServiceCode: "mqtt", MetricCode: "publish_count", Description: "Published messages", Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	old := create(1, oldStart)
+	if _, err := store.ActivatePricingVersion(ctx, old.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	newVersion := create(2, cutover)
+	if _, err := store.ActivatePricingVersion(ctx, newVersion.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		at time.Time
+		id string
+	}{{oldStart, old.ID}, {cutover, newVersion.ID}} {
+		got, err := store.ActivePricingVersion(ctx, tc.at, billing.CurrencyTWD)
+		if err != nil || got.ID != tc.id {
+			t.Fatalf("rate at %s: got=%s want=%s err=%v", tc.at, got.ID, tc.id, err)
+		}
+	}
+	if _, err := store.ActivatePricingVersion(ctx, newVersion.ID, now); err != ErrConflict {
+		t.Fatalf("re-activation must conflict, got %v", err)
+	}
+	if _, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
+		PlanKey: "bad", Version: 1, Currency: billing.CurrencyUSD, EffectiveFrom: now,
+		CreatedBy: "integration-test", Now: now,
+		Rates: []billing.PricingRate{{ServiceCode: "mqtt", MetricCode: "publish_count", Description: "Published messages", Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6}},
+	}); err != ErrConflict {
+		t.Fatalf("USD pricing must remain unavailable, got %v", err)
+	}
+}

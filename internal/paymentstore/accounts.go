@@ -7,12 +7,13 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
+	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
 
-func (s *Store) EnsureCommercialAccount(ctx context.Context, organizationID string, currency payment.Currency) (payment.CommercialAccount, bool, error) {
+func (s *Store) EnsureCommercialAccount(ctx context.Context, organizationID string, code payment.Currency) (payment.CommercialAccount, bool, error) {
 	if scope, ok := billingidentity.FromContext(ctx); ok {
-		if scope.OrganizationID != organizationID || currency != payment.CurrencyTWD {
+		if scope.OrganizationID != organizationID || !currency.CanSettle(code) {
 			return payment.CommercialAccount{}, false, billingidentity.ErrDenied
 		}
 		account, err := s.GetCommercialAccount(ctx, scope.AccountID)
@@ -21,7 +22,7 @@ func (s *Store) EnsureCommercialAccount(ctx context.Context, organizationID stri
 	if !required(organizationID) {
 		return payment.CommercialAccount{}, false, ErrConflict
 	}
-	if err := payment.ValidateCurrency(currency); err != nil {
+	if err := payment.ValidateCurrency(code); err != nil {
 		return payment.CommercialAccount{}, false, err
 	}
 
@@ -29,7 +30,7 @@ func (s *Store) EnsureCommercialAccount(ctx context.Context, organizationID stri
 		INSERT INTO commercial_accounts (organization_id, currency)
 		VALUES ($1, $2)
 		ON CONFLICT (organization_id, currency) DO NOTHING
-		RETURNING `+accountColumns, organizationID, currency))
+		RETURNING `+accountColumns, organizationID, code))
 	if err == nil {
 		return account, true, nil
 	}
@@ -41,7 +42,7 @@ func (s *Store) EnsureCommercialAccount(ctx context.Context, organizationID stri
 		SELECT `+accountColumns+`
 		FROM commercial_accounts
 		WHERE organization_id = $1 AND currency = $2
-	`, organizationID, currency))
+	`, organizationID, code))
 	return account, false, err
 }
 
@@ -65,21 +66,21 @@ func (s *Store) GetCommercialAccount(ctx context.Context, accountID string) (pay
 	`, accountID))
 }
 
-func (s *Store) GetCommercialAccountByOrganization(ctx context.Context, organizationID string, currency payment.Currency) (payment.CommercialAccount, error) {
+func (s *Store) GetCommercialAccountByOrganization(ctx context.Context, organizationID string, code payment.Currency) (payment.CommercialAccount, error) {
 	if scope, ok := billingidentity.FromContext(ctx); ok {
-		if scope.OrganizationID != organizationID || currency != payment.CurrencyTWD {
+		if scope.OrganizationID != organizationID || !currency.CanSettle(code) {
 			return payment.CommercialAccount{}, billingidentity.ErrDenied
 		}
 		return s.GetCommercialAccount(ctx, scope.AccountID)
 	}
-	if !required(organizationID) || payment.ValidateCurrency(currency) != nil {
+	if !required(organizationID) || payment.ValidateCurrency(code) != nil {
 		return payment.CommercialAccount{}, ErrConflict
 	}
 	return scanAccount(s.db.QueryRow(ctx, `
 		SELECT `+accountColumns+`
 		FROM commercial_accounts
 		WHERE organization_id = $1 AND currency = $2
-	`, organizationID, currency))
+	`, organizationID, code))
 }
 
 func getAccountForUpdate(ctx context.Context, tx pgx.Tx, accountID string) (payment.CommercialAccount, error) {
