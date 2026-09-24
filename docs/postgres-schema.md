@@ -16,7 +16,7 @@ evidence-backed responsibility projection against the opaque Brand Cloud UUID.
 ## Current migration boundary
 
 A fresh database applies migrations through
-`060_twd_currency_policy_and_pricing_history.sql`. Existing databases must apply every forward
+`061_twd_currency_policy_and_pricing_history.sql`. Existing databases must apply every forward
 migration in order. Resetting staging is useful for recovery rehearsal but is
 not a substitute for forward migration verification and is never the production
 upgrade strategy.
