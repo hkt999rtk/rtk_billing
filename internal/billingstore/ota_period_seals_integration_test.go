@@ -208,4 +208,79 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	}); !errors.Is(err, ErrIncomplete) {
 		t.Fatalf("mismatched digest close error=%v, want incomplete", err)
 	}
+
+	// A historically OTA-granted Product can retain stored bytes after disable.
+	// Platform attests its historical grant; a zero-rounded storage fact still
+	// belongs to that Product and can close without a customer charge.
+	retiredOrg := testutil.OrganizationID(t.Name() + "/retired")
+	retiredAccount, _, err := paymentstore.New(db).EnsureCommercialAccount(ctx, retiredOrg, payment.CurrencyTWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiredFact := zeroStorageFact
+	retiredFact.OrganizationID = retiredOrg
+	retiredFact.UsageID = "ota-retired-storage"
+	if _, created, err := store.PutUsageFact(ctx, retiredFact); err != nil || !created {
+		t.Fatalf("retired Product storage fact: created=%v err=%v", created, err)
+	}
+	retiredPlatform := zeroPlatform
+	retiredPlatform.OrganizationID = retiredOrg
+	retiredPlatform.SealID = "99999999-9999-4999-8999-999999999999"
+	retiredProducer := zeroProducer
+	retiredProducer.OrganizationID = retiredOrg
+	retiredProducer.SealID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	retiredProducer.ProductIDs = []string{product}
+	retiredProducer.MetricCounts = map[string]int64{}
+	for _, metric := range otaMetricCodes {
+		retiredProducer.MetricCounts[metric] = 0
+	}
+	retiredProducer.MetricCounts[billing.MetricOTAArtifactStorageGiBMonth] = 1
+	retiredEntry, err := json.Marshal([]any{retiredFact.UsageID, product, retiredFact.MetricCode,
+		retiredFact.Quantity, retiredFact.QuantityScale, retiredFact.Unit,
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), retiredFact.SourceSHA256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiredHash := sha256.Sum256(append(append([]byte("["), retiredEntry...), ']'))
+	retiredDigest := hex.EncodeToString(retiredHash[:])
+	retiredProducer.FactSetSHA256 = &retiredDigest
+	for _, seal := range []OTAPeriodSeal{retiredPlatform, retiredProducer} {
+		if _, _, err := store.PutOTAPeriodSeal(ctx, seal); err != nil {
+			t.Fatal(err)
+		}
+	}
+	retiredInvoice, created, err := store.PrepareInvoice(ctx, PrepareInvoiceInput{
+		OrganizationID: retiredOrg, AccountID: retiredAccount.ID, Currency: billing.CurrencyTWD,
+		PeriodStart: start, PeriodEnd: end, Now: now,
+	})
+	if err != nil || !created || retiredInvoice.TotalMinor != 0 || len(retiredInvoice.Lines) != 1 ||
+		retiredInvoice.Lines[0].ProductID != product || retiredInvoice.Lines[0].Quantity != 0 {
+		t.Fatalf("retired Product storage close: created=%v invoice=%+v err=%v", created, retiredInvoice, err)
+	}
+
+	// Producer-only Products are not independent proof of an OTA grant.
+	rogueOrg := testutil.OrganizationID(t.Name() + "/rogue")
+	rogueAccount, _, err := paymentstore.New(db).EnsureCommercialAccount(ctx, rogueOrg, payment.CurrencyTWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roguePlatform := zeroPlatform
+	roguePlatform.OrganizationID = rogueOrg
+	roguePlatform.SealID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	roguePlatform.ProductIDs = []string{}
+	rogueProducer := zeroProducer
+	rogueProducer.OrganizationID = rogueOrg
+	rogueProducer.SealID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	rogueProducer.ProductIDs = []string{product}
+	for _, seal := range []OTAPeriodSeal{roguePlatform, rogueProducer} {
+		if _, _, err := store.PutOTAPeriodSeal(ctx, seal); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := store.PrepareInvoice(ctx, PrepareInvoiceInput{
+		OrganizationID: rogueOrg, AccountID: rogueAccount.ID, Currency: billing.CurrencyTWD,
+		PeriodStart: start, PeriodEnd: end, Now: now,
+	}); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("producer-only Product close error=%v, want incomplete", err)
+	}
 }

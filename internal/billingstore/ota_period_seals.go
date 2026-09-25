@@ -257,12 +257,19 @@ func (s *Store) verifyOTAPeriodSeals(ctx context.Context, orgID string, start, e
 	if !platformOK || !producerOK || producer.factSHA == nil {
 		return ErrIncomplete
 	}
-	expectedProducts := make(map[string]bool, len(platform.products)+len(producer.products))
+	// Platform independently certifies every Product with OTA grant history.
+	// The producer may include only Products from that historical set; Platform
+	// may also list zero-use or retired Products that emit no facts this month.
+	platformProducts := make(map[string]bool, len(platform.products))
 	for _, product := range platform.products {
-		expectedProducts[product] = true
+		platformProducts[product] = true
 	}
+	producerProducts := make(map[string]bool, len(producer.products))
 	for _, product := range producer.products {
-		expectedProducts[product] = true
+		if !platformProducts[product] {
+			return ErrIncomplete
+		}
+		producerProducts[product] = true
 	}
 	var overlapping bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM billing_usage_facts
@@ -296,7 +303,7 @@ func (s *Store) verifyOTAPeriodSeals(ctx context.Context, orgID string, start, e
 			usageRows.Close()
 			return err
 		}
-		if !expectedProducts[productID] || !billing.ValidOTAUsageFact(billing.UsageFact{ProductID: productID, ServiceCode: billing.ServiceOTA, MetricCode: metric, Quantity: quantity, QuantityScale: scale, Unit: unit, WindowStart: windowStart, WindowEnd: windowEnd}) {
+		if !producerProducts[productID] || !billing.ValidOTAUsageFact(billing.UsageFact{ProductID: productID, ServiceCode: billing.ServiceOTA, MetricCode: metric, Quantity: quantity, QuantityScale: scale, Unit: unit, WindowStart: windowStart, WindowEnd: windowEnd}) {
 			usageRows.Close()
 			return ErrIncomplete
 		}
