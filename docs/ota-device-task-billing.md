@@ -4,7 +4,7 @@ Status: draft target design; four-meter pricing is proposed, not activated.
 
 Owner: rtk_billing.
 
-Last reviewed: 2026-09-25.
+Last reviewed: 2026-09-26.
 
 Canonical contract:
 [Product OTA Delivery And Billing](../../rtk_cloud_contracts_doc/ota_delivery_and_billing.md).
@@ -35,8 +35,13 @@ The target has four `service_code=ota` meters:
 These are four separate customer items. The task is first durable assignment
 per campaign/device, whether the dispatcher or a poll created it. The
 successful-download item is the first accepted authenticated `downloaded`
-report for a deployment and exact artifact SHA/size; URL grants, failed
-transfers and Range retries do not charge. Object storage integrates actual
+report for a deployment and exact artifact SHA/size with a durable matching
+artifact grant. After Product OTA disable, the producer may accept an existing
+deployment's report only with its pre-disable matching grant and no later than
+48 hours after that URL's exclusive expiry; the fact belongs to the server
+acceptance month, even
+if that is later than disable. URL grants, failed transfers and Range retries
+do not charge. Object storage integrates actual
 physical bytes over the UTC month until verified deletion, even for revoked or
 disabled Products. Writes count successful object creations. OTA has no
 additional customer object-read or raw CDN-egress fee.
@@ -71,9 +76,12 @@ OTA receipts are not retroactively charged.
 The target `POST /v1/internal/billing/ota-period-seals` accepts two
 authenticated immutable seals for every organization/UTC month with OTA
 pricing: `platform_grants` from Account Manager and `ota_producer` from
-Video Cloud. The Platform seal enumerates Product grant history, including
-OTA-enabled Products with zero usage; the producer seal adds Products with
-stored OTA objects after disable. Billing requires the union and exact
+Video Cloud. The Platform seal enumerates every Product with any immutable
+OTA-enabled grant revision before `period_end`, including disabled, retired
+and zero-use Products. The producer seal includes Products with OTA facts or
+stored OTA objects during the month. Billing requires both producer and fact
+Product sets to be subsets of the Platform historical set; a producer-only
+Product with no OTA grant history fails close. Billing also requires exact
 reconciliation with immutable facts. Each seal has a stable global UUID,
 unique organization/period/issuer scope, source high-water, Product set,
 counts/digest, source digest and seal time. Same-content replay succeeds;
