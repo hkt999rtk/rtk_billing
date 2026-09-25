@@ -176,12 +176,25 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	zeroStorageFact := billing.UsageFact{UsageID: "ota-zero-storage", OrganizationID: badOrg, ProductID: product,
+		ServiceCode: billing.ServiceOTA, MetricCode: billing.MetricOTAArtifactStorageGiBMonth,
+		Quantity: 0, QuantityScale: 9, Unit: billing.UnitOTAGiBMonth,
+		WindowStart: start, WindowEnd: end, Source: "ota-producer", SourceSHA256: strings.Repeat("a", 64)}
+	if _, created, err := store.PutUsageFact(ctx, zeroStorageFact); err != nil || !created {
+		t.Fatalf("zero-rounded storage fact: created=%v err=%v", created, err)
+	}
 	badPlatform := zeroPlatform
 	badPlatform.OrganizationID = badOrg
 	badPlatform.SealID = "77777777-7777-4777-8777-777777777777"
 	badProducer := zeroProducer
 	badProducer.OrganizationID = badOrg
 	badProducer.SealID = "88888888-8888-4888-8888-888888888888"
+	badProducer.ProductIDs = []string{product}
+	badProducer.MetricCounts = map[string]int64{}
+	for _, metric := range otaMetricCodes {
+		badProducer.MetricCounts[metric] = 0
+	}
+	badProducer.MetricCounts[billing.MetricOTAArtifactStorageGiBMonth] = 1
 	badDigest := strings.Repeat("f", 64)
 	badProducer.FactSetSHA256 = &badDigest
 	for _, seal := range []OTAPeriodSeal{badPlatform, badProducer} {

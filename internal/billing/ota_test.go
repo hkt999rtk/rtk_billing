@@ -48,9 +48,21 @@ func TestOTAUsageFactRejectsMissingProductAndWrongMetricPrecision(t *testing.T) 
 	if !ValidOTAUsageFact(valid) {
 		t.Fatal("valid storage fact rejected")
 	}
+	zeroStorage := valid
+	zeroStorage.Quantity = 0
+	if !ValidOTAUsageFact(zeroStorage) {
+		t.Fatal("zero-rounded Product/month storage fact rejected")
+	}
+	zeroDownload := valid
+	zeroDownload.MetricCode = MetricOTASuccessfulDownloadGiB
+	zeroDownload.Unit = UnitOTAGiB
+	zeroDownload.Quantity = 0
+	if ValidOTAUsageFact(zeroDownload) {
+		t.Fatal("zero-sized download fact accepted")
+	}
 	for _, change := range []func(*UsageFact){
 		func(f *UsageFact) { f.ProductID = "" },
-		func(f *UsageFact) { f.Quantity = 0 },
+		func(f *UsageFact) { f.Quantity = -1 },
 		func(f *UsageFact) { f.MetricCode = "object_read" },
 		func(f *UsageFact) { f.Unit = "bytes" },
 		func(f *UsageFact) { f.QuantityScale = 0 },

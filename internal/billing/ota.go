@@ -23,14 +23,14 @@ func ValidOTAUsageFact(fact UsageFact) bool {
 	if fact.ServiceCode != ServiceOTA {
 		return true
 	}
-	if fact.ProductID == "" || fact.Quantity <= 0 {
+	if fact.ProductID == "" || fact.Quantity < 0 {
 		return false
 	}
 	switch fact.MetricCode {
 	case MetricOTADeviceTask:
 		return fact.Unit == UnitOTADeviceTask && fact.QuantityScale == 0 && fact.Quantity == 1
 	case MetricOTASuccessfulDownloadGiB:
-		return fact.Unit == UnitOTAGiB && fact.QuantityScale == otaFractionalQuantityScale
+		return fact.Unit == UnitOTAGiB && fact.QuantityScale == otaFractionalQuantityScale && fact.Quantity > 0
 	case MetricOTAArtifactStorageGiBMonth:
 		start := fact.WindowStart.UTC()
 		end := fact.WindowEnd.UTC()
