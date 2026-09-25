@@ -37,12 +37,12 @@ per campaign/device, whether the dispatcher or a poll created it. The
 successful-download item is the first accepted authenticated `downloaded`
 report for a deployment and exact artifact SHA/size with a durable matching
 artifact grant. After Product OTA disable, the producer may accept an existing
-deployment's report only with its pre-disable matching grant and no later than
-48 hours after that URL's exclusive expiry; the fact belongs to the server
-acceptance month, even
-if that is later than disable. URL grants, failed transfers and Range retries
-do not charge. Object storage integrates actual
-physical bytes over the UTC month until verified deletion, even for revoked or
+deployment's report only with its previously issued matching grant that passed
+an enabled Product-grant check at issuance, and no later than 48 hours after
+that URL's exclusive expiry. The fact belongs to the server acceptance month,
+even if that is later than disable. URL grants, failed transfers and Range
+retries do not charge. Object storage integrates actual physical bytes over
+the UTC month until verified deletion, even for revoked or
 disabled Products. Writes count successful object creations. OTA has no
 additional customer object-read or raw CDN-egress fee.
 
