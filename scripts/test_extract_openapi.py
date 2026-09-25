@@ -50,6 +50,9 @@ class ExtractOpenAPITests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(imported["paths"][path][method]["security"], [{scheme: []}])
+        ota_seal_security = [{"billingOTAPlatformSealAuth": []}, {"billingOTAProducerSealAuth": []}]
+        self.assertEqual(imported["paths"]["/v1/internal/billing/ota-period-seals"]["post"]["security"], ota_seal_security)
+        self.assertEqual(checked_in["paths"]["/v1/internal/billing/ota-period-seals"]["post"]["security"], ota_seal_security)
         for suffix in ("billing/usage", "billing/invoices", "billing/invoices/{invoiceId}",
                        "billing/invoices/{invoiceId}/pdf", "billing/activity", "billing/ledger",
                        "billing/statements", "payment-methods", "payment-intents"):

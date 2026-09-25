@@ -115,6 +115,8 @@ def main() -> None:
                 "/ownership-handoffs/" in path or "/closures/" in path or path.endswith("/deletion-preflight")
             ):
                 operation["security"] = [{"billingHandoffAuth": []}]
+            elif path == "/v1/internal/billing/ota-period-seals":
+                operation["security"] = [{"billingOTAPlatformSealAuth": []}, {"billingOTAProducerSealAuth": []}]
             elif path.startswith("/v1/internal/billing/"):
                 operation["security"] = [{"billingInternalAuth": []}]
             else:
@@ -141,6 +143,14 @@ def main() -> None:
         "billingInternalAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "internal-service-token",
             "description": "Dedicated trusted usage, pricing, period-close, and access-control credential.",
+        },
+        "billingOTAPlatformSealAuth": {
+            "type": "http", "scheme": "bearer", "bearerFormat": "ota-platform-seal-token",
+            "description": "Dedicated Account Manager Platform-grant history credential, distinct from Billing internal and OTA producer credentials.",
+        },
+        "billingOTAProducerSealAuth": {
+            "type": "http", "scheme": "bearer", "bearerFormat": "ota-producer-seal-token",
+            "description": "Dedicated OTA source completeness credential, distinct from Billing internal and Platform credentials.",
         },
         "billingDebitAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "debit-source-token",
