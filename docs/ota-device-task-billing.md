@@ -13,17 +13,19 @@ period, and invoice boundaries. It does not override the contract.
 
 ## Current Source And Gap
 
-`internal/billing/types.go` already defines an immutable Product-scoped
+`internal/billing/types.go` defines an immutable Product-scoped
 `UsageFact` with `quantity_scale`. `internal/billing/invoice.go` groups facts
 by Product and meter; `internal/billing/money.go` uses checked integer
 arithmetic and rounds after aggregation. `internal/billingstore/pricing.go`
-stores immutable facts and versioned rates. The preliminary
-`internal/billing/ota.go` defines only `device_task` at a proposed rate.
-The current close path in `internal/billingservice/service.go` does not
-prove OTA source completeness. These are local source observations, not live
-metering or invoice evidence.
+stores immutable facts and versioned rates. `internal/billing/ota.go`
+validates all four OTA meter contracts and defines unactivated proposed rates.
+`internal/billingstore/ota_period_seals.go` accepts independent immutable
+Platform and producer seals; `internal/billingstore/invoices.go` verifies
+their Product sets, counts and fact digest before closing a priced OTA month.
+These are tested local source capabilities, not live source collection,
+staging CDN, invoice evidence or activated customer charging.
 
-The target has four `service_code=ota` meters:
+The four `service_code=ota` meters are:
 
 | Metric | Unit | Quantity scale | Proposed TWD rate before tax |
 | --- | --- | ---: | ---: |
