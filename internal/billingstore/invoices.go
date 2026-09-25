@@ -122,9 +122,20 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	if err != nil {
 		return billing.Invoice{}, false, err
 	}
-	if len(facts) == 0 && !otaSealsVerified {
-		_ = s.markPeriodIncomplete(ctx, periodID, "usage_missing", in.Now)
-		return billing.Invoice{}, false, ErrIncomplete
+	if len(facts) == 0 {
+		// OTA seals prove only OTA source completeness. Mixed pricing retains
+		// the existing nonempty usage-fact requirement before closing.
+		completeEmptyOTAMonth := otaSealsVerified
+		for _, rate := range pricing.Rates {
+			if rate.ServiceCode != billing.ServiceOTA {
+				completeEmptyOTAMonth = false
+				break
+			}
+		}
+		if !completeEmptyOTAMonth {
+			_ = s.markPeriodIncomplete(ctx, periodID, "usage_missing", in.Now)
+			return billing.Invoice{}, false, ErrIncomplete
+		}
 	}
 	profile, _, err := s.EnsureBillingProfile(ctx, in.OrganizationID, in.Now)
 	if err != nil {

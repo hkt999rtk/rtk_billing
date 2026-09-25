@@ -143,8 +143,8 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 		t.Fatalf("late OTA fact accepted: %v", err)
 	}
 
-	// Explicit zero-use seals permit a zero-total close, including a Product
-	// that had an OTA grant but emitted no usage fact.
+	// Under OTA-only pricing, explicit zero-use seals permit a zero-total close,
+	// including a Product that had an OTA grant but emitted no usage fact.
 	zeroOrg := testutil.OrganizationID(t.Name() + "/zero")
 	zeroAccount, _, err := paymentstore.New(db).EnsureCommercialAccount(ctx, zeroOrg, payment.CurrencyTWD)
 	if err != nil {

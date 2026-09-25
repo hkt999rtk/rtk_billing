@@ -100,8 +100,11 @@ the complete serialization and high-water rules.
 Closing with missing seals, outbox gaps, mismatched Product set, unknown
 object ownership, or unreviewed CDN anomalies returns an auditable
 `incomplete` result before invoice issuance. An empty fact set is not
-proof of complete collection. A fact after a closed period requires the
-approved adjustment/credit path; it cannot mutate an issued invoice.
+proof of complete collection. Verified empty seals permit a zero-use close
+only when the active pricing version contains OTA rates exclusively. A mixed
+pricing version retains the nonempty usage-fact requirement because OTA
+seals do not attest its other services. A fact after a closed period requires
+the approved adjustment/credit path; it cannot mutate an issued invoice.
 
 ## Verification Gate
 
