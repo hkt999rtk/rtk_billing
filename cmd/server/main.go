@@ -81,6 +81,13 @@ func main() {
 		}
 	}
 	billingStore := billingstore.New(db)
+	if cfg.OTAPlatformSealToken != "" {
+		if err := server.ConfigureOTAPeriodSeals(api.OTAPeriodSealAPIOptions{
+			PlatformToken: cfg.OTAPlatformSealToken, ProducerToken: cfg.OTAProducerSealToken, Store: billingStore,
+		}); err != nil {
+			log.Fatal(err)
+		}
+	}
 	billingService, err := billingservice.New(billingservice.Options{Store: billingStore, PaymentStore: paymentStore})
 	if err != nil {
 		log.Fatal(err)

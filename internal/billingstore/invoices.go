@@ -104,13 +104,38 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		_ = s.markPeriodIncomplete(ctx, periodID, "pricing_unavailable", in.Now)
 		return billing.Invoice{}, false, err
 	}
+	otaSealsVerified := false
+	if enabled, complete := otaPricingComplete(pricing.Rates); enabled {
+		if !complete {
+			_ = s.markPeriodIncomplete(ctx, periodID, "ota_pricing_incomplete", in.Now)
+			return billing.Invoice{}, false, ErrPricingUnavailable
+		}
+		if err := s.verifyOTAPeriodSeals(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd); err != nil {
+			if errors.Is(err, ErrIncomplete) {
+				_ = s.markPeriodIncomplete(ctx, periodID, "ota_source_incomplete", in.Now)
+			}
+			return billing.Invoice{}, false, err
+		}
+		otaSealsVerified = true
+	}
 	facts, err := s.ListUsageFacts(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd)
 	if err != nil {
 		return billing.Invoice{}, false, err
 	}
 	if len(facts) == 0 {
-		_ = s.markPeriodIncomplete(ctx, periodID, "usage_missing", in.Now)
-		return billing.Invoice{}, false, ErrIncomplete
+		// OTA seals prove only OTA source completeness. Mixed pricing retains
+		// the existing nonempty usage-fact requirement before closing.
+		completeEmptyOTAMonth := otaSealsVerified
+		for _, rate := range pricing.Rates {
+			if rate.ServiceCode != billing.ServiceOTA {
+				completeEmptyOTAMonth = false
+				break
+			}
+		}
+		if !completeEmptyOTAMonth {
+			_ = s.markPeriodIncomplete(ctx, periodID, "usage_missing", in.Now)
+			return billing.Invoice{}, false, ErrIncomplete
+		}
 	}
 	profile, _, err := s.EnsureBillingProfile(ctx, in.OrganizationID, in.Now)
 	if err != nil {

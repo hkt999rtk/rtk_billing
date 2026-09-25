@@ -254,6 +254,9 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		fact.ProductID = product.String()
 	}
 	fact.SourceSHA256 = strings.ToLower(fact.SourceSHA256)
+	if !billing.ValidOTAUsageFact(fact) {
+		return billing.UsageFact{}, false, ErrConflict
+	}
 	fact.WindowStart = fact.WindowStart.UTC().Truncate(time.Microsecond)
 	fact.WindowEnd = fact.WindowEnd.UTC().Truncate(time.Microsecond)
 	if fact.WindowStart.IsZero() || !fact.WindowEnd.After(fact.WindowStart) {

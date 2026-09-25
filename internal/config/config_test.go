@@ -12,6 +12,8 @@ func setValidEnvironment(t *testing.T) {
 	t.Setenv("BILLING_SERVICE_TOKEN", strings.Repeat("s", 32))
 	t.Setenv("BILLING_INTERNAL_TOKEN", strings.Repeat("i", 32))
 	t.Setenv("BILLING_HANDOFF_TOKEN", "")
+	t.Setenv("BILLING_OTA_PLATFORM_SEAL_TOKEN", "")
+	t.Setenv("BILLING_OTA_PRODUCER_SEAL_TOKEN", "")
 	t.Setenv("BILLING_DEBIT_TOKEN", strings.Repeat("d", 32))
 	t.Setenv("BILLING_DEBIT_SOURCE", "pricing-service")
 	t.Setenv("ENVIRONMENT", "staging")
@@ -106,6 +108,26 @@ func TestValidateSimulatorEnvironmentRejectsUnknownValues(t *testing.T) {
 	for _, environment := range []string{"", "production", "prod", "qa"} {
 		if err := ValidateSimulatorEnvironment(environment); err == nil {
 			t.Fatalf("environment %q passed", environment)
+		}
+	}
+}
+
+func TestOTAPeriodSealCredentialsRequireTwoDistinctSources(t *testing.T) {
+	setValidEnvironment(t)
+	platform := strings.Repeat("p", 32)
+	producer := strings.Repeat("o", 32)
+	t.Setenv("BILLING_OTA_PLATFORM_SEAL_TOKEN", platform)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "configured together") {
+		t.Fatalf("missing producer credential accepted: %v", err)
+	}
+	t.Setenv("BILLING_OTA_PRODUCER_SEAL_TOKEN", producer)
+	if cfg, err := Load(); err != nil || cfg.OTAPlatformSealToken != platform || cfg.OTAProducerSealToken != producer {
+		t.Fatalf("distinct OTA credentials rejected: %+v %v", cfg, err)
+	}
+	for _, reused := range []string{platform, strings.Repeat("s", 32), strings.Repeat("i", 32)} {
+		t.Setenv("BILLING_OTA_PRODUCER_SEAL_TOKEN", reused)
+		if _, err := Load(); err == nil {
+			t.Fatalf("reused OTA credential %q accepted", reused)
 		}
 	}
 }
