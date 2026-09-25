@@ -28,9 +28,9 @@ func ValidOTAUsageFact(fact UsageFact) bool {
 	}
 	switch fact.MetricCode {
 	case MetricOTADeviceTask:
-		return fact.Unit == UnitOTADeviceTask && fact.QuantityScale == 0 && fact.Quantity == 1
+		return fact.Unit == UnitOTADeviceTask && fact.QuantityScale == 0 && fact.Quantity == 1 && otaUTCMinuteWindow(fact)
 	case MetricOTASuccessfulDownloadGiB:
-		return fact.Unit == UnitOTAGiB && fact.QuantityScale == otaFractionalQuantityScale && fact.Quantity > 0
+		return fact.Unit == UnitOTAGiB && fact.QuantityScale == otaFractionalQuantityScale && fact.Quantity > 0 && otaUTCMinuteWindow(fact)
 	case MetricOTAArtifactStorageGiBMonth:
 		start := fact.WindowStart.UTC()
 		end := fact.WindowEnd.UTC()
@@ -38,10 +38,16 @@ func ValidOTAUsageFact(fact UsageFact) bool {
 		return fact.Unit == UnitOTAGiBMonth && fact.QuantityScale == otaFractionalQuantityScale &&
 			start.Equal(monthStart) && end.Equal(monthStart.AddDate(0, 1, 0))
 	case MetricOTAArtifactWrite:
-		return fact.Unit == UnitOTAArtifactWrite && fact.QuantityScale == 0 && fact.Quantity == 1
+		return fact.Unit == UnitOTAArtifactWrite && fact.QuantityScale == 0 && fact.Quantity == 1 && otaUTCMinuteWindow(fact)
 	default:
 		return false
 	}
+}
+
+func otaUTCMinuteWindow(fact UsageFact) bool {
+	start := fact.WindowStart.UTC()
+	return !start.IsZero() && start.Equal(start.Truncate(time.Minute)) &&
+		fact.WindowEnd.UTC().Equal(start.Add(time.Minute))
 }
 
 // ProposedOTARates returns unactivated TWD planning rates before tax. The

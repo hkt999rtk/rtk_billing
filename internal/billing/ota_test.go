@@ -21,10 +21,10 @@ func TestProposedOTARatesProduceFourProductLines(t *testing.T) {
 	end := start.AddDate(0, 1, 0)
 	rates := ProposedOTARates()
 	facts := []UsageFact{
-		{UsageID: "task", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTADeviceTask, Quantity: 1, Unit: UnitOTADeviceTask, WindowStart: start, WindowEnd: start.Add(time.Microsecond)},
-		{UsageID: "download", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTASuccessfulDownloadGiB, Quantity: 100_000_000_000, QuantityScale: 9, Unit: UnitOTAGiB, WindowStart: start, WindowEnd: start.Add(time.Microsecond)},
+		{UsageID: "task", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTADeviceTask, Quantity: 1, Unit: UnitOTADeviceTask, WindowStart: start, WindowEnd: start.Add(time.Minute)},
+		{UsageID: "download", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTASuccessfulDownloadGiB, Quantity: 100_000_000_000, QuantityScale: 9, Unit: UnitOTAGiB, WindowStart: start, WindowEnd: start.Add(time.Minute)},
 		{UsageID: "storage", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTAArtifactStorageGiBMonth, Quantity: 100_000_000_000, QuantityScale: 9, Unit: UnitOTAGiBMonth, WindowStart: start, WindowEnd: end},
-		{UsageID: "write", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTAArtifactWrite, Quantity: 1, Unit: UnitOTAArtifactWrite, WindowStart: start, WindowEnd: start.Add(time.Microsecond)},
+		{UsageID: "write", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTAArtifactWrite, Quantity: 1, Unit: UnitOTAArtifactWrite, WindowStart: start, WindowEnd: start.Add(time.Minute)},
 	}
 	for _, fact := range facts {
 		if !ValidOTAUsageFact(fact) {
@@ -73,5 +73,46 @@ func TestOTAUsageFactRejectsMissingProductAndWrongMetricPrecision(t *testing.T) 
 		if ValidOTAUsageFact(invalid) {
 			t.Fatalf("invalid OTA fact accepted: %+v", invalid)
 		}
+	}
+}
+
+func TestOTAInstantFactsRequireExactlyOneAlignedUTCMinute(t *testing.T) {
+	start := time.Date(2026, 9, 30, 23, 59, 0, 0, time.UTC)
+	local := time.FixedZone("Taipei", 8*60*60)
+	for _, metric := range []struct {
+		code, unit string
+		quantity   int64
+		scale      int
+	}{
+		{MetricOTADeviceTask, UnitOTADeviceTask, 1, 0},
+		{MetricOTASuccessfulDownloadGiB, UnitOTAGiB, 1, otaFractionalQuantityScale},
+		{MetricOTAArtifactWrite, UnitOTAArtifactWrite, 1, 0},
+	} {
+		t.Run(metric.code, func(t *testing.T) {
+			valid := UsageFact{ProductID: "product", ServiceCode: ServiceOTA, MetricCode: metric.code,
+				Quantity: metric.quantity, QuantityScale: metric.scale, Unit: metric.unit,
+				WindowStart: start.In(local), WindowEnd: start.Add(time.Minute).In(local)}
+			if !ValidOTAUsageFact(valid) {
+				t.Fatal("equivalent non-UTC location rejected")
+			}
+			for _, test := range []struct {
+				name  string
+				start time.Time
+				end   time.Time
+			}{
+				{"two minutes", start, start.Add(2 * time.Minute)},
+				{"unaligned start", start.Add(time.Second), start.Add(time.Minute + time.Second)},
+				{"wrong end", start, start.Add(time.Minute - time.Second)},
+				{"submicrosecond start", start.Add(time.Nanosecond), start.Add(time.Minute + time.Nanosecond)},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					invalid := valid
+					invalid.WindowStart, invalid.WindowEnd = test.start, test.end
+					if ValidOTAUsageFact(invalid) {
+						t.Fatalf("invalid OTA minute accepted: %s to %s", test.start, test.end)
+					}
+				})
+			}
+		})
 	}
 }
