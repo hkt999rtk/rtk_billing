@@ -18,6 +18,8 @@ type Config struct {
 	CloudCreationToken            string
 	BillingDebitToken             string
 	BillingDebitSource            string
+	OTAPlatformSealToken          string
+	OTAProducerSealToken          string
 	PaymentReferenceEncryptionKey string
 	SimulatorEnabled              bool
 	SimulatorBaseURL              string
@@ -45,6 +47,8 @@ func Load() (Config, error) {
 		CloudCreationToken:            strings.TrimSpace(os.Getenv("BILLING_CLOUD_CREATION_TOKEN")),
 		BillingDebitToken:             strings.TrimSpace(os.Getenv("BILLING_DEBIT_TOKEN")),
 		BillingDebitSource:            strings.TrimSpace(os.Getenv("BILLING_DEBIT_SOURCE")),
+		OTAPlatformSealToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_PLATFORM_SEAL_TOKEN")),
+		OTAProducerSealToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_PRODUCER_SEAL_TOKEN")),
 		PaymentReferenceEncryptionKey: strings.TrimSpace(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY")),
 		SimulatorEnabled:              strings.EqualFold(env("PAYMENT_SIMULATOR_ENABLED", "false"), "true"),
 		SimulatorBaseURL:              strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_BASE_URL")),
@@ -87,6 +91,18 @@ func Load() (Config, error) {
 	}
 	if cfg.BillingDebitToken != "" && len(cfg.BillingDebitToken) < 32 {
 		return Config{}, errors.New("BILLING_DEBIT_TOKEN must contain at least 32 characters")
+	}
+	if (cfg.OTAPlatformSealToken == "") != (cfg.OTAProducerSealToken == "") {
+		return Config{}, errors.New("both OTA period seal credentials must be configured together")
+	}
+	if cfg.OTAPlatformSealToken != "" {
+		if len(cfg.OTAPlatformSealToken) < 32 || len(cfg.OTAProducerSealToken) < 32 ||
+			strings.ContainsAny(cfg.OTAPlatformSealToken, " \t\r\n") || strings.ContainsAny(cfg.OTAProducerSealToken, " \t\r\n") ||
+			credentialReuse(cfg.OTAPlatformSealToken, cfg.OTAProducerSealToken, cfg.ServiceToken, cfg.InternalToken,
+				cfg.HandoffToken, cfg.CloudCreationToken, cfg.BillingDebitToken, cfg.SimulatorSharedSecret,
+				cfg.SimulatorCallbackSecret, cfg.NewebPayHashKey, cfg.PaymentReferenceEncryptionKey) {
+			return Config{}, errors.New("OTA period seal credentials must be distinct 32+ character service secrets")
+		}
 	}
 	if cfg.SimulatorEnabled {
 		if err := ValidateSimulatorEnvironment(cfg.Environment); err != nil {

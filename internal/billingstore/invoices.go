@@ -104,11 +104,25 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		_ = s.markPeriodIncomplete(ctx, periodID, "pricing_unavailable", in.Now)
 		return billing.Invoice{}, false, err
 	}
+	otaSealsVerified := false
+	if enabled, complete := otaPricingComplete(pricing.Rates); enabled {
+		if !complete {
+			_ = s.markPeriodIncomplete(ctx, periodID, "ota_pricing_incomplete", in.Now)
+			return billing.Invoice{}, false, ErrPricingUnavailable
+		}
+		if err := s.verifyOTAPeriodSeals(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd); err != nil {
+			if errors.Is(err, ErrIncomplete) {
+				_ = s.markPeriodIncomplete(ctx, periodID, "ota_source_incomplete", in.Now)
+			}
+			return billing.Invoice{}, false, err
+		}
+		otaSealsVerified = true
+	}
 	facts, err := s.ListUsageFacts(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd)
 	if err != nil {
 		return billing.Invoice{}, false, err
 	}
-	if len(facts) == 0 {
+	if len(facts) == 0 && !otaSealsVerified {
 		_ = s.markPeriodIncomplete(ctx, periodID, "usage_missing", in.Now)
 		return billing.Invoice{}, false, ErrIncomplete
 	}

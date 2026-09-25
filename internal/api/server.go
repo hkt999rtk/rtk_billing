@@ -39,6 +39,7 @@ type Server struct {
 	billing            *billingRuntime
 	handoff            *handoffRuntime
 	cloudCreationToken string
+	otaSealConfigured  bool
 }
 
 type Options struct {

@@ -259,6 +259,9 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 	if fact.WindowStart.IsZero() || !fact.WindowEnd.After(fact.WindowStart) {
 		return billing.UsageFact{}, false, ErrConflict
 	}
+	if !billing.ValidOTAUsageFact(fact) {
+		return billing.UsageFact{}, false, ErrConflict
+	}
 	if stored, err := s.GetUsageFact(ctx, fact.UsageID); err == nil {
 		if !sameUsageFact(stored, fact) {
 			return billing.UsageFact{}, false, ErrConflict

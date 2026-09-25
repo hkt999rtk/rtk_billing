@@ -522,6 +522,51 @@ paths:
       - REQ-AM-INVOICE-LIFECYCLE-001
       - REQ-AM-INVOICE-ARITHMETIC-001
       - REQ-BILL-USAGE-DELIVERY-001
+  /v1/internal/billing/ota-period-seals:
+    post:
+      tags:
+      - Internal Billing
+      summary: Store an immutable Platform or OTA producer UTC-month completeness seal
+      description: >-
+        Requires the dedicated credential for the declared issuer_kind. Exact
+        replays return 200; a changed seal for the same issuer/period or seal ID
+        returns 409. The Platform seal contains grant-history Product IDs and no
+        fact digest. The producer seal contains all four metric counts and an
+        ordered digest of the matching immutable Billing facts. Both issuers
+        must submit an explicit empty seal for a zero-usage month.
+      operationId: putBillingOTAPeriodSeal
+      security:
+      - billingOTAPlatformSealAuth: []
+      - billingOTAProducerSealAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTAPeriodSeal'
+      responses:
+        '200':
+          description: Existing identical seal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OTAPeriodSealResponse' }
+        '201':
+          description: Period seal created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OTAPeriodSealResponse' }
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-INVOICE-LIFECYCLE-001
+      - REQ-BILL-USAGE-DELIVERY-001
   /v1/internal/billing/periods/close:
     post:
       tags:
@@ -536,7 +581,11 @@ paths:
         Retrying an incomplete period reacquires this fence. Concurrent usage
         either commits before the read or is rejected as INVOICE_IMMUTABLE;
         concurrent closes return one immutable invoice. This local transaction
-        does not certify completeness of upstream usage delivery.
+        does not certify completeness of other upstream usage delivery. When
+        the active pricing version has OTA rates, a complete four-rate set,
+        exact UTC month, both authenticated OTA source seals and a matching
+        Billing fact digest are required; missing evidence leaves the period
+        incomplete and cannot issue an invoice.
       operationId: closeBillingPeriod
       security:
       - billingInternalAuth: []
@@ -1541,12 +1590,54 @@ components:
       scheme: bearer
       bearerFormat: internal-service-token
       description: Dedicated trusted usage, pricing, period-close, and access-control credential.
+    billingOTAPlatformSealAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ota-platform-seal-token
+      description: Dedicated Account Manager Platform-grant history credential, distinct from Billing internal and OTA producer credentials.
+    billingOTAProducerSealAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ota-producer-seal-token
+      description: Dedicated OTA source completeness credential, distinct from Billing internal and Platform credentials.
     billingDebitAuth:
       type: http
       scheme: bearer
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    OTAPeriodSealResponse:
+      type: object
+      additionalProperties: false
+      required: [ota_period_seal, duplicate]
+      properties:
+        ota_period_seal: { $ref: '#/components/schemas/OTAPeriodSeal' }
+        duplicate: { type: boolean }
+    OTAPeriodSeal:
+      type: object
+      additionalProperties: false
+      required: [organization_id, period_start, period_end, issuer_kind, seal_id, source_high_water, product_ids, metric_counts, source_sha256, sealed_at]
+      properties:
+        organization_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time, description: UTC first day of month at 00:00:00 }
+        period_end: { type: string, format: date-time, description: Exclusive first day of next UTC month }
+        issuer_kind: { type: string, enum: [platform_grants, ota_producer] }
+        seal_id: { type: string, format: uuid }
+        source_high_water: { description: Nonempty source-owned JSON marker bound by the source digest }
+        product_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: Canonical sorted unique Product IDs, including zero-usage Products.
+        metric_counts:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+          description: Platform sends an empty object; producer sends all four OTA metric fact counts, including zeros.
+        fact_set_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Producer only. SHA-256 of sorted canonical OTA Billing fact tuples for this organization and UTC month.
+        source_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        sealed_at: { type: string, format: date-time }
     CloudCreationFields:
       type: object
       required: [event_id, cloud_id, owner_user_id, ownership_version, occurred_at, evidence_sha256]
