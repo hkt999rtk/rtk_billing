@@ -107,3 +107,67 @@ func TestUsageReplayBindsEveryFieldRatherThanTrustingSourceHash(t *testing.T) {
 		t.Fatal("collapsed timestamp window", err)
 	}
 }
+
+func TestOTAUsageFactPreservesOriginalProductGrantEvidence(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := database.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	testutil.LockIntegrationDatabase(t, db)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	s := New(db)
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	grant := &billing.OTAGrantEvidence{ProductServiceRevision: 3,
+		ServiceGrantSHA256: strings.Repeat("a", 64), AuthorizedAt: start.Add(-time.Hour)}
+	fact := billing.UsageFact{UsageID: "ota-grant-" + testutil.OrganizationID(t.Name()),
+		OrganizationID: testutil.OrganizationID("ota-grant-org-" + t.Name()),
+		ProductID:      testutil.OrganizationID("ota-grant-product-" + t.Name()),
+		ServiceCode:    billing.ServiceOTA, MetricCode: billing.MetricOTADeviceTask,
+		Quantity: 1, Unit: billing.UnitOTADeviceTask,
+		WindowStart: start, WindowEnd: start.Add(time.Minute),
+		Source: "ota-producer", SourceSHA256: strings.Repeat("b", 64), OTAGrant: grant}
+	stored, created, err := s.PutUsageFact(ctx, fact)
+	if err != nil || !created || !sameOTAGrant(stored.OTAGrant, grant) {
+		t.Fatalf("stored OTA grant: %+v created=%v err=%v", stored, created, err)
+	}
+	listed, err := s.ListUsageFacts(ctx, fact.OrganizationID, start, start.Add(time.Minute))
+	if err != nil || len(listed) != 1 || !sameOTAGrant(listed[0].OTAGrant, grant) {
+		t.Fatalf("listed OTA grant: %+v err=%v", listed, err)
+	}
+	if _, duplicate, err := s.PutUsageFact(ctx, fact); err != nil || duplicate {
+		t.Fatalf("exact OTA replay: duplicate=%v err=%v", duplicate, err)
+	}
+	for name, change := range map[string]func(*billing.OTAGrantEvidence){
+		"revision": func(g *billing.OTAGrantEvidence) { g.ProductServiceRevision++ },
+		"digest":   func(g *billing.OTAGrantEvidence) { g.ServiceGrantSHA256 = strings.Repeat("c", 64) },
+		"time":     func(g *billing.OTAGrantEvidence) { g.AuthorizedAt = g.AuthorizedAt.Add(time.Second) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := fact
+			copyGrant := *grant
+			change(&copyGrant)
+			changed.OTAGrant = &copyGrant
+			if _, _, err := s.PutUsageFact(ctx, changed); !errors.Is(err, ErrConflict) {
+				t.Fatalf("changed OTA grant was accepted: %v", err)
+			}
+		})
+	}
+	if _, err := db.Exec(ctx, `UPDATE billing_usage_facts SET ota_grant_revision=4 WHERE usage_id=$1`, fact.UsageID); err == nil {
+		t.Fatal("stored OTA grant was mutable")
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO billing_usage_facts
+		(usage_id,organization_id,product_id,service_code,metric_code,quantity,quantity_scale,unit,
+		 window_start,window_end,source,source_sha256,ota_grant_revision)
+		VALUES($1,$2,$3,'ota','device_task',1,0,'tasks',$4,$5,'ota-producer',$6,3)`,
+		fact.UsageID+"-partial", fact.OrganizationID, fact.ProductID, start, start.Add(time.Minute), fact.SourceSHA256); err == nil {
+		t.Fatal("database accepted a partial OTA grant witness")
+	}
+}

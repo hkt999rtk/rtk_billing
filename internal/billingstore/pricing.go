@@ -2,6 +2,7 @@ package billingstore
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -358,6 +359,23 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 	if !billing.ValidOTAUsageFact(fact) {
 		return billing.UsageFact{}, false, ErrConflict
 	}
+	if fact.OTAGrant != nil {
+		grant := *fact.OTAGrant
+		if fact.ServiceCode != billing.ServiceOTA ||
+			fact.MetricCode != billing.MetricOTADeviceTask &&
+				fact.MetricCode != billing.MetricOTASuccessfulDownloadGiB &&
+				fact.MetricCode != billing.MetricOTAArtifactWrite ||
+			grant.ProductServiceRevision < 1 || len(grant.ServiceGrantSHA256) != 64 ||
+			strings.ToLower(grant.ServiceGrantSHA256) != grant.ServiceGrantSHA256 ||
+			grant.AuthorizedAt.IsZero() {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		if _, err := hex.DecodeString(grant.ServiceGrantSHA256); err != nil {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		grant.AuthorizedAt = grant.AuthorizedAt.UTC().Truncate(time.Microsecond)
+		fact.OTAGrant = &grant
+	}
 	fact.WindowStart = fact.WindowStart.UTC().Truncate(time.Microsecond)
 	fact.WindowEnd = fact.WindowEnd.UTC().Truncate(time.Microsecond)
 	if fact.WindowStart.IsZero() || !fact.WindowEnd.After(fact.WindowStart) {
@@ -385,14 +403,22 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		return billing.UsageFact{}, false, ErrInvoiceImmutable
 	}
 	var id string
+	var grantRevision, grantSHA, grantAuthorizedAt any
+	if fact.OTAGrant != nil {
+		grantRevision = fact.OTAGrant.ProductServiceRevision
+		grantSHA = fact.OTAGrant.ServiceGrantSHA256
+		grantAuthorizedAt = fact.OTAGrant.AuthorizedAt
+	}
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO billing_usage_facts (usage_id, organization_id, service_code, metric_code, quantity,
-		    quantity_scale, unit, window_start, window_end, source, source_sha256, product_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid)
+		    quantity_scale, unit, window_start, window_end, source, source_sha256, product_id,
+		    ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid,$13,$14,$15)
 		ON CONFLICT (usage_id) DO NOTHING
 		RETURNING id::text
 	`, fact.UsageID, fact.OrganizationID, fact.ServiceCode, fact.MetricCode, fact.Quantity, fact.QuantityScale,
-		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256), fact.ProductID).Scan(&id)
+		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256), fact.ProductID,
+		grantRevision, grantSHA, grantAuthorizedAt).Scan(&id)
 	created := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		var constraint *pgconn.PgError
@@ -422,12 +448,21 @@ func (s *Store) GetUsageFact(ctx context.Context, usageID string) (billing.Usage
 		visibility = "organization_id=$2 AND " + usageVisibility(ctx, &args)
 	}
 	var out billing.UsageFact
+	var grantRevision sql.NullInt64
+	var grantSHA sql.NullString
+	var grantAuthorizedAt sql.NullTime
 	err := s.db.QueryRow(ctx, `
 		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
-		       unit, window_start, window_end, source, source_sha256
+		       unit, window_start, window_end, source, source_sha256,
+		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at
 		FROM billing_usage_facts WHERE usage_id = $1 AND `+visibility,
 		args...).Scan(&out.ID, &out.UsageID, &out.OrganizationID, &out.ProductID, &out.ServiceCode, &out.MetricCode, &out.Quantity,
-		&out.QuantityScale, &out.Unit, &out.WindowStart, &out.WindowEnd, &out.Source, &out.SourceSHA256)
+		&out.QuantityScale, &out.Unit, &out.WindowStart, &out.WindowEnd, &out.Source, &out.SourceSHA256,
+		&grantRevision, &grantSHA, &grantAuthorizedAt)
+	if err == nil && grantRevision.Valid && grantSHA.Valid && grantAuthorizedAt.Valid {
+		out.OTAGrant = &billing.OTAGrantEvidence{ProductServiceRevision: grantRevision.Int64,
+			ServiceGrantSHA256: grantSHA.String, AuthorizedAt: grantAuthorizedAt.Time.UTC()}
+	}
 	return out, mapNotFound(err)
 }
 
@@ -441,7 +476,8 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	visibility := usageVisibility(ctx, &args)
 	rows, err := s.db.Query(ctx, `
 		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
-		       unit, window_start, window_end, source, source_sha256
+		       unit, window_start, window_end, source, source_sha256,
+		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at
 		FROM billing_usage_facts
 		WHERE organization_id = $1 AND window_start >= $2 AND window_end <= $3 AND `+visibility+`
 		ORDER BY service_code, metric_code, unit, window_start, usage_id
@@ -453,9 +489,17 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	out := make([]billing.UsageFact, 0)
 	for rows.Next() {
 		var fact billing.UsageFact
+		var grantRevision sql.NullInt64
+		var grantSHA sql.NullString
+		var grantAuthorizedAt sql.NullTime
 		if err := rows.Scan(&fact.ID, &fact.UsageID, &fact.OrganizationID, &fact.ProductID, &fact.ServiceCode, &fact.MetricCode, &fact.Quantity,
-			&fact.QuantityScale, &fact.Unit, &fact.WindowStart, &fact.WindowEnd, &fact.Source, &fact.SourceSHA256); err != nil {
+			&fact.QuantityScale, &fact.Unit, &fact.WindowStart, &fact.WindowEnd, &fact.Source, &fact.SourceSHA256,
+			&grantRevision, &grantSHA, &grantAuthorizedAt); err != nil {
 			return nil, err
+		}
+		if grantRevision.Valid && grantSHA.Valid && grantAuthorizedAt.Valid {
+			fact.OTAGrant = &billing.OTAGrantEvidence{ProductServiceRevision: grantRevision.Int64,
+				ServiceGrantSHA256: grantSHA.String, AuthorizedAt: grantAuthorizedAt.Time.UTC()}
 		}
 		out = append(out, fact)
 	}
@@ -469,5 +513,13 @@ func sameUsageFact(a, b billing.UsageFact) bool {
 		a.ServiceCode == b.ServiceCode && a.MetricCode == b.MetricCode &&
 		a.Quantity == b.Quantity && a.QuantityScale == b.QuantityScale && a.Unit == b.Unit &&
 		a.WindowStart.Equal(b.WindowStart) && a.WindowEnd.Equal(b.WindowEnd) &&
-		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256
+		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256 && sameOTAGrant(a.OTAGrant, b.OTAGrant)
+}
+
+func sameOTAGrant(a, b *billing.OTAGrantEvidence) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.ProductServiceRevision == b.ProductServiceRevision &&
+		a.ServiceGrantSHA256 == b.ServiceGrantSHA256 && a.AuthorizedAt.Equal(b.AuthorizedAt)
 }
