@@ -115,8 +115,10 @@ type HostedChargeRequest struct {
 }
 
 type HostedChargeResult struct {
-	EndpointURL string
-	Fields      map[string]string
+	Method                       string
+	EndpointURL                  string
+	Fields                       map[string]string
+	ProviderTransactionReference string
 }
 
 type HostedChargeProvider interface {

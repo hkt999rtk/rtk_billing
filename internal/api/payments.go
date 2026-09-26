@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 
+	"github.com/hkt999rtk/rtk_billing/internal/billingdocument"
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/currency"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
@@ -42,6 +44,9 @@ type paymentPersistence interface {
 	DisableAutoTopUpPolicy(context.Context, paymentstore.DisableAutoTopUpPolicyInput) (payment.AutoTopUpPolicy, error)
 	CreateManualTopUp(context.Context, paymentstore.CreateManualTopUpInput) (paymentstore.CreateManualTopUpResult, error)
 	CreateHostedTopUp(context.Context, paymentstore.CreateHostedTopUpInput) (paymentstore.CreateManualTopUpResult, error)
+	GetPaymentIntentByProviderReference(context.Context, string, string) (payment.PaymentIntent, error)
+	GetCommercialAccount(context.Context, string) (payment.CommercialAccount, error)
+	TransitionIntent(context.Context, paymentstore.TransitionIntentInput) (paymentstore.TransitionIntentResult, error)
 	ListPaymentIntents(context.Context, string, int, int) (paymentstore.PaymentIntentPage, error)
 	GetPaymentIntentForAccount(context.Context, string, string) (payment.PaymentIntent, error)
 	ListPaymentAttempts(context.Context, string) ([]payment.PaymentAttempt, error)
@@ -63,6 +68,7 @@ type PaymentAPIOptions struct {
 	SimulatorCallbackSecret string
 	HostedChargeNotifyURL   string
 	HostedChargeReturnURL   string
+	PayPalAfterReturnURL    string
 	Now                     func() time.Time
 }
 
@@ -76,6 +82,7 @@ type paymentRuntime struct {
 	simulatorCallbackSecret []byte
 	hostedChargeNotifyURL   string
 	hostedChargeReturnURL   string
+	payPalAfterReturnURL    string
 	now                     func() time.Time
 }
 
@@ -114,6 +121,7 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 	options.SimulatorCallbackSecret = strings.TrimSpace(options.SimulatorCallbackSecret)
 	options.HostedChargeNotifyURL = strings.TrimSpace(options.HostedChargeNotifyURL)
 	options.HostedChargeReturnURL = strings.TrimSpace(options.HostedChargeReturnURL)
+	options.PayPalAfterReturnURL = strings.TrimSpace(options.PayPalAfterReturnURL)
 	if s.handoff != nil && (options.BillingDebitToken == s.handoff.token || options.SimulatorCallbackSecret == s.handoff.token) {
 		return fmt.Errorf("handoff credential must be distinct from payment credentials")
 	}
@@ -153,6 +161,7 @@ func (s *Server) ConfigurePayments(options PaymentAPIOptions) error {
 		simulatorCallbackSecret: []byte(options.SimulatorCallbackSecret),
 		hostedChargeNotifyURL:   options.HostedChargeNotifyURL,
 		hostedChargeReturnURL:   options.HostedChargeReturnURL,
+		payPalAfterReturnURL:    options.PayPalAfterReturnURL,
 		now:                     options.Now,
 	}
 	return nil
@@ -623,7 +632,7 @@ func (s *Server) createHostedTopUp(c *gin.Context) {
 	providerName := payment.NormalizeProvider(request.Provider)
 	provider, exists := s.payments.providers[providerName]
 	hosted, hostedOK := provider.(payment.HostedChargeProvider)
-	if !exists || !hostedOK || !provider.Capabilities(c.Request.Context()).HostedCharge || s.payments.hostedChargeNotifyURL == "" || s.payments.hostedChargeReturnURL == "" {
+	if !exists || !hostedOK || !provider.Capabilities(c.Request.Context()).HostedCharge || (providerName == "newebpay" && (s.payments.hostedChargeNotifyURL == "" || s.payments.hostedChargeReturnURL == "")) {
 		writeError(c, http.StatusConflict, "PAYMENT_CAPABILITY_UNSUPPORTED", "Hosted card checkout is unavailable")
 		return
 	}
@@ -652,6 +661,15 @@ func (s *Server) createHostedTopUp(c *gin.Context) {
 		writeError(c, http.StatusBadGateway, "PAYMENT_PROVIDER_RESPONSE_INVALID", "Payment provider returned an invalid hosted action")
 		return
 	}
+	if action.ProviderTransactionReference != "" {
+		if _, err := s.payments.store.TransitionIntent(c.Request.Context(), paymentstore.TransitionIntentInput{
+			IntentID: result.Intent.ID, ToState: payment.PaymentIntentStateRequiresAction,
+			ProviderTransactionReference: action.ProviderTransactionReference, Now: s.payments.now(),
+		}); err != nil {
+			writePaymentError(c, err)
+			return
+		}
+	}
 	if !s.writePaymentAudit(c, "hosted_topup_intent_created", "payment_intent", result.Intent.ID, gin.H{
 		"amount_minor": result.Intent.AmountMinor, "currency": result.Intent.Currency, "provider": providerName, "state": result.Intent.State, "duplicate": result.Duplicate,
 	}) {
@@ -664,13 +682,25 @@ func (s *Server) createHostedTopUp(c *gin.Context) {
 	if !s.revalidateOwnerResponse(c) {
 		return
 	}
-	c.JSON(status, gin.H{"payment_intent": paymentIntentResponse(result.Intent), "duplicate": result.Duplicate, "payment_action": gin.H{"method": "POST", "url": action.EndpointURL, "fields": action.Fields}})
+	method := action.Method
+	if method == "" {
+		method = "POST"
+	}
+	c.JSON(status, gin.H{"payment_intent": paymentIntentResponse(result.Intent), "duplicate": result.Duplicate, "payment_action": gin.H{"method": method, "url": action.EndpointURL, "fields": action.Fields}})
 }
 
 func validHostedChargeAction(action payment.HostedChargeResult) bool {
 	parsed, err := url.Parse(action.EndpointURL)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
-		(parsed.Scheme != "https" && parsed.Scheme != "http") || len(action.Fields) == 0 || len(action.Fields) > 20 {
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return false
+	}
+	if action.Method == "GET" {
+		return parsed.Scheme == "https" && (parsed.Host == "www.paypal.com" || parsed.Host == "www.sandbox.paypal.com") && len(action.Fields) == 0 && action.ProviderTransactionReference != ""
+	}
+	if action.Method != "" && action.Method != "POST" {
+		return false
+	}
+	if parsed.RawQuery != "" || (parsed.Scheme != "https" && parsed.Scheme != "http") || len(action.Fields) == 0 || len(action.Fields) > 20 {
 		return false
 	}
 	for name, value := range action.Fields {
@@ -680,6 +710,100 @@ func validHostedChargeAction(action payment.HostedChargeResult) bool {
 		}
 	}
 	return true
+}
+
+type approvedOrderCapturer interface {
+	Capture(context.Context, payment.QueryRequest) (payment.ProviderResult, error)
+}
+
+func (s *Server) handlePayPalReturn(c *gin.Context) {
+	if s.payments == nil || s.payments.payPalAfterReturnURL == "" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	provider, ok := s.payments.providers["paypal"].(approvedOrderCapturer)
+	if !ok {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	orderID := strings.TrimSpace(c.Query("token"))
+	destination := s.payPalDestination(c.Request.Context(), orderID, "returned")
+	if orderID != "" {
+		intent, err := s.payments.store.GetPaymentIntentByProviderReference(c.Request.Context(), "paypal", orderID)
+		if err == nil && !payment.IntentStateTerminal(intent.State) {
+			result, captureErr := provider.Capture(c.Request.Context(), payment.QueryRequest{
+				IntentID: intent.ID, AmountMinor: intent.AmountMinor, Currency: intent.Currency,
+				MerchantOrderReference: intent.MerchantOrderReference, ProviderTransactionReference: orderID,
+				CorrelationID: intent.CorrelationID,
+			})
+			if captureErr == nil && result.State == payment.PaymentIntentStateSucceeded && result.ProviderTransactionReference == orderID {
+				_, _ = s.payments.store.TransitionIntent(c.Request.Context(), paymentstore.TransitionIntentInput{
+					IntentID: intent.ID, ToState: payment.PaymentIntentStateSucceeded, ProviderTransactionReference: orderID, Now: s.payments.now(),
+				})
+			}
+		}
+	}
+	c.Redirect(http.StatusSeeOther, destination)
+}
+
+func (s *Server) handlePayPalCancel(c *gin.Context) {
+	if s.payments == nil || s.payments.payPalAfterReturnURL == "" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	c.Redirect(http.StatusSeeOther, s.payPalDestination(c.Request.Context(), strings.TrimSpace(c.Query("token")), "cancelled"))
+}
+
+func (s *Server) payPalDestination(ctx context.Context, orderID, status string) string {
+	base := strings.TrimRight(s.payments.payPalAfterReturnURL, "/")
+	if orderID == "" {
+		return base + "/console/billing/activity"
+	}
+	intent, err := s.payments.store.GetPaymentIntentByProviderReference(ctx, "paypal", orderID)
+	if err != nil {
+		return base + "/console/billing/activity"
+	}
+	account, err := s.payments.store.GetCommercialAccount(ctx, intent.AccountID)
+	if err != nil {
+		return base + "/console/billing/activity"
+	}
+	return base + "/console/clouds/" + url.PathEscape(account.OrganizationID) + "/billing/activity?payment=" + status
+}
+
+func (s *Server) downloadTopUpStatement(c *gin.Context) {
+	if s.billing == nil {
+		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+	account, ok := s.paymentAccount(c)
+	if !ok {
+		return
+	}
+	intent, err := s.payments.store.GetPaymentIntentForAccount(c.Request.Context(), account.ID, c.Param("intentId"))
+	if err != nil {
+		writePaymentError(c, err)
+		return
+	}
+	if intent.State != payment.PaymentIntentStateSucceeded || intent.Reason != payment.PaymentIntentReasonManualTopUp {
+		writeError(c, http.StatusConflict, "PAYMENT_NOT_CONFIRMED", "A confirmed manual top-up is required")
+		return
+	}
+	profile, err := s.billing.store.GetBillingProfile(c.Request.Context(), account.OrganizationID)
+	if err != nil {
+		writePaymentError(c, err)
+		return
+	}
+	data, err := billingdocument.RenderTopUpStatement(intent, profile)
+	if err != nil {
+		writePaymentError(c, err)
+		return
+	}
+	digest := sha256.Sum256(data)
+	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Disposition", `attachment; filename="top-up-transaction-detail.pdf"`)
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Digest", "sha-256="+base64.StdEncoding.EncodeToString(digest[:]))
+	c.Data(http.StatusOK, "application/pdf", data)
 }
 
 func (s *Server) listPaymentIntents(c *gin.Context) {

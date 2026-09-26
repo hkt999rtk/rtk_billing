@@ -17,6 +17,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentcrypto"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentprovider/newebpay"
+	"github.com/hkt999rtk/rtk_billing/internal/paymentprovider/paypal"
 	paymentSimulator "github.com/hkt999rtk/rtk_billing/internal/paymentprovider/simulator"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
 )
@@ -58,6 +59,13 @@ func main() {
 		}
 		providers = append(providers, provider)
 	}
+	if cfg.PayPalEnabled {
+		provider, providerErr := paypal.New(paypal.Config{Environment: cfg.PayPalEnvironment, ClientID: cfg.PayPalClientID, ClientSecret: cfg.PayPalClientSecret, WebhookID: cfg.PayPalWebhookID, ReturnURL: cfg.PayPalReturnURL, CancelURL: cfg.PayPalCancelURL})
+		if providerErr != nil {
+			log.Fatal(providerErr)
+		}
+		providers = append(providers, provider)
+	}
 	var protector api.PaymentReferenceProtector
 	if cfg.PaymentReferenceEncryptionKey != "" {
 		protector, err = paymentcrypto.New(cfg.PaymentReferenceEncryptionKey)
@@ -65,7 +73,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	if err := server.ConfigurePayments(api.PaymentAPIOptions{Store: paymentStore, Providers: providers, ReferenceProtector: protector, BillingDebitToken: cfg.BillingDebitToken, BillingDebitSource: cfg.BillingDebitSource, SimulatorCallbackSecret: cfg.SimulatorCallbackSecret, HostedChargeNotifyURL: cfg.NewebPayNotifyURL, HostedChargeReturnURL: cfg.NewebPayReturnURL}); err != nil {
+	if err := server.ConfigurePayments(api.PaymentAPIOptions{Store: paymentStore, Providers: providers, ReferenceProtector: protector, BillingDebitToken: cfg.BillingDebitToken, BillingDebitSource: cfg.BillingDebitSource, SimulatorCallbackSecret: cfg.SimulatorCallbackSecret, HostedChargeNotifyURL: cfg.NewebPayNotifyURL, HostedChargeReturnURL: cfg.NewebPayReturnURL, PayPalAfterReturnURL: cfg.PayPalAfterReturnURL}); err != nil {
 		log.Fatal(err)
 	}
 	// An unset dedicated credential leaves all handoff routes absent. Never

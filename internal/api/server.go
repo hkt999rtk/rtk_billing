@@ -63,6 +63,8 @@ func New(options Options) (*Server, error) {
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.GET("/readyz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ready"}) })
 	r.POST("/v1/payment-webhooks/:provider", s.handlePaymentWebhook)
+	r.GET("/v1/payment-returns/paypal", s.handlePayPalReturn)
+	r.GET("/v1/payment-returns/paypal/cancel", s.handlePayPalCancel)
 	r.POST("/v1/internal/payment-simulator/setup-callback", s.handlePaymentSimulatorSetupCallback)
 
 	org := r.Group("/v1/orgs/:orgId", s.requireServiceToken(), s.requireTenantContext(), s.requireCurrentOwner(), s.requireBillingAccess())
@@ -110,6 +112,7 @@ func (s *Server) registerTenantRoutes(org *gin.RouterGroup) {
 	org.POST("/topups/checkout", s.requirePermission("payment_intent.create"), s.createHostedTopUp)
 	org.GET("/payment-intents", s.requirePermission("payment_intent.read"), s.listPaymentIntents)
 	org.GET("/payment-intents/:intentId", s.requirePermission("payment_intent.read"), s.getPaymentIntent)
+	org.GET("/payment-intents/:intentId/statement.pdf", s.requirePermission("payment_intent.read"), s.downloadTopUpStatement)
 }
 
 func (s *Server) requireServiceToken() gin.HandlerFunc {
