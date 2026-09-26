@@ -47,13 +47,20 @@ func TestBillingPersistenceInvoiceLifecycle(t *testing.T) {
 	now := time.Date(2026, 8, 17, 2, 0, 0, 0, time.UTC)
 	periodStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	periodEnd := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	quantityScale := 0
+	taxCategory := "reviewed-test-category"
 	pricing, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
 		PlanKey: "default", Version: 1, Currency: billing.CurrencyTWD, EffectiveFrom: periodStart.AddDate(0, -1, 0),
 		CreatedBy: "integration-test", Now: now,
-		Rates: []billing.PricingRate{{ServiceCode: "video", MetricCode: "relay_minutes", Description: "Video relay", Unit: "minute", UnitPriceMinor: 2, RoundingMode: billing.RoundingHalfUp}},
+		Rates: []billing.PricingRate{{ServiceCode: "video", MetricCode: "relay_minutes", Description: "Video relay", Unit: "minute", UnitPriceMinor: 2, QuantityScale: &quantityScale, TaxCategory: &taxCategory, RoundingMode: billing.RoundingHalfUp}},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	loaded, err := store.GetPricingVersion(ctx, pricing.ID)
+	if err != nil || len(loaded.Rates) != 1 || loaded.Rates[0].QuantityScale == nil || *loaded.Rates[0].QuantityScale != 0 ||
+		loaded.Rates[0].TaxCategory == nil || *loaded.Rates[0].TaxCategory != taxCategory {
+		t.Fatalf("review metadata roundtrip: pricing=%+v err=%v", loaded, err)
 	}
 	if _, err := store.ActivatePricingVersion(ctx, pricing.ID, now); err != nil {
 		t.Fatal(err)
@@ -86,6 +93,10 @@ func TestBillingPersistenceInvoiceLifecycle(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	legacy, err := store.GetPricingVersion(ctx, retroactive.ID)
+	if err != nil || len(legacy.Rates) != 1 || legacy.Rates[0].QuantityScale != nil || legacy.Rates[0].TaxCategory != nil {
+		t.Fatalf("legacy rate metadata must remain unknown: pricing=%+v err=%v", legacy, err)
 	}
 	if _, err := store.ActivatePricingVersion(ctx, retroactive.ID, now); err != ErrConflict {
 		t.Fatalf("cutover affecting an issued invoice must conflict, got %v", err)
