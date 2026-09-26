@@ -33,7 +33,10 @@ facts. `internal/billingstore/pricing.go` currently permits a **draft** with OTA
 rates but rejects activation of every OTA-containing version through the
 immediate `/v1/internal/billing/pricing-versions/{id}/activate` route. Do not
 bypass this protection through SQL or another internal endpoint. No OTA retail
-version has been activated by this runbook.
+version has been activated by this runbook. The generic activation route can
+schedule a **non-OTA** card for a future UTC month boundary and serializes its
+publication with invoice close; it still rejects OTA rates until the complete
+approval, scope, tax, and month rules below are implemented.
 
 Before pricing exists, accepted OTA facts remain immutable evidence while
 `BillableUsageFacts` excludes them from invoices and estimated charges. A
@@ -75,9 +78,11 @@ and `quantity_scale` metadata; historical rows remain null until reviewed.
 A zero `tax_rate_basis_points` is a default, **not** evidence of an approved
 tax exemption. The inventory must expose unresolved values and scope gaps,
 not label the existing implementation a valid customer-specific preflight.
-No checked-in command currently produces a complete-card diff or a signed
-approval packet; until P1 implements it, the inventory is review evidence
-only and cannot authorize activation.
+`cmd/ota-pricing-review` now provides a **read-only technical comparison** of
+one complete candidate against the current TWD version in one repeatable-read
+snapshot. It does not collect every version, contract, invoice, source ledger
+or approval, and its digest is not a signed approval packet. The broader
+inventory above remains required and cannot by itself authorize activation.
 
 ## 2. Resolve commercial and data-model prerequisites
 
@@ -89,8 +94,8 @@ contains all of the following:
 | Tax | Finance/Legal sign-off for category, rate or exemption basis, effective dates, and treatment of historical non-OTA rates. Persist an explicit tax category and approved value; do not treat the database default of zero as sign-off. |
 | Applicability | Decide whether all managed-cloud accounts share one card or whether tier/account/contract exceptions apply. Implement that selection in invoice close, usage estimates, and the tenant price API with the same effective interval. Define evaluation and private-contract treatment. Missing or ambiguous assignment must fail closed. |
 | Meter precision | Require a reviewed, non-null rate `quantity_scale` on the publishable full card and the four exact OTA service/metric/unit/price/rounding identities. The nullable rate field now round-trips and rejects mismatched facts when set; historical nulls still need explicit review. |
-| Version provenance | Persist a stable base-version identity, complete-card manifest digest, approvers and approval timestamp. Draft creation must recheck base, scope, tax and diff atomically. No such preflight/publish tool exists yet. |
-| UTC cutover | Implement a future-only `00:00:00Z` first-of-month publication transaction, contiguous non-overlapping intervals, and serialization with invoice close. The current activation path rejects future `effective_from` and immediately retires the prior card. Preserve historical intervals and invoices. |
+| Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. Still persist the approved base identity, scope, manifest digest, approvers and approval timestamp; draft creation must recheck them atomically. No approved draft/publish transaction exists yet. |
+| UTC cutover | The generic activation path now permits one future `00:00:00Z` first-of-month **non-OTA** version, keeps contiguous non-overlapping intervals, and serializes with invoice close. It marks the prior row `retired` when published, but interval selection continues to use it until the cutover. OTA publication remains blocked until the reviewed manifest and the remaining month/ownership policy are implemented. Preserve historical intervals and invoices. |
 | Ownership/month policy | Move chargeable OTA invoice/preview periods to complete UTC months. Specify migration from profile-local months and the treatment of a mid-month owner transfer or Cloud closure. Until a verifiable allocation rule exists, hold the affected OTA month for manual review and do not expose another owner's data. |
 
 The four approved prices do not answer these questions. Finance must also
@@ -100,7 +105,7 @@ CDN bytes, retries and Range requests are provider costs, not an extra
 customer meter. Use the actual provider contract, regions, tiers, cache
 behavior, retry/Range ratio, exchange rate and tax in the margin record.
 
-## 3. Build and review the complete candidate card (future P1 tooling)
+## 3. Build and review the complete candidate card (partial P1 tooling)
 
 The intended tool must consume the read-only consistent snapshot and the
 approved manifest. Sort rate identities deterministically by
@@ -111,6 +116,27 @@ price minor/scale, expected fact scale, rounding, tax category/rate, scope,
 currency TWD and UTC interval. A per-Product OTA grant is not a substitute
 for account/contract selection. Do not promote Cloud Admin reference prices
 or the other unapproved service benchmarks into this card.
+
+The first technical check is available from the Billing repository. Provide a
+protected JSON file containing the **complete** candidate `pricing_rates`
+array, including explicit quantity precision and tax metadata on every row:
+
+```bash
+DATABASE_URL="$READ_ONLY_BILLING_DSN" go run ./cmd/ota-pricing-review \
+  --base-version "$CURRENT_TWD_VERSION_ID" \
+  --effective-from "YYYY-MM-01T00:00:00Z" \
+  --candidate /protected/path/complete-rates.json
+```
+
+The command runs a read-only repeatable-read transaction, verifies the base
+is current and no published future card exists, checks that existing rows are
+unchanged and the four approved OTA meter identities are exact, then emits
+the selected base and a deterministic candidate rate-set SHA-256. It does
+**not** prove Finance approved the supplied tax category/rate, that the
+account scope is implemented, or that the base will still be current when a
+draft is later created. Store its output with restricted approval evidence;
+it contains the full internal price card. A failed review leaves the database
+unchanged.
 
 Reject the candidate if any non-OTA row changes or disappears without its own
 commercial approval, an OTA row is missing/duplicated/altered, another future
