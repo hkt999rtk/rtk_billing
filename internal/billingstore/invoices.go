@@ -154,7 +154,7 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		return billing.Invoice{}, false, err
 	}
 	if otaSealsVerified {
-		if err := s.verifyOTAFactGrants(ctx, billableFacts); err != nil {
+		if err := s.VerifyOTAFactGrants(ctx, billableFacts); err != nil {
 			_ = s.markPeriodIncomplete(ctx, periodID, "ota_grant_unverified", in.Now)
 			return billing.Invoice{}, false, err
 		}
