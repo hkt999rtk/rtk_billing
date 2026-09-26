@@ -46,6 +46,7 @@ func TestEmptyOTASealsDoNotCompleteMixedServiceInvoice(t *testing.T) {
 	store := New(db)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
+	putOTATestCurrentOwner(t, ctx, db, account.ID, start)
 	now := end.Add(time.Hour)
 	rates := append(pricedOTARatesForTest(), billing.PricingRate{
 		ServiceCode: "mqtt", MetricCode: "publish_count", Description: "MQTT publishes",

@@ -11,12 +11,41 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
 	"github.com/hkt999rtk/rtk_billing/internal/testutil"
 )
+
+func putOTATestCurrentOwner(t *testing.T, ctx context.Context, db *pgxpool.Pool, accountID string, effectiveFrom time.Time) {
+	t.Helper()
+	_, err := db.Exec(ctx, `INSERT INTO billing_responsibility_periods
+		(account_id,owner_user_id,ownership_version,effective_from,source_evidence_sha256)
+		VALUES ($1,$2,1,$3,$4)`, accountID, testutil.OrganizationID(accountID+"/owner"),
+		effectiveFrom.UTC(), strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var organizationID string
+	if err := db.QueryRow(ctx, `SELECT organization_id::text FROM commercial_accounts WHERE id=$1`, accountID).Scan(&organizationID); err != nil {
+		t.Fatal(err)
+	}
+	store := New(db)
+	profile, _, err := store.EnsureBillingProfile(ctx, organizationID, effectiveFrom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutBillingProfile(ctx, PutProfileInput{
+		OrganizationID: organizationID, LegalName: "OTA test owner", Locale: "zh-TW",
+		Timezone: "Asia/Taipei", DeliveryPreference: "portal", ExpectedVersion: profile.Version,
+		Now: effectiveFrom,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -93,6 +122,42 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	}
 	closeInput := PrepareInvoiceInput{OrganizationID: org, AccountID: account.ID, Currency: billing.CurrencyTWD,
 		PeriodStart: start, PeriodEnd: end, Now: now}
+	if _, _, err := store.PrepareInvoice(ctx, closeInput); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("OTA close without ownership evidence error=%v, want incomplete", err)
+	}
+	var ownershipCode string
+	if err := db.QueryRow(ctx, `SELECT close_error_code FROM billing_periods WHERE organization_id=$1`, org).Scan(&ownershipCode); err != nil || ownershipCode != "ota_ownership_month_incomplete" {
+		t.Fatalf("ownership close code=%q err=%v", ownershipCode, err)
+	}
+	transferOrg := testutil.OrganizationID(t.Name() + "/mid-month-transfer")
+	transferAccount, _, err := paymentstore.New(db).EnsureCommercialAccount(ctx, transferOrg, payment.CurrencyTWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putOTATestCurrentOwner(t, ctx, db, transferAccount.ID, start.Add(15*24*time.Hour))
+	if _, _, err := store.PrepareInvoice(ctx, PrepareInvoiceInput{OrganizationID: transferOrg,
+		AccountID: transferAccount.ID, Currency: billing.CurrencyTWD,
+		PeriodStart: start, PeriodEnd: end, Now: now}); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("mid-month owner OTA close error=%v, want incomplete", err)
+	}
+	if err := db.QueryRow(ctx, `SELECT close_error_code FROM billing_periods WHERE organization_id=$1`, transferOrg).Scan(&ownershipCode); err != nil || ownershipCode != "ota_ownership_month_incomplete" {
+		t.Fatalf("mid-month owner close code=%q err=%v", ownershipCode, err)
+	}
+	localMonthOrg := testutil.OrganizationID(t.Name() + "/local-month")
+	localMonthAccount, _, err := paymentstore.New(db).EnsureCommercialAccount(ctx, localMonthOrg, payment.CurrencyTWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putOTATestCurrentOwner(t, ctx, db, localMonthAccount.ID, start)
+	if _, _, err := store.PrepareInvoice(ctx, PrepareInvoiceInput{OrganizationID: localMonthOrg,
+		AccountID: localMonthAccount.ID, Currency: billing.CurrencyTWD,
+		PeriodStart: start.Add(8 * time.Hour), PeriodEnd: end.Add(8 * time.Hour), Now: now.Add(8 * time.Hour)}); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("local-time month OTA close error=%v, want incomplete", err)
+	}
+	if err := db.QueryRow(ctx, `SELECT close_error_code FROM billing_periods WHERE organization_id=$1`, localMonthOrg).Scan(&ownershipCode); err != nil || ownershipCode != "ota_period_not_utc_month" {
+		t.Fatalf("local-time month close code=%q err=%v", ownershipCode, err)
+	}
+	putOTATestCurrentOwner(t, ctx, db, account.ID, start)
 	assertIncomplete := func() {
 		t.Helper()
 		if _, _, err := store.PrepareInvoice(ctx, closeInput); !errors.Is(err, ErrIncomplete) {
@@ -155,6 +220,7 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	putOTATestCurrentOwner(t, ctx, db, zeroAccount.ID, start)
 	zeroPlatform := testOTAPeriodSeal(OTAIssuerPlatformGrants)
 	zeroPlatform.OrganizationID = zeroOrg
 	zeroPlatform.SealID = "55555555-5555-4555-8555-555555555555"
@@ -167,10 +233,21 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	zeroInvoice, created, err := store.PrepareInvoice(ctx, PrepareInvoiceInput{
-		OrganizationID: zeroOrg, AccountID: zeroAccount.ID, Currency: billing.CurrencyTWD,
-		PeriodStart: start, PeriodEnd: end, Now: now,
-	})
+	if _, err := db.Exec(ctx, `UPDATE billing_profiles SET ownership_version=2 WHERE organization_id=$1`, zeroOrg); err != nil {
+		t.Fatal(err)
+	}
+	zeroClose := PrepareInvoiceInput{OrganizationID: zeroOrg, AccountID: zeroAccount.ID,
+		Currency: billing.CurrencyTWD, PeriodStart: start, PeriodEnd: end, Now: now}
+	if _, _, err := store.PrepareInvoice(ctx, zeroClose); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("stale billing profile OTA close error=%v, want incomplete", err)
+	}
+	if err := db.QueryRow(ctx, `SELECT close_error_code FROM billing_periods WHERE organization_id=$1`, zeroOrg).Scan(&ownershipCode); err != nil || ownershipCode != "ota_ownership_profile_mismatch" {
+		t.Fatalf("stale profile close code=%q err=%v", ownershipCode, err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE billing_profiles SET ownership_version=1 WHERE organization_id=$1`, zeroOrg); err != nil {
+		t.Fatal(err)
+	}
+	zeroInvoice, created, err := store.PrepareInvoice(ctx, zeroClose)
 	if err != nil || !created || zeroInvoice.TotalMinor != 0 || len(zeroInvoice.Lines) != 0 {
 		t.Fatalf("zero-use close: created=%v invoice=%+v err=%v", created, zeroInvoice, err)
 	}
@@ -181,6 +258,7 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	putOTATestCurrentOwner(t, ctx, db, badAccount.ID, start)
 	zeroStorageFact := billing.UsageFact{UsageID: "ota-zero-storage", OrganizationID: badOrg, ProductID: product,
 		ServiceCode: billing.ServiceOTA, MetricCode: billing.MetricOTAArtifactStorageGiBMonth,
 		Quantity: 0, QuantityScale: 9, Unit: billing.UnitOTAGiBMonth,
@@ -222,6 +300,7 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	putOTATestCurrentOwner(t, ctx, db, retiredAccount.ID, start)
 	retiredFact := zeroStorageFact
 	retiredFact.OrganizationID = retiredOrg
 	retiredFact.UsageID = "ota-retired-storage"
@@ -269,6 +348,7 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	putOTATestCurrentOwner(t, ctx, db, rogueAccount.ID, start)
 	roguePlatform := zeroPlatform
 	roguePlatform.OrganizationID = rogueOrg
 	roguePlatform.SealID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"

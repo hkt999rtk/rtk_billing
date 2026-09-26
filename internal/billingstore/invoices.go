@@ -112,10 +112,29 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		return billing.Invoice{}, false, err
 	}
 	otaSealsVerified := false
+	var otaOwnerVersion int64
 	if enabled, complete := otaPricingComplete(pricing.Rates); enabled {
 		if !complete {
 			_ = s.markPeriodIncomplete(ctx, periodID, "ota_pricing_incomplete", in.Now)
 			return billing.Invoice{}, false, ErrPricingUnavailable
+		}
+		if !otaUTCMonth(in.PeriodStart.UTC(), in.PeriodEnd.UTC()) {
+			_ = s.markPeriodIncomplete(ctx, periodID, "ota_period_not_utc_month", in.Now)
+			return billing.Invoice{}, false, ErrIncomplete
+		}
+		// Source seals attest the whole UTC month, not who may receive its
+		// invoice. A missing responsibility projection, mid-month handoff, or
+		// closed Cloud requires manual review; never charge a later owner for
+		// an earlier owner's OTA usage.
+		err := s.db.QueryRow(ctx, `SELECT ownership_version FROM billing_responsibility_periods
+			WHERE account_id=$1 AND effective_until IS NULL AND effective_from<=$2`,
+			in.AccountID, in.PeriodStart.UTC()).Scan(&otaOwnerVersion)
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = s.markPeriodIncomplete(ctx, periodID, "ota_ownership_month_incomplete", in.Now)
+			return billing.Invoice{}, false, ErrIncomplete
+		}
+		if err != nil {
+			return billing.Invoice{}, false, err
 		}
 		if err := s.verifyOTAPeriodSeals(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd); err != nil {
 			if errors.Is(err, ErrIncomplete) {
@@ -153,6 +172,10 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	if err != nil {
 		_ = s.markPeriodIncomplete(ctx, periodID, "billing_profile_missing", in.Now)
 		return billing.Invoice{}, false, err
+	}
+	if otaSealsVerified && (profile.OwnershipVersion == nil || *profile.OwnershipVersion != otaOwnerVersion) {
+		_ = s.markPeriodIncomplete(ctx, periodID, "ota_ownership_profile_mismatch", in.Now)
+		return billing.Invoice{}, false, ErrIncomplete
 	}
 	if profile.RequiresConfiguration {
 		_ = s.markPeriodIncomplete(ctx, periodID, "billing_profile_configuration_required", in.Now)
