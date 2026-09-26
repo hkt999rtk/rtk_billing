@@ -1,9 +1,11 @@
 package billingstore
 
 import (
+	"context"
 	"errors"
 	"strings"
 
+	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,11 +20,20 @@ var (
 )
 
 type Store struct {
-	db         database.Connection
-	tenantRead bool
+	db               database.Connection
+	tenantRead       bool
+	otaGrantVerifier OTAGrantVerifier
 }
 
 func New(db *pgxpool.Pool) *Store { return &Store{db: db} }
+
+type OTAGrantVerifier interface {
+	VerifyOTAGrant(context.Context, string, string, billing.OTAGrantEvidence) error
+}
+
+func (s *Store) SetOTAGrantVerifier(verifier OTAGrantVerifier) {
+	s.otaGrantVerifier = verifier
+}
 
 type rowScanner interface {
 	Scan(...any) error

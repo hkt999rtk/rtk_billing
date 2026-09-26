@@ -14,6 +14,8 @@ func setValidEnvironment(t *testing.T) {
 	t.Setenv("BILLING_HANDOFF_TOKEN", "")
 	t.Setenv("BILLING_OTA_PLATFORM_SEAL_TOKEN", "")
 	t.Setenv("BILLING_OTA_PRODUCER_SEAL_TOKEN", "")
+	t.Setenv("BILLING_OTA_GRANT_HISTORY_BASE_URL", "")
+	t.Setenv("BILLING_OTA_GRANT_HISTORY_TOKEN", "")
 	t.Setenv("BILLING_DEBIT_TOKEN", strings.Repeat("d", 32))
 	t.Setenv("BILLING_DEBIT_SOURCE", "pricing-service")
 	t.Setenv("ENVIRONMENT", "staging")
@@ -22,6 +24,22 @@ func setValidEnvironment(t *testing.T) {
 	t.Setenv("PAYMENT_SIMULATOR_SHARED_SECRET", strings.Repeat("h", 32))
 	t.Setenv("PAYMENT_SIMULATOR_CALLBACK_SECRET", strings.Repeat("c", 32))
 	t.Setenv("PAYMENT_REFERENCE_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+}
+
+func TestOTAGrantHistoryCredentialsMustBePairedAndDistinct(t *testing.T) {
+	setValidEnvironment(t)
+	t.Setenv("BILLING_OTA_GRANT_HISTORY_BASE_URL", "https://account-manager.example")
+	if _, err := Load(); err == nil {
+		t.Fatal("unpaired OTA grant history endpoint accepted")
+	}
+	t.Setenv("BILLING_OTA_GRANT_HISTORY_TOKEN", strings.Repeat("s", 32))
+	if _, err := Load(); err == nil {
+		t.Fatal("reused OTA grant history credential accepted")
+	}
+	t.Setenv("BILLING_OTA_GRANT_HISTORY_TOKEN", strings.Repeat("g", 32))
+	if cfg, err := Load(); err != nil || cfg.OTAGrantHistoryBaseURL == "" {
+		t.Fatalf("valid OTA grant history configuration: %+v err=%v", cfg, err)
+	}
 }
 
 func TestHandoffCredentialIsOptionalButCannotReuseOtherBoundaries(t *testing.T) {
