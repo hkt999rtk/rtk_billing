@@ -84,6 +84,33 @@ snapshot. It does not collect every version, contract, invoice, source ledger
 or approval, and its digest is not a signed approval packet. The broader
 inventory above remains required and cannot by itself authorize activation.
 
+For a proposed future UTC month, run the read-only cutover inventory against
+each target environment with approved database access:
+
+```sh
+DATABASE_URL='read-only connection string' go run ./cmd/ota-cutover-audit \
+  --effective-from "$PROPOSED_OTA_UTC_MONTH_START" > ota-cutover-audit.json
+```
+
+Set `PROPOSED_OTA_UTC_MONTH_START` to a future first-of-month RFC3339 UTC
+timestamp before running the example.
+
+The command uses one repeatable-read, read-only snapshot and emits SHA-256
+organization references, account state, profile timezone, the old local-month
+boundary, and the interval between it and the proposed UTC boundary.
+`gap_risk` means the local boundary precedes UTC midnight; `overlap_risk`
+means it follows. These names describe a potential cutover problem, not proof
+that a fact was omitted or billed twice; the actual period and invoice counts
+must be reviewed before choosing a bridge treatment.
+It also counts usage facts and existing closed periods/invoices touching that
+bridge, any periods/invoices touching the first UTC month, and whether current
+owner/profile evidence covers the cutover. Missing profiles remain explicit.
+The output is **technical inventory only**: it does not choose who pays for
+bridge usage, split an issued invoice, prove source completeness, or permit
+rate publication. Preserve the JSON digest with the environment inventory and
+resolve every gap, overlap, ownership exception, and existing target-month
+financial record before selecting a migration procedure.
+
 ## 2. Resolve commercial and data-model prerequisites
 
 Stop before constructing a publishable draft unless the decision record
