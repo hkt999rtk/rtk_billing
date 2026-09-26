@@ -614,7 +614,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Return tenant balance current cost runway and top-up health
-      description: Current sole-owner access only. The current period starts at the later of the calendar-month boundary and the current responsibility-period boundary. Usage, totals and forecasts use only authorized period inputs; the shared cloud balance does not authorize predecessor history.
+      description: Current sole-owner access only. When OTA pricing is effective, the calendar boundary is the UTC month; otherwise it follows the billing profile timezone. The current period starts at the later of that boundary and the current responsibility-period boundary. Usage and totals use only authorized period inputs; OTA estimates are held on incomplete owner/UTC-month windows and the forecast is unavailable while held. The shared cloud balance does not authorize predecessor history.
       operationId: getBillingSummary
       security:
       - billingServiceAuth: []
@@ -635,6 +635,12 @@ paths:
                 properties:
                   forecast:
                     $ref: '#/components/schemas/BillingForecast'
+                  current_period:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      ota_estimate_status: { type: string, enum: [unavailable, not_effective, estimated, held_for_review] }
+                      ota_estimate_reason: { type: string, enum: [owner_month_incomplete, period_not_utc_month] }
         '403':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
@@ -647,7 +653,7 @@ paths:
       tags:
       - Billing and Payments
       summary: Return server-priced usage for the active billing period
-      description: Explicit date ranges are filtered to the current caller's proven responsibility periods before pricing or aggregation. Unproven and cross-period usage windows are withheld, not prorated. A returning owner cannot read an intervening owner's usage.
+      description: Explicit date ranges are filtered to the current caller's proven responsibility periods before pricing or aggregation. When OTA pricing is effective, OTA estimates require one complete UTC month covered by the current owner; partial windows retain other service estimates but withhold OTA amounts and report held_for_review. Unproven and cross-period usage windows are withheld, not prorated. A returning owner cannot read an intervening owner's usage.
       operationId: getBillingUsage
       security:
       - billingServiceAuth: []
@@ -666,8 +672,10 @@ paths:
                 type: object
                 additionalProperties: true
                 properties:
-                  fact_count: { type: integer, minimum: 0, description: Number of facts included in priced usage lines; unpriced OTA audit facts are excluded. }
+                  fact_count: { type: integer, minimum: 0, description: Number of facts included in priced usage lines; unpriced or held OTA audit facts are excluded. }
                   usage_through: { type: string, format: date-time, nullable: true, description: Latest source time among facts included in priced usage lines. }
+                  ota_estimate_status: { type: string, enum: [unavailable, not_effective, estimated, held_for_review] }
+                  ota_estimate_reason: { type: string, enum: [owner_month_incomplete, period_not_utc_month] }
         '403':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001

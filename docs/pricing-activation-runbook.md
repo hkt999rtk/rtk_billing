@@ -96,7 +96,7 @@ contains all of the following:
 | Meter precision | Require a reviewed, non-null rate `quantity_scale` on the publishable full card and the four exact OTA service/metric/unit/price/rounding identities. The nullable rate field now round-trips and rejects mismatched facts when set; historical nulls still need explicit review. |
 | Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. Still persist the approved base identity, scope, manifest digest, approvers and approval timestamp; draft creation must recheck them atomically. No approved draft/publish transaction exists yet. |
 | UTC cutover | The generic activation path now permits one future `00:00:00Z` first-of-month **non-OTA** version, keeps contiguous non-overlapping intervals, and serializes with invoice close. It marks the prior row `retired` when published, but interval selection continues to use it until the cutover. OTA publication remains blocked until the reviewed manifest and the remaining month/ownership policy are implemented. Preserve historical intervals and invoices. |
-| Ownership/month policy | OTA-priced invoice close now requires an exact UTC month and a current responsibility period that began no later than that month's start. Missing ownership evidence, a mid-month transfer, or Cloud closure leaves an explicit `incomplete` period for manual review. Still move usage previews to the same UTC month, specify migration from profile-local months, and define any approved allocation or later-owner close policy without exposing another owner's data. |
+| Ownership/month policy | OTA-priced invoice close requires an exact UTC month and a current responsibility period that began no later than that month's start. Missing ownership evidence, a mid-month transfer, or Cloud closure leaves an explicit `incomplete` period for manual review. The current tenant preview now uses the UTC month once OTA is priced and withholds OTA estimates on partial/current-owner windows while retaining other service estimates; it reports `held_for_review` and disables the full-bill forecast. Still specify migration from historical profile-local months and any approved allocation or later-owner close policy without exposing another owner's data. |
 
 The four approved prices do not answer these questions. Finance must also
 review the real CDN cost and margin: the approved charge for a **verified
@@ -176,7 +176,14 @@ billing profile's ownership version to match that current responsibility.
 It retains the attempted period with `ota_period_not_utc_month`,
 `ota_ownership_month_incomplete`, or `ota_ownership_profile_mismatch`; historical
 non-OTA months keep their existing close path. This is a conservative hold,
-not an ownership allocation or a finished preview policy.
+not an ownership allocation or an approved historical-period migration.
+
+`internal/api/billing.go` now selects a UTC month for the tenant's current
+usage when that month's card includes OTA. A partial or new-owner window
+excludes OTA facts from the estimate, keeps other priced services visible,
+returns `ota_estimate_status=held_for_review` with a reason, and suppresses
+the full-bill forecast. A complete current-owner UTC month may show an OTA
+estimate, which remains provisional until dual seals and close succeed.
 
 `internal/billingstore/ota_period_seals.go` already stores immutable,
 digest-idempotent seals and compares Product sets, counts and fact digest when
