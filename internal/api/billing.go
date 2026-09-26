@@ -29,6 +29,7 @@ type billingPersistence interface {
 	CreatePricingVersion(context.Context, billingstore.CreatePricingVersionInput) (billing.PricingVersion, error)
 	ActivatePricingVersion(context.Context, string, time.Time) (billing.PricingVersion, error)
 	ActivePricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
+	VerifyOTAFactGrants(context.Context, []billing.UsageFact) error
 	PutUsageFact(context.Context, billing.UsageFact) (billing.UsageFact, bool, error)
 	ListUsageFacts(context.Context, string, time.Time, time.Time) ([]billing.UsageFact, error)
 	ListInvoices(context.Context, string, billingstore.InvoiceFilter) (billingstore.InvoicePage, error)
@@ -186,6 +187,18 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	billableFacts, err := billing.BillableUsageFacts(facts, pricing.Rates)
 	if err != nil {
 		return billingUsageResponse{}, err
+	}
+	if otaStatus == "estimated" {
+		if err := s.billing.store.VerifyOTAFactGrants(ctx, billableFacts); err != nil {
+			otaStatus, otaReason = "held_for_review", "grant_unverified"
+			verified := make([]billing.UsageFact, 0, len(billableFacts))
+			for _, fact := range billableFacts {
+				if fact.ServiceCode != billing.ServiceOTA {
+					verified = append(verified, fact)
+				}
+			}
+			billableFacts = verified
+		}
 	}
 	var usageThrough *time.Time
 	for _, fact := range billableFacts {

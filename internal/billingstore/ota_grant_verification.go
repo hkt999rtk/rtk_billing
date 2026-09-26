@@ -11,7 +11,7 @@ import (
 // verifyOTAFactGrants runs only for an OTA-priced month, after the producer
 // and Platform seals match. An aggregate positive storage fact still requires
 // per-object evidence and cannot be charged by this event-grant check.
-func (s *Store) verifyOTAFactGrants(ctx context.Context, facts []billing.UsageFact) error {
+func (s *Store) VerifyOTAFactGrants(ctx context.Context, facts []billing.UsageFact) error {
 	seen := make(map[string]struct{})
 	for _, fact := range facts {
 		if fact.ServiceCode != billing.ServiceOTA {

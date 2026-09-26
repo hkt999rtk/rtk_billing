@@ -54,8 +54,9 @@ Product, enabled revision, digest and authorization interval. Missing client
 configuration, missing witness or a failed lookup leaves the period incomplete
 with `ota_grant_unverified`. Positive Product-month storage facts are also held
 until bounded per-object evidence and verification exist; a stored witness
-alone does not qualify a fact for charging. OTA rate activation and customer
-estimate parity remain blocked release gates.
+alone does not qualify a fact for charging. The current usage preview applies
+the same grant check; it withholds OTA lines and the full-bill forecast when
+history cannot be verified. OTA rate activation remains blocked.
 
 Before pricing exists, accepted OTA facts remain immutable evidence while
 `BillableUsageFacts` excludes them from invoices and estimated charges. A
