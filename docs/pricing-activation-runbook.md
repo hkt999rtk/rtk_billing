@@ -96,7 +96,7 @@ contains all of the following:
 | Meter precision | Require a reviewed, non-null rate `quantity_scale` on the publishable full card and the four exact OTA service/metric/unit/price/rounding identities. The nullable rate field now round-trips and rejects mismatched facts when set; historical nulls still need explicit review. |
 | Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. Still persist the approved base identity, scope, manifest digest, approvers and approval timestamp; draft creation must recheck them atomically. No approved draft/publish transaction exists yet. |
 | UTC cutover | The generic activation path now permits one future `00:00:00Z` first-of-month **non-OTA** version, keeps contiguous non-overlapping intervals, and serializes with invoice close. It marks the prior row `retired` when published, but interval selection continues to use it until the cutover. OTA publication remains blocked until the reviewed manifest and the remaining month/ownership policy are implemented. Preserve historical intervals and invoices. |
-| Ownership/month policy | Move chargeable OTA invoice/preview periods to complete UTC months. Specify migration from profile-local months and the treatment of a mid-month owner transfer or Cloud closure. Until a verifiable allocation rule exists, hold the affected OTA month for manual review and do not expose another owner's data. |
+| Ownership/month policy | OTA-priced invoice close now requires an exact UTC month and a current responsibility period that began no later than that month's start. Missing ownership evidence, a mid-month transfer, or Cloud closure leaves an explicit `incomplete` period for manual review. Still move usage previews to the same UTC month, specify migration from profile-local months, and define any approved allocation or later-owner close policy without exposing another owner's data. |
 
 The four approved prices do not answer these questions. Finance must also
 review the real CDN cost and margin: the approved charge for a **verified
@@ -168,6 +168,15 @@ for each row before proposing production publication:
 | Four source meters | First assignment, first verified download, actual physical byte-seconds through deletion, and successful object creation each have immutable receipts, idempotent Billing facts, correct Product and UTC window, quantities and source digests. Reconcile raw CDN egress separately as provider cost/anomaly evidence. |
 | Completeness | Platform `platform_grants` seal covers every historically authorized Product; producer `ota_producer` seal covers facts/objects and all four metric counts. Compare source high-water and delivered outbox with Billing fact IDs/content; verify exact Product sets and fact SHA-256. Include zero-use, disabled and retired Products. Missing/mismatched seals, unknown objects and unexplained CDN anomalies must leave the close `incomplete`. |
 | Price and period | Verify full UTC-month invoice/estimate, both sides of the future cutover, other services on the same card, tax and per-Product line rounding, owner transfer/closure holds, old months with OTA evidence but no OTA charge, and unchanged issued invoices. Test the actual signed-in current/upcoming price API and its account scope when A1 exists; the current reference page is not proof of an effective card. |
+
+`internal/billingstore/invoices.go` rejects an OTA-priced close outside a
+complete UTC month or without a current owner covering the full month,
+before checking source seals. After source verification it also requires the
+billing profile's ownership version to match that current responsibility.
+It retains the attempted period with `ota_period_not_utc_month`,
+`ota_ownership_month_incomplete`, or `ota_ownership_profile_mismatch`; historical
+non-OTA months keep their existing close path. This is a conservative hold,
+not an ownership allocation or a finished preview policy.
 
 `internal/billingstore/ota_period_seals.go` already stores immutable,
 digest-idempotent seals and compares Product sets, counts and fact digest when
