@@ -3,6 +3,7 @@ package billingstore
 import (
 	"context"
 	"errors"
+	"math/big"
 	"os"
 	"strings"
 	"sync"
@@ -169,5 +170,33 @@ func TestOTAUsageFactPreservesOriginalProductGrantEvidence(t *testing.T) {
 		VALUES($1,$2,$3,'ota','device_task',1,0,'tasks',$4,$5,'ota-producer',$6,3)`,
 		fact.UsageID+"-partial", fact.OrganizationID, fact.ProductID, start, start.Add(time.Minute), fact.SourceSHA256); err == nil {
 		t.Fatal("database accepted a partial OTA grant witness")
+	}
+	monthEnd := start.AddDate(0, 1, 0)
+	byteMicros := new(big.Int).Mul(big.NewInt(1<<30), big.NewInt(monthEnd.Sub(start).Microseconds())).String()
+	storage := fact
+	storage.UsageID = fact.UsageID + "-storage"
+	storage.MetricCode, storage.Unit = billing.MetricOTAArtifactStorageGiBMonth, billing.UnitOTAGiBMonth
+	storage.Quantity, storage.QuantityScale = 1_000_000_000, 9
+	storage.WindowEnd = monthEnd
+	storage.OTAStorageObject = &billing.OTAStorageObjectEvidence{
+		ObjectSHA256: strings.Repeat("c", 64), ByteMicroseconds: byteMicros}
+	storedStorage, created, err := s.PutUsageFact(ctx, storage)
+	if err != nil || !created || !sameOTAStorageObject(storedStorage.OTAStorageObject, storage.OTAStorageObject) ||
+		!sameOTAGrant(storedStorage.OTAGrant, grant) {
+		t.Fatalf("stored per-object OTA storage evidence: %+v created=%v err=%v", storedStorage, created, err)
+	}
+	if _, duplicate, err := s.PutUsageFact(ctx, storage); err != nil || duplicate {
+		t.Fatalf("exact storage replay: duplicate=%v err=%v", duplicate, err)
+	}
+	changedStorage := storage
+	changedStorage.OTAStorageObject = &billing.OTAStorageObjectEvidence{
+		ObjectSHA256: storage.OTAStorageObject.ObjectSHA256, ByteMicroseconds: "1"}
+	if _, _, err := s.PutUsageFact(ctx, changedStorage); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed object byte-time replay accepted: %v", err)
+	}
+	duplicateObject := storage
+	duplicateObject.UsageID += "-duplicate"
+	if _, _, err := s.PutUsageFact(ctx, duplicateObject); err == nil {
+		t.Fatal("database accepted a second fact for the same object and UTC month")
 	}
 }

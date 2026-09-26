@@ -3,6 +3,7 @@ package billingstore
 import (
 	"context"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -55,5 +56,37 @@ func TestPricedOTAFactsRequireHistoricalGrantAndHoldPositiveStorage(t *testing.T
 	fact.MetricCode, fact.Quantity, fact.OTAGrant = billing.MetricOTADeviceTask, 1, grant
 	if err := store.VerifyOTAFactGrants(context.Background(), []billing.UsageFact{fact}); !errors.Is(err, ErrIncomplete) {
 		t.Fatalf("mismatched historical grant accepted: %v", err)
+	}
+}
+
+func TestPricedOTAStorageChecksEveryObjectAndProductRounding(t *testing.T) {
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	denominator := new(big.Int).Mul(big.NewInt(end.Sub(start).Microseconds()), big.NewInt(1<<30))
+	half := new(big.Int).Rsh(denominator, 1).String()
+	grant := &billing.OTAGrantEvidence{ProductServiceRevision: 2,
+		ServiceGrantSHA256: strings.Repeat("a", 64), AuthorizedAt: start.Add(-time.Hour)}
+	first := billing.UsageFact{OrganizationID: "cloud", ProductID: "product", ServiceCode: billing.ServiceOTA,
+		MetricCode: billing.MetricOTAArtifactStorageGiBMonth, Quantity: 500_000_000,
+		WindowStart: start, WindowEnd: end, OTAGrant: grant,
+		OTAStorageObject: &billing.OTAStorageObjectEvidence{ObjectSHA256: strings.Repeat("b", 64), ByteMicroseconds: half}}
+	second := first
+	second.OTAStorageObject = &billing.OTAStorageObjectEvidence{ObjectSHA256: strings.Repeat("c", 64), ByteMicroseconds: half}
+	store := &Store{}
+	store.SetOTAGrantVerifier(otaGrantVerifierFunc(func(context.Context, string, string, billing.OTAGrantEvidence) error { return nil }))
+	if err := store.VerifyOTAFactGrants(context.Background(), []billing.UsageFact{first, second}); err != nil {
+		t.Fatalf("matching per-object byte-time was held: %v", err)
+	}
+	if err := store.VerifyOTAFactGrants(context.Background(), []billing.UsageFact{first, first}); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("duplicate physical object accepted: %v", err)
+	}
+	second.Quantity++
+	if err := store.VerifyOTAFactGrants(context.Background(), []billing.UsageFact{first, second}); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("storage quantity above exact byte-time accepted: %v", err)
+	}
+	second.Quantity--
+	second.OTAGrant = nil
+	if err := store.VerifyOTAFactGrants(context.Background(), []billing.UsageFact{first, second}); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("object without original Product grant accepted: %v", err)
 	}
 }
