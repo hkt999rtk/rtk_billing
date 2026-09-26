@@ -70,9 +70,10 @@ Use one consistent **read-only** database snapshot to capture:
    scoped aggregates and redacted IDs in the approval packet.
 
 The current `ActivePricingVersion` lookup uses time and currency, **not**
-`plan_key`, account, or contract. The schema has no explicit `tax_category`
-or rate `quantity_scale`; a zero `tax_rate_basis_points` is a default, **not**
-evidence of an approved tax exemption. The inventory must expose these gaps,
+`plan_key`, account, or contract. Rate rows now have nullable `tax_category`
+and `quantity_scale` metadata; historical rows remain null until reviewed.
+A zero `tax_rate_basis_points` is a default, **not** evidence of an approved
+tax exemption. The inventory must expose unresolved values and scope gaps,
 not label the existing implementation a valid customer-specific preflight.
 No checked-in command currently produces a complete-card diff or a signed
 approval packet; until P1 implements it, the inventory is review evidence
@@ -87,7 +88,7 @@ contains all of the following:
 | --- | --- |
 | Tax | Finance/Legal sign-off for category, rate or exemption basis, effective dates, and treatment of historical non-OTA rates. Persist an explicit tax category and approved value; do not treat the database default of zero as sign-off. |
 | Applicability | Decide whether all managed-cloud accounts share one card or whether tier/account/contract exceptions apply. Implement that selection in invoice close, usage estimates, and the tenant price API with the same effective interval. Define evaluation and private-contract treatment. Missing or ambiguous assignment must fail closed. |
-| Meter precision | Persist/validate each rate's expected fact quantity scale and the four exact OTA service/metric/unit/price/rounding identities. Existing facts carry `quantity_scale`; rates currently do not. |
+| Meter precision | Require a reviewed, non-null rate `quantity_scale` on the publishable full card and the four exact OTA service/metric/unit/price/rounding identities. The nullable rate field now round-trips and rejects mismatched facts when set; historical nulls still need explicit review. |
 | Version provenance | Persist a stable base-version identity, complete-card manifest digest, approvers and approval timestamp. Draft creation must recheck base, scope, tax and diff atomically. No such preflight/publish tool exists yet. |
 | UTC cutover | Implement a future-only `00:00:00Z` first-of-month publication transaction, contiguous non-overlapping intervals, and serialization with invoice close. The current activation path rejects future `effective_from` and immediately retires the prior card. Preserve historical intervals and invoices. |
 | Ownership/month policy | Move chargeable OTA invoice/preview periods to complete UTC months. Specify migration from profile-local months and the treatment of a mid-month owner transfer or Cloud closure. Until a verifiable allocation rule exists, hold the affected OTA month for manual review and do not expose another owner's data. |

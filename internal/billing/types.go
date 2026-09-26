@@ -71,7 +71,9 @@ type PricingRate struct {
 	Unit               string       `json:"unit"`
 	UnitPriceMinor     int64        `json:"unit_price_minor"`
 	UnitPriceScale     int          `json:"unit_price_scale"`
+	QuantityScale      *int         `json:"quantity_scale,omitempty"`
 	RoundingMode       RoundingMode `json:"rounding_mode"`
+	TaxCategory        *string      `json:"tax_category,omitempty"`
 	TaxRateBasisPoints int64        `json:"tax_rate_basis_points"`
 }
 

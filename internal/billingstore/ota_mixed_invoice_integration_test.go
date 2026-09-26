@@ -47,7 +47,7 @@ func TestEmptyOTASealsDoNotCompleteMixedServiceInvoice(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
 	now := end.Add(time.Hour)
-	rates := append(billing.ProposedOTARates(), billing.PricingRate{
+	rates := append(pricedOTARatesForTest(), billing.PricingRate{
 		ServiceCode: "mqtt", MetricCode: "publish_count", Description: "MQTT publishes",
 		Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6, RoundingMode: billing.RoundingHalfUp,
 	})
@@ -137,7 +137,7 @@ func TestPreactivationOTAFactsDoNotBlockMQTTOrBecomeRetroactiveCharges(t *testin
 	if _, err := store.ActivatePricingVersion(ctx, oldCard.ID, start); err != nil {
 		t.Fatal(err)
 	}
-	newRates := append([]billing.PricingRate{mqtt}, billing.ProposedOTARates()...)
+	newRates := append([]billing.PricingRate{mqtt}, pricedOTARatesForTest()...)
 	newCard, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
 		PlanKey: "preactivation", Version: 2, Currency: billing.CurrencyTWD,
 		EffectiveFrom: cutover, CreatedBy: "integration-test", Now: cutover, Rates: newRates,
