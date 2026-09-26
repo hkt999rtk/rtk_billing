@@ -14,6 +14,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
 	"github.com/hkt999rtk/rtk_billing/internal/currency"
+	"github.com/hkt999rtk/rtk_billing/internal/database"
 )
 
 type CreatePricingVersionInput struct {
@@ -98,7 +99,23 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom); err != nil {
 		return billing.PricingVersion{}, mapNotFound(err)
 	}
-	if status != "draft" || !currency.CanSettle(code) || effectiveFrom.After(now.UTC()) {
+	if status != "draft" || !currency.CanSettle(code) {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	view := *s
+	view.db = database.TransactionConnection{Tx: tx}
+	rates, err := view.listPricingRates(ctx, id)
+	if err != nil {
+		return billing.PricingVersion{}, err
+	}
+	otaEnabled, otaComplete := billing.OTAPricingState(rates)
+	if !otaComplete {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	// The immediate activation API cannot publish a future UTC-month cutover.
+	// Until P2 adds that scheduling transaction, any OTA rate would permit a
+	// backdated charge, so this path intentionally cannot activate OTA pricing.
+	if otaEnabled || effectiveFrom.After(now.UTC()) {
 		return billing.PricingVersion{}, ErrConflict
 	}
 	rows, err := tx.Query(ctx, `SELECT id::text, status, effective_from FROM pricing_plan_versions

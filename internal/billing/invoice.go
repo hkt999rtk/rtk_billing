@@ -36,6 +36,16 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 		}
 		rateByMetric[key] = rate
 	}
+	for _, fact := range facts {
+		if fact.OrganizationID != invoice.OrganizationID || fact.WindowStart.Before(invoice.PeriodStart) || fact.WindowEnd.After(invoice.PeriodEnd) || !fact.WindowEnd.After(fact.WindowStart) {
+			return Invoice{}, ErrInvalidInvoice
+		}
+	}
+	var err error
+	facts, err = BillableUsageFacts(facts, rates)
+	if err != nil {
+		return Invoice{}, err
+	}
 	type aggregate struct {
 		quantity int64
 		scale    int
@@ -43,9 +53,6 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 	}
 	aggregates := make(map[string]aggregate)
 	for _, fact := range facts {
-		if fact.OrganizationID != invoice.OrganizationID || fact.WindowStart.Before(invoice.PeriodStart) || fact.WindowEnd.After(invoice.PeriodEnd) || !fact.WindowEnd.After(fact.WindowStart) {
-			return Invoice{}, ErrInvalidInvoice
-		}
 		rateKey := fact.ServiceCode + "\x00" + fact.MetricCode + "\x00" + fact.Unit
 		if _, ok := rateByMetric[rateKey]; !ok {
 			return Invoice{}, fmt.Errorf("%w: %s/%s/%s", ErrRateNotFound, fact.ServiceCode, fact.MetricCode, fact.Unit)
