@@ -74,6 +74,41 @@ func TestBuildDraftInvoiceKeepsProductDetailsAndTotals(t *testing.T) {
 	}
 }
 
+func TestInvoiceTotalTaxUsesCombinedSubtotalAndStableAllocation(t *testing.T) {
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	rate := int64(500)
+	facts := []UsageFact{
+		{UsageID: "b", OrganizationID: "org", ProductID: "product-b", ServiceCode: "logger", MetricCode: "ingest", Quantity: 5, Unit: "requests", WindowStart: start, WindowEnd: start.Add(time.Minute)},
+		{UsageID: "a", OrganizationID: "org", ProductID: "product-a", ServiceCode: "logger", MetricCode: "ingest", Quantity: 5, Unit: "requests", WindowStart: start, WindowEnd: start.Add(time.Minute)},
+	}
+	rates := []PricingRate{{ServiceCode: "logger", MetricCode: "ingest", Unit: "requests", UnitPriceMinor: 1, RoundingMode: RoundingHalfUp}}
+	base := Invoice{OrganizationID: "org", PricingVersionID: "price", Currency: CurrencyTWD, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0),
+		TaxMode: TaxModeInvoiceTotal, InvoiceTaxRateBasisPoints: &rate, InvoiceTaxRoundingMode: RoundingHalfUp, InvoiceTaxCategory: "standard"}
+	got, err := BuildDraftInvoice(base, facts, rates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SubtotalMinor != 10 || got.TaxMinor != 1 || got.TotalMinor != 11 || len(got.Lines) != 2 ||
+		got.Lines[0].ProductID != "product-a" || got.Lines[0].TaxMinor != 1 || got.Lines[1].TaxMinor != 0 {
+		t.Fatalf("invoice total tax allocation: %+v", got)
+	}
+	reordered, err := BuildDraftInvoice(base, []UsageFact{facts[1], facts[0]}, rates)
+	if err != nil || reordered.Lines[0].TaxMinor != got.Lines[0].TaxMinor || reordered.Lines[1].TaxMinor != got.Lines[1].TaxMinor {
+		t.Fatalf("input order changed tax allocation: %+v err=%v", reordered, err)
+	}
+	legacy := base
+	legacy.TaxMode, legacy.InvoiceTaxRateBasisPoints, legacy.InvoiceTaxRoundingMode, legacy.InvoiceTaxCategory = TaxModeLine, nil, "", ""
+	legacy, err = BuildDraftInvoice(legacy, facts, rates)
+	if err != nil || legacy.TaxMinor != 0 {
+		t.Fatalf("legacy line tax changed: %+v err=%v", legacy, err)
+	}
+	missing := base
+	missing.InvoiceTaxRateBasisPoints = nil
+	if _, err := BuildDraftInvoice(missing, facts, rates); !errors.Is(err, ErrInvalidInvoice) {
+		t.Fatalf("missing approved tax rate must fail closed: %v", err)
+	}
+}
+
 func TestIssuedInvoiceCannotBeRebuiltAndSettlementIsExact(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	invoice := Invoice{

@@ -453,6 +453,22 @@ paths:
             schema:
               type: object
               additionalProperties: true
+              properties:
+                tax_mode:
+                  type: string
+                  enum: [line, invoice_total]
+                  description: Existing versions default to line. Invoice-total drafts require explicit policy and cannot use the generic activation route.
+                invoice_tax_rate_basis_points:
+                  type: integer
+                  minimum: 0
+                  maximum: 10000
+                  nullable: true
+                invoice_tax_rounding_mode:
+                  type: string
+                  enum: [half_up, down, up]
+                invoice_tax_category:
+                  type: string
+                  minLength: 1
       responses:
         '201':
           description: Pricing version created.
