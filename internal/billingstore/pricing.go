@@ -113,7 +113,25 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 	return out, nil
 }
 
+type ReviewedOTAPublication struct {
+	BaseVersionID  string    `json:"base_version_id"`
+	RateSetSHA256  string    `json:"rate_set_sha256"`
+	FirstReviewer  string    `json:"first_reviewer"`
+	SecondReviewer string    `json:"second_reviewer"`
+	ApprovedAt     time.Time `json:"approved_at"`
+}
+
 func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.Time) (billing.PricingVersion, error) {
+	return s.activatePricingVersion(ctx, id, now, nil)
+}
+
+// PublishReviewedOTAPricingVersion is the only OTA activation path. The
+// generic activation route remains blocked for OTA and invoice-total drafts.
+func (s *Store) PublishReviewedOTAPricingVersion(ctx context.Context, id string, now time.Time, approval ReviewedOTAPublication) (billing.PricingVersion, error) {
+	return s.activatePricingVersion(ctx, id, now, &approval)
+}
+
+func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.Time, approval *ReviewedOTAPublication) (billing.PricingVersion, error) {
 	if !required(id) {
 		return billing.PricingVersion{}, ErrConflict
 	}
@@ -131,10 +149,18 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 	var status string
 	var effectiveFrom time.Time
 	var taxMode billing.TaxCalculationMode
-	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from, tax_mode FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom, &taxMode); err != nil {
+	var taxRate *int64
+	var taxRounding billing.RoundingMode
+	var taxCategory string
+	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from, tax_mode,
+		invoice_tax_rate_basis_points, COALESCE(invoice_tax_rounding_mode,''), COALESCE(invoice_tax_category,'')
+		FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom, &taxMode, &taxRate, &taxRounding, &taxCategory); err != nil {
 		return billing.PricingVersion{}, mapNotFound(err)
 	}
-	if status != "draft" || !currency.CanSettle(code) || taxMode == billing.TaxModeInvoiceTotal {
+	if status != "draft" || !currency.CanSettle(code) {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	if approval == nil && taxMode == billing.TaxModeInvoiceTotal {
 		// Invoice-total drafts are reviewable, but require a separate approved
 		// activation path with a complete tax and Product-eligibility manifest.
 		return billing.PricingVersion{}, ErrConflict
@@ -149,13 +175,40 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 	if !otaComplete {
 		return billing.PricingVersion{}, ErrConflict
 	}
-	// OTA publication still requires the reviewed complete-card manifest,
-	// explicit tax and account scope, and the UTC-month close policy. Generic
-	// pricing can be scheduled, but this route cannot start OTA charges.
-	if otaEnabled {
+	if approval == nil && otaEnabled {
 		return billing.PricingVersion{}, ErrConflict
 	}
+	if approval != nil {
+		approval.FirstReviewer = strings.TrimSpace(approval.FirstReviewer)
+		approval.SecondReviewer = strings.TrimSpace(approval.SecondReviewer)
+		if !otaEnabled || code != billing.CurrencyTWD || taxMode != billing.TaxModeInvoiceTotal ||
+			taxRate == nil || *taxRate != 500 || taxRounding != billing.RoundingHalfUp || taxCategory != "standard" ||
+			!required(approval.BaseVersionID) || !required(approval.FirstReviewer) || !required(approval.SecondReviewer) ||
+			approval.FirstReviewer == approval.SecondReviewer || approval.ApprovedAt.IsZero() || approval.ApprovedAt.After(now.UTC()) ||
+			len(approval.RateSetSHA256) != 64 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		if _, err := hex.DecodeString(approval.RateSetSHA256); err != nil || strings.ToLower(approval.RateSetSHA256) != approval.RateSetSHA256 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		for _, rate := range rates {
+			if rate.TaxCategory == nil || *rate.TaxCategory != "standard" {
+				return billing.PricingVersion{}, ErrConflict
+			}
+		}
+		base, err := view.ActivePricingVersion(ctx, now.UTC(), code)
+		if err != nil || base.ID != approval.BaseVersionID {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		review, err := billing.ReviewOTACandidateRates(base.ID, base.Rates, rates)
+		if err != nil || review.RateSetSHA256 != approval.RateSetSHA256 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+	}
 	scheduled := effectiveFrom.After(now.UTC())
+	if approval != nil && !scheduled {
+		return billing.PricingVersion{}, ErrConflict
+	}
 	if scheduled {
 		monthStart := time.Date(effectiveFrom.UTC().Year(), effectiveFrom.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 		if !effectiveFrom.Equal(monthStart) {
@@ -217,6 +270,9 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 		}
 	}
 	if previousID != "" {
+		if approval != nil && previousID != approval.BaseVersionID {
+			return billing.PricingVersion{}, ErrConflict
+		}
 		var invoiced bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_invoices
 			WHERE pricing_version_id=$1 AND period_start >= $2)`, previousID, effectiveFrom.UTC()).Scan(&invoiced); err != nil {
@@ -226,6 +282,17 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 			return billing.PricingVersion{}, ErrConflict
 		}
 		if _, err := tx.Exec(ctx, `UPDATE pricing_plan_versions SET status='retired', effective_until=$2 WHERE id=$1`, previousID, effectiveFrom.UTC()); err != nil {
+			return billing.PricingVersion{}, err
+		}
+	}
+	if approval != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO ota_pricing_publications
+			(pricing_version_id, base_version_id, rate_set_sha256, scope_code, first_reviewer,
+			 second_reviewer, approved_at, published_at, effective_from, tax_mode,
+			 tax_rate_basis_points, tax_rounding_mode, tax_category)
+			VALUES ($1,$2,$3,'commercial_active_product_ota',$4,$5,$6,$7,$8,'invoice_total',500,'half_up','standard')`,
+			id, approval.BaseVersionID, approval.RateSetSHA256, approval.FirstReviewer,
+			approval.SecondReviewer, approval.ApprovedAt.UTC(), now.UTC(), effectiveFrom.UTC()); err != nil {
 			return billing.PricingVersion{}, err
 		}
 	}
@@ -278,6 +345,36 @@ func (s *Store) ActivePricingVersion(ctx context.Context, at time.Time, currency
 		  AND (effective_until IS NULL OR effective_until > $2)
 		ORDER BY effective_from DESC, version DESC LIMIT 2
 	`, currency, at.UTC())
+	if err != nil {
+		return billing.PricingVersion{}, err
+	}
+	defer rows.Close()
+	var id string
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return billing.PricingVersion{}, err
+		}
+		return billing.PricingVersion{}, ErrPricingUnavailable
+	}
+	if err := rows.Scan(&id); err != nil {
+		return billing.PricingVersion{}, err
+	}
+	if rows.Next() {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	if err := rows.Err(); err != nil {
+		return billing.PricingVersion{}, err
+	}
+	rows.Close()
+	return s.GetPricingVersion(ctx, id)
+}
+
+// UpcomingPricingVersion returns the single next published interval. A draft
+// remains invisible to customers until it is explicitly published.
+func (s *Store) UpcomingPricingVersion(ctx context.Context, after time.Time, code billing.Currency) (billing.PricingVersion, error) {
+	rows, err := s.db.Query(ctx, `SELECT id::text FROM pricing_plan_versions
+		WHERE currency=$1 AND status IN ('active','retired') AND effective_from>$2
+		ORDER BY effective_from ASC LIMIT 2`, code, after.UTC())
 	if err != nil {
 		return billing.PricingVersion{}, err
 	}

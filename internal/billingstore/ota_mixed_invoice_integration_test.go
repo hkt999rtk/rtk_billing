@@ -44,6 +44,7 @@ func TestEmptyOTASealsDoNotCompleteMixedServiceInvoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := New(db)
+	store.SetOTATierVerifier(otaTierVerifierFunc(func(context.Context, string, time.Time, time.Time) error { return nil }))
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
 	putOTATestCurrentOwner(t, ctx, db, account.ID, start)

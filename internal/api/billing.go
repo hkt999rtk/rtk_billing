@@ -28,8 +28,11 @@ type billingPersistence interface {
 	PutBillingProfile(context.Context, billingstore.PutProfileInput) (billing.BillingProfile, error)
 	CreatePricingVersion(context.Context, billingstore.CreatePricingVersionInput) (billing.PricingVersion, error)
 	ActivatePricingVersion(context.Context, string, time.Time) (billing.PricingVersion, error)
+	PublishReviewedOTAPricingVersion(context.Context, string, time.Time, billingstore.ReviewedOTAPublication) (billing.PricingVersion, error)
 	ActivePricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
+	UpcomingPricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
 	VerifyOTAFactGrants(context.Context, []billing.UsageFact) error
+	VerifyOTAAccountEligibility(context.Context, string, string, time.Time, time.Time) error
 	PutUsageFact(context.Context, billing.UsageFact) (billing.UsageFact, bool, error)
 	ListUsageFacts(context.Context, string, time.Time, time.Time) ([]billing.UsageFact, error)
 	ListInvoices(context.Context, string, billingstore.InvoiceFilter) (billingstore.InvoicePage, error)
@@ -91,6 +94,57 @@ type billingUsageResponse struct {
 	// complete UTC month for the current owner. Other services remain visible.
 	OTAEstimateStatus string `json:"ota_estimate_status"`
 	OTAEstimateReason string `json:"ota_estimate_reason,omitempty"`
+}
+
+// billingPriceBook reports effective intervals, never an unreviewed draft.
+// Eligibility for an unfinished month remains provisional until settlement.
+type billingPriceBook struct {
+	Currency       billing.Currency        `json:"currency"`
+	AsOf           time.Time               `json:"as_of"`
+	Current        *billing.PricingVersion `json:"current"`
+	Upcoming       *billing.PricingVersion `json:"upcoming"`
+	OTAEligibility string                  `json:"ota_eligibility"`
+}
+
+func (s *Server) getBillingPricing(c *gin.Context) {
+	if !s.requireBilling(c) {
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	now := s.billing.now().UTC()
+	out := billingPriceBook{Currency: currency.Settlement, AsOf: now, OTAEligibility: "not_priced"}
+	current, err := s.billing.store.ActivePricingVersion(c.Request.Context(), now, currency.Settlement)
+	if err != nil && !errors.Is(err, billingstore.ErrPricingUnavailable) {
+		writeError(c, http.StatusServiceUnavailable, "PRICING_UNAVAILABLE", "Current pricing cannot be verified")
+		return
+	}
+	if err == nil {
+		out.Current = &current
+		if enabled, complete := billing.OTAPricingState(current.Rates); !complete {
+			writeError(c, http.StatusServiceUnavailable, "PRICING_UNAVAILABLE", "Current OTA pricing is incomplete")
+			return
+		} else if enabled {
+			start := billingUTCMonthStart(now)
+			accountID := ""
+			if scope, ok := billingidentity.FromContext(c.Request.Context()); ok {
+				accountID = scope.AccountID
+			}
+			if err := s.billing.store.VerifyOTAAccountEligibility(c.Request.Context(), c.Param("orgId"), accountID, start, start.AddDate(0, 1, 0)); err != nil {
+				out.OTAEligibility = "held_for_review"
+			} else {
+				out.OTAEligibility = "provisional"
+			}
+		}
+	}
+	upcoming, err := s.billing.store.UpcomingPricingVersion(c.Request.Context(), now, currency.Settlement)
+	if err != nil && !errors.Is(err, billingstore.ErrPricingUnavailable) {
+		writeError(c, http.StatusServiceUnavailable, "PRICING_UNAVAILABLE", "Upcoming pricing cannot be verified")
+		return
+	}
+	if err == nil {
+		out.Upcoming = &upcoming
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 type billingForecast struct {
@@ -169,6 +223,15 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 			otaStatus, otaReason = "held_for_review", "owner_month_incomplete"
 		} else if !billingUTCMonth(start, end) {
 			otaStatus, otaReason = "held_for_review", "period_not_utc_month"
+		}
+		if otaStatus == "estimated" {
+			accountID := ""
+			if scope, ok := billingidentity.FromContext(ctx); ok {
+				accountID = scope.AccountID
+			}
+			if err := s.billing.store.VerifyOTAAccountEligibility(ctx, organizationID, accountID, start, end); err != nil {
+				otaStatus, otaReason = "held_for_review", "account_eligibility_unverified"
+			}
 		}
 	}
 	facts, err := s.billing.store.ListUsageFacts(ctx, organizationID, start, end)
@@ -568,6 +631,22 @@ func (s *Server) activateBillingPricingVersion(c *gin.Context) {
 		return
 	}
 	version, err := s.billing.store.ActivatePricingVersion(c.Request.Context(), c.Param("pricingVersionId"), s.billing.now())
+	if err != nil {
+		writeBillingError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"pricing_version": version})
+}
+
+func (s *Server) publishReviewedOTAPricingVersion(c *gin.Context) {
+	if !s.requireInternalBilling(c) {
+		return
+	}
+	var approval billingstore.ReviewedOTAPublication
+	if !bindPaymentStrict(c, &approval) {
+		return
+	}
+	version, err := s.billing.store.PublishReviewedOTAPricingVersion(c.Request.Context(), c.Param("pricingVersionId"), s.billing.now(), approval)
 	if err != nil {
 		writeBillingError(c, err)
 		return
