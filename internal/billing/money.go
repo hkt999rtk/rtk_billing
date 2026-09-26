@@ -17,7 +17,8 @@ func PriceUsage(rate PricingRate, quantity int64, quantityScale int) (subtotalMi
 	if quantity < 0 || rate.UnitPriceMinor < 0 || rate.TaxRateBasisPoints < 0 || rate.TaxRateBasisPoints > 10000 {
 		return 0, 0, 0, ErrInvalidAmount
 	}
-	if quantityScale < 0 || quantityScale > 9 || rate.UnitPriceScale < 0 || rate.UnitPriceScale > 9 {
+	if quantityScale < 0 || quantityScale > 9 || rate.UnitPriceScale < 0 || rate.UnitPriceScale > 9 ||
+		(rate.QuantityScale != nil && *rate.QuantityScale != quantityScale) {
 		return 0, 0, 0, ErrInvalidScale
 	}
 	denominator := pow10(quantityScale + rate.UnitPriceScale)

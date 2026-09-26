@@ -1,6 +1,9 @@
 package billing
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // OTA facts are scoped to a Product. Prices remain draft until an operator
 // includes all required rates in an activated pricing version.
@@ -53,11 +56,13 @@ func otaUTCMinuteWindow(fact UsageFact) bool {
 // ProposedOTARates returns unactivated TWD planning rates before tax. The
 // Billing store never installs or activates rates from this helper by itself.
 func ProposedOTARates() []PricingRate {
+	whole := 0
+	fractional := otaFractionalQuantityScale
 	return []PricingRate{
-		{ServiceCode: ServiceOTA, MetricCode: MetricOTADeviceTask, Description: "Firmware OTA device tasks", Unit: UnitOTADeviceTask, UnitPriceMinor: 96, UnitPriceScale: 3, RoundingMode: RoundingHalfUp},
-		{ServiceCode: ServiceOTA, MetricCode: MetricOTASuccessfulDownloadGiB, Description: "Verified firmware downloads", Unit: UnitOTAGiB, UnitPriceMinor: 96, UnitPriceScale: 2, RoundingMode: RoundingHalfUp},
-		{ServiceCode: ServiceOTA, MetricCode: MetricOTAArtifactStorageGiBMonth, Description: "Firmware artifact storage", Unit: UnitOTAGiBMonth, UnitPriceMinor: 96, UnitPriceScale: 2, RoundingMode: RoundingHalfUp},
-		{ServiceCode: ServiceOTA, MetricCode: MetricOTAArtifactWrite, Description: "Firmware artifact writes", Unit: UnitOTAArtifactWrite, UnitPriceMinor: 144, UnitPriceScale: 6, RoundingMode: RoundingHalfUp},
+		{ServiceCode: ServiceOTA, MetricCode: MetricOTADeviceTask, Description: "Firmware OTA device tasks", Unit: UnitOTADeviceTask, UnitPriceMinor: 96, UnitPriceScale: 3, QuantityScale: &whole, RoundingMode: RoundingHalfUp},
+		{ServiceCode: ServiceOTA, MetricCode: MetricOTASuccessfulDownloadGiB, Description: "Verified firmware downloads", Unit: UnitOTAGiB, UnitPriceMinor: 96, UnitPriceScale: 2, QuantityScale: &fractional, RoundingMode: RoundingHalfUp},
+		{ServiceCode: ServiceOTA, MetricCode: MetricOTAArtifactStorageGiBMonth, Description: "Firmware artifact storage", Unit: UnitOTAGiBMonth, UnitPriceMinor: 96, UnitPriceScale: 2, QuantityScale: &fractional, RoundingMode: RoundingHalfUp},
+		{ServiceCode: ServiceOTA, MetricCode: MetricOTAArtifactWrite, Description: "Firmware artifact writes", Unit: UnitOTAArtifactWrite, UnitPriceMinor: 144, UnitPriceScale: 6, QuantityScale: &whole, RoundingMode: RoundingHalfUp},
 	}
 }
 
@@ -68,25 +73,27 @@ func ProposedOTATaskRate() PricingRate { return ProposedOTARates()[0] }
 // OTAPricingState distinguishes an unpriced OTA source from a complete OTA
 // price book. A partial or changed meter set must not silently price facts.
 func OTAPricingState(rates []PricingRate) (enabled, complete bool) {
-	units := map[string]string{
-		MetricOTADeviceTask:              UnitOTADeviceTask,
-		MetricOTASuccessfulDownloadGiB:   UnitOTAGiB,
-		MetricOTAArtifactStorageGiBMonth: UnitOTAGiBMonth,
-		MetricOTAArtifactWrite:           UnitOTAArtifactWrite,
+	expected := make(map[string]PricingRate, 4)
+	for _, rate := range ProposedOTARates() {
+		expected[rate.MetricCode] = rate
 	}
-	seen := make(map[string]bool, len(units))
+	seen := make(map[string]bool, len(expected))
 	for _, rate := range rates {
 		if rate.ServiceCode != ServiceOTA {
 			continue
 		}
 		enabled = true
-		unit, ok := units[rate.MetricCode]
-		if !ok || unit != rate.Unit || seen[rate.MetricCode] {
+		approved, ok := expected[rate.MetricCode]
+		if !ok || seen[rate.MetricCode] || rate.Unit != approved.Unit ||
+			rate.UnitPriceMinor != approved.UnitPriceMinor || rate.UnitPriceScale != approved.UnitPriceScale ||
+			rate.RoundingMode != approved.RoundingMode || rate.QuantityScale == nil ||
+			*rate.QuantityScale != *approved.QuantityScale || rate.TaxCategory == nil ||
+			strings.TrimSpace(*rate.TaxCategory) == "" {
 			return true, false
 		}
 		seen[rate.MetricCode] = true
 	}
-	return enabled, !enabled || len(seen) == len(units)
+	return enabled, !enabled || len(seen) == len(expected)
 }
 
 // BillableUsageFacts omits historical OTA evidence only while the selected

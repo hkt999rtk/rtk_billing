@@ -54,7 +54,7 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	version, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
 		PlanKey: "ota-test", Version: 1, Currency: billing.CurrencyTWD,
 		EffectiveFrom: start, CreatedBy: "integration-test", Now: now,
-		Rates: billing.ProposedOTARates(),
+		Rates: pricedOTARatesForTest(),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -10,6 +10,15 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 )
 
+func pricedOTARatesForTest() []billing.PricingRate {
+	rates := billing.ProposedOTARates()
+	for i := range rates {
+		category := "test-approved"
+		rates[i].TaxCategory = &category
+	}
+	return rates
+}
+
 func testOTAPeriodSeal(issuer string) OTAPeriodSeal {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	seal := OTAPeriodSeal{
@@ -61,7 +70,7 @@ func TestOTAPeriodSealCanonicalReplayAndValidation(t *testing.T) {
 }
 
 func TestOTAPricingRequiresExactFourMeters(t *testing.T) {
-	rates := billing.ProposedOTARates()
+	rates := pricedOTARatesForTest()
 	if enabled, complete := otaPricingComplete(rates); !enabled || !complete {
 		t.Fatal("complete OTA pricing was rejected")
 	}

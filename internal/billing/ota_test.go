@@ -6,6 +6,15 @@ import (
 	"time"
 )
 
+func pricedOTARatesForTest() []PricingRate {
+	rates := ProposedOTARates()
+	for i := range rates {
+		category := "test-approved"
+		rates[i].TaxCategory = &category
+	}
+	return rates
+}
+
 func TestProposedOTATaskRateAggregatesDeviceTasks(t *testing.T) {
 	rate := ProposedOTATaskRate()
 	if rate.ServiceCode != "ota" || rate.MetricCode != "device_task" || rate.Unit != "tasks" {
@@ -20,7 +29,7 @@ func TestProposedOTATaskRateAggregatesDeviceTasks(t *testing.T) {
 func TestProposedOTARatesProduceFourProductLines(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	rates := ProposedOTARates()
+	rates := pricedOTARatesForTest()
 	facts := []UsageFact{
 		{UsageID: "task", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTADeviceTask, Quantity: 1, Unit: UnitOTADeviceTask, WindowStart: start, WindowEnd: start.Add(time.Minute)},
 		{UsageID: "download", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA, MetricCode: MetricOTASuccessfulDownloadGiB, Quantity: 100_000_000_000, QuantityScale: 9, Unit: UnitOTAGiB, WindowStart: start, WindowEnd: start.Add(time.Minute)},
@@ -69,10 +78,30 @@ func TestPreactivationOTAFactsAreAuditOnlyInDrafts(t *testing.T) {
 		t.Fatalf("missing non-OTA rate must fail closed, got %v", err)
 	}
 	for name, rates := range map[string][]PricingRate{
-		"partial": append([]PricingRate{mqttRate}, ProposedOTARates()[:3]...),
+		"partial": append([]PricingRate{mqttRate}, pricedOTARatesForTest()[:3]...),
 		"wrong-unit": func() []PricingRate {
-			ota := ProposedOTARates()
+			ota := pricedOTARatesForTest()
 			ota[0].Unit = "requests"
+			return append([]PricingRate{mqttRate}, ota...)
+		}(),
+		"wrong-approved-price": func() []PricingRate {
+			ota := pricedOTARatesForTest()
+			ota[1].UnitPriceMinor++
+			return append([]PricingRate{mqttRate}, ota...)
+		}(),
+		"missing-rate-precision": func() []PricingRate {
+			ota := pricedOTARatesForTest()
+			ota[2].QuantityScale = nil
+			return append([]PricingRate{mqttRate}, ota...)
+		}(),
+		"wrong-rounding": func() []PricingRate {
+			ota := pricedOTARatesForTest()
+			ota[3].RoundingMode = RoundingDown
+			return append([]PricingRate{mqttRate}, ota...)
+		}(),
+		"missing-tax-category": func() []PricingRate {
+			ota := pricedOTARatesForTest()
+			ota[0].TaxCategory = nil
 			return append([]PricingRate{mqttRate}, ota...)
 		}(),
 	} {

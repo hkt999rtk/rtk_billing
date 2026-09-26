@@ -57,17 +57,28 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 			rate.UnitPriceMinor < 0 || rate.UnitPriceScale < 0 || rate.UnitPriceScale > 9 || rate.TaxRateBasisPoints < 0 || rate.TaxRateBasisPoints > 10000 {
 			return billing.PricingVersion{}, ErrConflict
 		}
+		if rate.QuantityScale != nil && (*rate.QuantityScale < 0 || *rate.QuantityScale > 9) {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		if rate.TaxCategory != nil {
+			category := strings.TrimSpace(*rate.TaxCategory)
+			if category == "" {
+				return billing.PricingVersion{}, ErrConflict
+			}
+			rate.TaxCategory = &category
+		}
 		if rate.RoundingMode == "" {
 			rate.RoundingMode = billing.RoundingHalfUp
 		}
 		rate.PricingVersionID = out.ID
 		err = tx.QueryRow(ctx, `
 			INSERT INTO pricing_rates (pricing_version_id, service_code, metric_code, description, unit,
-			    unit_price_minor, unit_price_scale, rounding_mode, tax_rate_basis_points, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			    unit_price_minor, unit_price_scale, quantity_scale, rounding_mode, tax_category, tax_rate_basis_points, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			RETURNING id::text
 		`, out.ID, strings.TrimSpace(rate.ServiceCode), strings.TrimSpace(rate.MetricCode), strings.TrimSpace(rate.Description),
-			strings.TrimSpace(rate.Unit), rate.UnitPriceMinor, rate.UnitPriceScale, rate.RoundingMode, rate.TaxRateBasisPoints, in.Now.UTC()).Scan(&rate.ID)
+			strings.TrimSpace(rate.Unit), rate.UnitPriceMinor, rate.UnitPriceScale, rate.QuantityScale, rate.RoundingMode,
+			rate.TaxCategory, rate.TaxRateBasisPoints, in.Now.UTC()).Scan(&rate.ID)
 		if err != nil {
 			return billing.PricingVersion{}, err
 		}
@@ -230,7 +241,7 @@ func (s *Store) ActivePricingVersion(ctx context.Context, at time.Time, currency
 func (s *Store) listPricingRates(ctx context.Context, versionID string) ([]billing.PricingRate, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id::text, pricing_version_id::text, service_code, metric_code, description, unit,
-		       unit_price_minor, unit_price_scale, rounding_mode, tax_rate_basis_points
+		       unit_price_minor, unit_price_scale, quantity_scale, rounding_mode, tax_category, tax_rate_basis_points
 		FROM pricing_rates WHERE pricing_version_id = $1 ORDER BY service_code, metric_code, unit
 	`, versionID)
 	if err != nil {
@@ -240,9 +251,20 @@ func (s *Store) listPricingRates(ctx context.Context, versionID string) ([]billi
 	out := make([]billing.PricingRate, 0)
 	for rows.Next() {
 		var rate billing.PricingRate
+		var quantityScale pgtype.Int2
+		var taxCategory pgtype.Text
 		if err := rows.Scan(&rate.ID, &rate.PricingVersionID, &rate.ServiceCode, &rate.MetricCode, &rate.Description,
-			&rate.Unit, &rate.UnitPriceMinor, &rate.UnitPriceScale, &rate.RoundingMode, &rate.TaxRateBasisPoints); err != nil {
+			&rate.Unit, &rate.UnitPriceMinor, &rate.UnitPriceScale, &quantityScale, &rate.RoundingMode,
+			&taxCategory, &rate.TaxRateBasisPoints); err != nil {
 			return nil, err
+		}
+		if quantityScale.Valid {
+			scale := int(quantityScale.Int16)
+			rate.QuantityScale = &scale
+		}
+		if taxCategory.Valid {
+			category := taxCategory.String
+			rate.TaxCategory = &category
 		}
 		out = append(out, rate)
 	}

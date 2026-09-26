@@ -63,6 +63,14 @@ func TestPriceUsageRejectsOverflowAndInvalidScale(t *testing.T) {
 	if !errors.Is(err, ErrInvalidScale) {
 		t.Fatalf("scale err=%v", err)
 	}
+	expectedScale := 9
+	_, _, _, err = PriceUsage(PricingRate{UnitPriceMinor: 1, QuantityScale: &expectedScale, RoundingMode: RoundingHalfUp}, 1, 0)
+	if !errors.Is(err, ErrInvalidScale) {
+		t.Fatalf("rate/fact precision mismatch err=%v", err)
+	}
+	if _, _, _, err = PriceUsage(PricingRate{UnitPriceMinor: 1, RoundingMode: RoundingHalfUp}, 1, 0); err != nil {
+		t.Fatalf("legacy rate without declared precision changed: %v", err)
+	}
 }
 
 func TestValidateInvoiceTotalsRejectsMismatch(t *testing.T) {
