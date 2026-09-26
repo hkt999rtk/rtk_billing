@@ -123,10 +123,26 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 	if !otaComplete {
 		return billing.PricingVersion{}, ErrConflict
 	}
-	// The immediate activation API cannot publish a future UTC-month cutover.
-	// Until P2 adds that scheduling transaction, any OTA rate would permit a
-	// backdated charge, so this path intentionally cannot activate OTA pricing.
-	if otaEnabled || effectiveFrom.After(now.UTC()) {
+	// OTA publication still requires the reviewed complete-card manifest,
+	// explicit tax and account scope, and the UTC-month close policy. Generic
+	// pricing can be scheduled, but this route cannot start OTA charges.
+	if otaEnabled {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	scheduled := effectiveFrom.After(now.UTC())
+	if scheduled {
+		monthStart := time.Date(effectiveFrom.UTC().Year(), effectiveFrom.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+		if !effectiveFrom.Equal(monthStart) {
+			return billing.PricingVersion{}, ErrConflict
+		}
+	}
+	// One pending cutover per currency keeps the interval chain unambiguous.
+	var pending bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pricing_plan_versions
+		WHERE currency=$1 AND status IN ('active','retired') AND effective_from>$2)`, code, now.UTC()).Scan(&pending); err != nil {
+		return billing.PricingVersion{}, err
+	}
+	if pending {
 		return billing.PricingVersion{}, ErrConflict
 	}
 	rows, err := tx.Query(ctx, `SELECT id::text, status, effective_from FROM pricing_plan_versions
@@ -145,7 +161,8 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 			rows.Close()
 			return billing.PricingVersion{}, err
 		}
-		if previousID != "" || previousStatus != "active" || !effectiveFrom.After(previousFrom) {
+		if previousID != "" || previousStatus != "active" || !effectiveFrom.After(previousFrom) ||
+			scheduled && previousFrom.After(now.UTC()) {
 			rows.Close()
 			return billing.PricingVersion{}, ErrConflict
 		}
@@ -156,6 +173,11 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 		return billing.PricingVersion{}, err
 	}
 	rows.Close()
+	if scheduled && previousID == "" {
+		// A scheduled card must extend the current, approved interval; it cannot
+		// create the first price book or bridge a historical gap.
+		return billing.PricingVersion{}, ErrConflict
+	}
 	if previousID == "" {
 		var previousEnd pgtype.Timestamptz
 		err := tx.QueryRow(ctx, `SELECT effective_until FROM pricing_plan_versions

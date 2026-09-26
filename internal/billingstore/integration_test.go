@@ -3,6 +3,7 @@ package billingstore
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -190,5 +191,179 @@ func TestPricingHistoryKeepsOldPeriodsAndRejectsAmbiguity(t *testing.T) {
 	gap := create(3, gapStart)
 	if _, err := store.ActivatePricingVersion(ctx, gap.ID, gapStart.Add(time.Hour)); err != ErrConflict {
 		t.Fatalf("activation after an uncovered pricing gap must conflict, got %v", err)
+	}
+}
+
+func TestFuturePricingCutoverKeepsCurrentMonthAndRejectsAmbiguity(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := database.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	testutil.LockIntegrationDatabase(t, db)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `TRUNCATE billing_activity_events, invoice_settlement_links, billing_invoice_documents,
+		billing_invoice_lines, billing_invoices, billing_periods, billing_usage_facts, pricing_rates,
+		pricing_plan_versions, billing_profiles, balance_ledger_entries, commercial_accounts
+		RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	store := New(db)
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	cutover := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	create := func(version int64, from time.Time, rates []billing.PricingRate) billing.PricingVersion {
+		t.Helper()
+		v, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
+			PlanKey: "future", Version: version, Currency: billing.CurrencyTWD,
+			EffectiveFrom: from, CreatedBy: "integration-test", Now: now, Rates: rates,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	rate := billing.PricingRate{ServiceCode: "mqtt", MetricCode: "publish_count", Description: "Published messages",
+		Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6}
+	old := create(1, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), []billing.PricingRate{rate})
+	if _, err := store.ActivatePricingVersion(ctx, old.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	wrongDay := create(2, cutover.Add(24*time.Hour), []billing.PricingRate{rate})
+	if _, err := store.ActivatePricingVersion(ctx, wrongDay.ID, now); err != ErrConflict {
+		t.Fatalf("future cutover outside UTC month boundary must conflict: %v", err)
+	}
+	ota := create(3, cutover, append([]billing.PricingRate{rate}, billing.ProposedOTARates()...))
+	if _, err := store.ActivatePricingVersion(ctx, ota.ID, now); err != ErrConflict {
+		t.Fatalf("OTA publication still requires approved manifest and scope: %v", err)
+	}
+	newVersion := create(4, cutover, []billing.PricingRate{{ServiceCode: "mqtt", MetricCode: "publish_count", Description: "Published messages",
+		Unit: "requests", UnitPriceMinor: 48, UnitPriceScale: 6}})
+	if _, err := store.ActivatePricingVersion(ctx, newVersion.ID, now); err != nil {
+		t.Fatalf("schedule complete future month: %v", err)
+	}
+	for _, tc := range []struct {
+		at time.Time
+		id string
+	}{{now, old.ID}, {cutover.Add(-time.Microsecond), old.ID}, {cutover, newVersion.ID}, {cutover.AddDate(0, 1, 0), newVersion.ID}} {
+		got, err := store.ActivePricingVersion(ctx, tc.at, billing.CurrencyTWD)
+		if err != nil || got.ID != tc.id {
+			t.Fatalf("version at %s: got=%s want=%s err=%v", tc.at, got.ID, tc.id, err)
+		}
+	}
+	retired, err := store.GetPricingVersion(ctx, old.ID)
+	if err != nil || retired.EffectiveUntil == nil || !retired.EffectiveUntil.Equal(cutover) {
+		t.Fatalf("old interval must end exactly at cutover: %+v err=%v", retired, err)
+	}
+	second := create(5, cutover.AddDate(0, 1, 0), []billing.PricingRate{rate})
+	if _, err := store.ActivatePricingVersion(ctx, second.ID, now); err != ErrConflict {
+		t.Fatalf("second pending cutover must conflict: %v", err)
+	}
+}
+
+func TestInvoicePreparationWaitsForPricingPublication(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := database.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	if db.Config().MaxConns < 2 {
+		t.Skip("requires two PostgreSQL connections")
+	}
+	testutil.LockIntegrationDatabase(t, db)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisher.Rollback(ctx)
+	if _, err := publisher.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('billing-pricing-activation'))`); err != nil {
+		t.Fatal(err)
+	}
+	deadline, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	_, _, err = New(db).PrepareInvoice(deadline, PrepareInvoiceInput{
+		OrganizationID: "00000000-0000-4000-8000-000000000001",
+		AccountID:      "00000000-0000-4000-8000-000000000002",
+		Currency:       billing.CurrencyTWD,
+		PeriodStart:    start,
+		PeriodEnd:      start.AddDate(0, 1, 0),
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("invoice close must wait for pricing publication transaction: %v", err)
+	}
+}
+
+func TestReviewOTACandidateUsesCurrentReadOnlyCard(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := database.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	testutil.LockIntegrationDatabase(t, db)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `TRUNCATE billing_activity_events, invoice_settlement_links, billing_invoice_documents,
+		billing_invoice_lines, billing_invoices, billing_periods, billing_usage_facts, pricing_rates,
+		pricing_plan_versions, billing_profiles, balance_ledger_entries, commercial_accounts
+		RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	store := New(db)
+	now := time.Now().UTC()
+	thisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	cutover := thisMonth.AddDate(0, 1, 0)
+	whole := 0
+	tax := "reviewed-test-category"
+	baseRates := []billing.PricingRate{{ServiceCode: "mqtt", MetricCode: "publish_count", Description: "Published messages",
+		Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6, QuantityScale: &whole,
+		RoundingMode: billing.RoundingHalfUp, TaxCategory: &tax, TaxRateBasisPoints: 500}}
+	base, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{PlanKey: "review", Version: 1,
+		Currency: billing.CurrencyTWD, EffectiveFrom: thisMonth.AddDate(0, -1, 0),
+		CreatedBy: "integration-test", Now: now, Rates: baseRates})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivatePricingVersion(ctx, base.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	otaRates := billing.ProposedOTARates()
+	for i := range otaRates {
+		otaRates[i].TaxCategory = &tax
+		otaRates[i].TaxRateBasisPoints = 500
+	}
+	candidate := append(baseRates, otaRates...)
+	review, err := store.ReviewOTACandidate(ctx, ReviewOTACandidateInput{BaseVersionID: base.ID,
+		EffectiveFrom: cutover, Rates: candidate})
+	if err != nil || review.Base.ID != base.ID || len(review.Base.Rates) != 1 || len(review.Review.AddedOTARates) != 4 {
+		t.Fatalf("read-only full-card review=%+v err=%v", review, err)
+	}
+	if _, err := store.ReviewOTACandidate(ctx, ReviewOTACandidateInput{BaseVersionID: "00000000-0000-4000-8000-000000000001",
+		EffectiveFrom: cutover, Rates: candidate}); err != ErrConflict {
+		t.Fatalf("stale base must fail closed: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM pricing_plan_versions`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("review may not create a draft: count=%d err=%v", count, err)
 	}
 }
