@@ -35,6 +35,14 @@ type Config struct {
 	NewebPayEndpointBaseURL       string
 	NewebPayNotifyURL             string
 	NewebPayReturnURL             string
+	PayPalEnabled                 bool
+	PayPalEnvironment             string
+	PayPalClientID                string
+	PayPalClientSecret            string
+	PayPalWebhookID               string
+	PayPalReturnURL               string
+	PayPalCancelURL               string
+	PayPalAfterReturnURL          string
 	RequestTimeout                time.Duration
 }
 
@@ -60,6 +68,14 @@ func Load() (Config, error) {
 		NewebPayEndpointBaseURL: strings.TrimSpace(os.Getenv("NEWEBPAY_SIMULATOR_BASE_URL")),
 		NewebPayNotifyURL:       strings.TrimSpace(os.Getenv("NEWEBPAY_NOTIFY_URL")),
 		NewebPayReturnURL:       strings.TrimSpace(os.Getenv("NEWEBPAY_RETURN_URL")),
+		PayPalEnabled:           strings.EqualFold(env("PAYPAL_ENABLED", "false"), "true"),
+		PayPalEnvironment:       env("PAYPAL_ENVIRONMENT", "sandbox"),
+		PayPalClientID:          strings.TrimSpace(os.Getenv("PAYPAL_CLIENT_ID")),
+		PayPalClientSecret:      os.Getenv("PAYPAL_CLIENT_SECRET"),
+		PayPalWebhookID:         strings.TrimSpace(os.Getenv("PAYPAL_WEBHOOK_ID")),
+		PayPalReturnURL:         strings.TrimSpace(os.Getenv("PAYPAL_RETURN_URL")),
+		PayPalCancelURL:         strings.TrimSpace(os.Getenv("PAYPAL_CANCEL_URL")),
+		PayPalAfterReturnURL:    strings.TrimSpace(os.Getenv("PAYPAL_AFTER_RETURN_URL")),
 		RequestTimeout:          15 * time.Second,
 	}
 	if cfg.DatabaseURL == "" || len(cfg.ServiceToken) < 32 || len(cfg.InternalToken) < 32 {
@@ -126,6 +142,15 @@ func Load() (Config, error) {
 		}
 		if !validPaymentURL(cfg.NewebPayNotifyURL, cfg.Environment) || !validPaymentURL(cfg.NewebPayReturnURL, cfg.Environment) {
 			return Config{}, errors.New("enabled NewebPay requires fixed absolute notify and return URLs; production URLs must use HTTPS")
+		}
+	}
+	if cfg.PayPalEnabled {
+		if cfg.PayPalClientID == "" || cfg.PayPalClientSecret == "" || cfg.PayPalWebhookID == "" ||
+			!validPaymentURL(cfg.PayPalReturnURL, cfg.Environment) || !validPaymentURL(cfg.PayPalCancelURL, cfg.Environment) || !validPaymentURL(cfg.PayPalAfterReturnURL, cfg.Environment) {
+			return Config{}, errors.New("enabled PayPal requires credentials, webhook ID, and fixed return/cancel/after-return URLs")
+		}
+		if credentialReuse(cfg.PayPalClientSecret, cfg.ServiceToken, cfg.InternalToken, cfg.BillingDebitToken, cfg.HandoffToken, cfg.CloudCreationToken) {
+			return Config{}, errors.New("PayPal secret must be distinct from service credentials")
 		}
 	}
 	return cfg, nil

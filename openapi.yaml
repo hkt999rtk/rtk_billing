@@ -1270,7 +1270,7 @@ paths:
       - REQ-AM-PAYMENT-PROVIDER-001
       - REQ-AM-PAYMENT-AUTHZ-001
       security: [{ billingServiceAuth: [] }]
-      summary: Persist a manual top-up intent and return a provider-hosted POST action.
+      summary: Persist a manual top-up intent and return a provider-hosted POST form or GET redirect.
       parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/IdempotencyKey'
@@ -1354,6 +1354,26 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+  /v1/orgs/{orgId}/payment-intents/{intentId}/statement.pdf:
+    parameters:
+    - $ref: '#/components/parameters/OwnershipVersion'
+    get:
+      tags: [Billing and Payments]
+      operationId: downloadTopUpTransactionDetail
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids: [REQ-AM-PAYMENT-INTENT-001, REQ-AM-PAYMENT-AUTHZ-001]
+      security: [{ billingServiceAuth: [] }]
+      summary: Download a confirmed manual top-up transaction detail, not a statutory tax invoice.
+      parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/PaymentIntentId'
+      responses:
+        '200':
+          description: One-page PDF for an owner-visible confirmed manual top-up.
+          content: { application/pdf: { schema: { type: string, format: binary } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /v1/internal/billing/debits:
     post:
       tags:
@@ -1473,6 +1493,38 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+      security: []
+  /v1/payment-returns/paypal:
+    get:
+      tags: [Payment Webhooks]
+      operationId: completePayPalReturn
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids: [REQ-AM-PAYMENT-INTENT-001, REQ-AM-PAYMENT-PROVIDER-001]
+      summary: Verify and capture a PayPal-approved order, then redirect to the fixed Billing activity page.
+      parameters:
+      - name: token
+        in: query
+        required: true
+        schema: { type: string }
+      responses:
+        '303': { description: Redirect to Billing activity; final payment status is read from Billing. }
+        '404': { $ref: '#/components/responses/Error' }
+      security: []
+  /v1/payment-returns/paypal/cancel:
+    get:
+      tags: [Payment Webhooks]
+      operationId: cancelPayPalReturn
+      x-rtk-feature-id: FEAT-AM-PAYMENT-001
+      x-rtk-requirement-ids: [REQ-AM-PAYMENT-INTENT-001, REQ-AM-PAYMENT-PROVIDER-001]
+      summary: Redirect to Billing activity without capturing or crediting the PayPal order.
+      parameters:
+      - name: token
+        in: query
+        required: false
+        schema: { type: string }
+      responses:
+        '303': { description: Redirect to Billing activity with cancelled checkout notice. }
+        '404': { $ref: '#/components/responses/Error' }
       security: []
   /v1/internal/billing/access/{orgId}:
     parameters:
@@ -2156,7 +2208,7 @@ components:
             additionalProperties: false
             required: [method, url, fields]
             properties:
-              method: { type: string, const: POST }
+              method: { type: string, enum: [GET, POST] }
               url: { type: string, format: uri }
               fields:
                 type: object

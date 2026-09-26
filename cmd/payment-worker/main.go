@@ -15,9 +15,11 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentcrypto"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentprovider/newebpay"
+	"github.com/hkt999rtk/rtk_billing/internal/paymentprovider/paypal"
 	paymentSimulator "github.com/hkt999rtk/rtk_billing/internal/paymentprovider/simulator"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentservice"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
+	"github.com/hkt999rtk/rtk_billing/internal/topupemail"
 )
 
 func main() {
@@ -53,6 +55,13 @@ func main() {
 		NewebPayHashKey:         os.Getenv("NEWEBPAY_HASH_KEY"),
 		NewebPayHashIV:          os.Getenv("NEWEBPAY_HASH_IV"),
 		NewebPayEndpointBaseURL: strings.TrimSpace(os.Getenv("NEWEBPAY_SIMULATOR_BASE_URL")),
+		PayPalEnabled:           truthy(os.Getenv("PAYPAL_ENABLED")),
+		PayPalEnvironment:       env("PAYPAL_ENVIRONMENT", "sandbox"),
+		PayPalClientID:          strings.TrimSpace(os.Getenv("PAYPAL_CLIENT_ID")),
+		PayPalClientSecret:      os.Getenv("PAYPAL_CLIENT_SECRET"),
+		PayPalWebhookID:         strings.TrimSpace(os.Getenv("PAYPAL_WEBHOOK_ID")),
+		PayPalReturnURL:         strings.TrimSpace(os.Getenv("PAYPAL_RETURN_URL")),
+		PayPalCancelURL:         strings.TrimSpace(os.Getenv("PAYPAL_CANCEL_URL")),
 		RequestTimeout:          15 * time.Second,
 	})
 	if err != nil {
@@ -61,16 +70,51 @@ func main() {
 	if len(providers) == 0 {
 		log.Fatal("payment worker has no enabled provider")
 	}
+	paymentStore := paymentstore.New(db)
 	service, err := paymentservice.New(paymentservice.Options{
-		Store: paymentstore.New(db), Providers: providers, ReferenceResolver: resolver,
+		Store: paymentStore, Providers: providers, ReferenceResolver: resolver,
 		LeaseOwner: workerIdentity(), LeaseDuration: 30 * time.Second, ReconciliationDelay: 15 * time.Second,
 		BatchSize: envInt("PAYMENT_WORKER_BATCH_SIZE", 25), ChargeEnabled: chargeEnabled,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
+	if truthy(os.Getenv("PAYMENT_EMAIL_ENABLED")) {
+		sender, err := topupemail.New(os.Getenv("SENDMAIL_HTTP_BASE_URL"), os.Getenv("SENDMAIL_HTTP_BEARER_TOKEN"), os.Getenv("PAYMENT_EMAIL_PORTAL_BASE_URL"), os.Getenv("PAYMENT_EMAIL_FROM"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		go runTopUpEmailWorker(ctx, paymentStore, sender)
+	}
 	if err := service.Run(ctx, 2*time.Second); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func runTopUpEmailWorker(ctx context.Context, store *paymentstore.Store, sender *topupemail.Sender) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		messages, err := store.ClaimTopUpEmails(ctx, time.Now(), 10)
+		if err != nil && ctx.Err() == nil {
+			log.Printf("top-up email claim failed: %v", err)
+		}
+		for _, message := range messages {
+			err := sender.Send(ctx, message)
+			if err == nil {
+				_, err = store.MarkTopUpEmailSent(ctx, message.IntentID, message.AttemptCount, time.Now())
+			} else {
+				_, _ = store.RetryTopUpEmail(ctx, message.IntentID, message.AttemptCount, time.Now())
+			}
+			if err != nil && ctx.Err() == nil {
+				log.Printf("top-up email delivery failed for intent %s: %v", message.IntentID, err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -97,6 +141,14 @@ func buildPaymentProviders(cfg config.Config) ([]payment.PaymentProvider, map[st
 			HashKey: cfg.NewebPayHashKey, HashIV: cfg.NewebPayHashIV,
 			EndpointBaseURL: cfg.NewebPayEndpointBaseURL, Timeout: cfg.RequestTimeout,
 		})
+		if err != nil {
+			return nil, nil, err
+		}
+		providers = append(providers, provider)
+		chargeEnabled[provider.Name()] = false
+	}
+	if cfg.PayPalEnabled {
+		provider, err := paypal.New(paypal.Config{Environment: cfg.PayPalEnvironment, ClientID: cfg.PayPalClientID, ClientSecret: cfg.PayPalClientSecret, WebhookID: cfg.PayPalWebhookID, ReturnURL: cfg.PayPalReturnURL, CancelURL: cfg.PayPalCancelURL})
 		if err != nil {
 			return nil, nil, err
 		}
