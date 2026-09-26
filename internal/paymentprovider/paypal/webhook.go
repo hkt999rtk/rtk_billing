@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
@@ -29,9 +28,9 @@ func (a *Adapter) VerifyWebhook(ctx context.Context, request payment.WebhookRequ
 	if !paypalID.MatchString(orderID) || envelope.Resource.Status != "COMPLETED" || envelope.Resource.Amount.CurrencyCode != "TWD" {
 		return payment.WebhookEvent{}, payment.NewProviderError(payment.ProviderErrorInvalidRequest, "webhook_capture_mismatch", false, nil)
 	}
-	minor, err := strconv.ParseInt(envelope.Resource.Amount.Value, 10, 64)
-	if err != nil || minor <= 0 || envelope.Resource.ID == "" {
-		return payment.WebhookEvent{}, payment.NewProviderError(payment.ProviderErrorInvalidRequest, "webhook_amount_invalid", false, err)
+	minor, validAmount := paypalTWDWholeAmount(envelope.Resource.Amount.Value)
+	if !validAmount || envelope.Resource.ID == "" {
+		return payment.WebhookEvent{}, payment.NewProviderError(payment.ProviderErrorInvalidRequest, "webhook_amount_invalid", false, nil)
 	}
 	for _, name := range []string{"Paypal-Transmission-Id", "Paypal-Transmission-Time", "Paypal-Cert-Url", "Paypal-Auth-Algo", "Paypal-Transmission-Sig"} {
 		if strings.TrimSpace(request.Header.Get(name)) == "" {
@@ -67,7 +66,8 @@ func (a *Adapter) VerifyWebhook(ctx context.Context, request payment.WebhookRequ
 	if !orderReference.MatchString(unit.CustomID) || !matchesUnit(unit, unit.CustomID, minor, payment.CurrencyTWD) ||
 		len(unit.Payments.Captures) != 1 || unit.Payments.Captures[0].ID != envelope.Resource.ID ||
 		unit.Payments.Captures[0].Status != "COMPLETED" ||
-		unit.Payments.Captures[0].Amount != envelope.Resource.Amount ||
+		unit.Payments.Captures[0].Amount.CurrencyCode != envelope.Resource.Amount.CurrencyCode ||
+		!paypalAmountMatches(unit.Payments.Captures[0].Amount.Value, minor) ||
 		(unit.Payments.Captures[0].CustomID != "" && unit.Payments.Captures[0].CustomID != unit.CustomID) ||
 		(envelope.Resource.CustomID != "" && envelope.Resource.CustomID != unit.CustomID) {
 		return payment.WebhookEvent{}, payment.NewProviderError(payment.ProviderErrorUnknown, "webhook_capture_mismatch", true, nil)

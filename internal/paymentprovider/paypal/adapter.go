@@ -150,7 +150,29 @@ func (a *Adapter) CreateHostedCharge(ctx context.Context, in payment.HostedCharg
 }
 
 func matchesUnit(unit purchaseUnit, ref string, minor int64, currency payment.Currency) bool {
-	return unit.CustomID == ref && unit.Amount.CurrencyCode == string(currency) && unit.Amount.Value == strconv.FormatInt(minor, 10)
+	return unit.CustomID == ref && unit.Amount.CurrencyCode == string(currency) && paypalAmountMatches(unit.Amount.Value, minor)
+}
+
+func paypalAmountMatches(value string, minor int64) bool {
+	parsed, ok := paypalTWDWholeAmount(value)
+	return ok && parsed == minor
+}
+
+// PayPal accepts whole TWD values but normalizes them to two decimal places in
+// Orders and capture responses. Billing stores TWD as whole units.
+func paypalTWDWholeAmount(value string) (int64, bool) {
+	whole, fraction, hasFraction := strings.Cut(value, ".")
+	if hasFraction && fraction != "00" {
+		return 0, false
+	}
+	if whole == "" || strings.Trim(whole, "0123456789") != "" {
+		return 0, false
+	}
+	amount, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || amount <= 0 {
+		return 0, false
+	}
+	return amount, true
 }
 
 func (a *Adapter) Query(ctx context.Context, in payment.QueryRequest) (payment.ProviderResult, error) {
@@ -171,7 +193,7 @@ func (a *Adapter) Query(ctx context.Context, in payment.QueryRequest) (payment.P
 			return payment.ProviderResult{}, payment.NewProviderError(payment.ProviderErrorUnknown, "capture_mismatch", true, nil)
 		}
 		captured := out.PurchaseUnits[0].Payments.Captures[0]
-		if captured.Amount.CurrencyCode != string(in.Currency) || captured.Amount.Value != strconv.FormatInt(in.AmountMinor, 10) || (captured.CustomID != "" && captured.CustomID != in.MerchantOrderReference) {
+		if captured.Amount.CurrencyCode != string(in.Currency) || !paypalAmountMatches(captured.Amount.Value, in.AmountMinor) || (captured.CustomID != "" && captured.CustomID != in.MerchantOrderReference) {
 			return payment.ProviderResult{}, payment.NewProviderError(payment.ProviderErrorUnknown, "capture_mismatch", true, nil)
 		}
 		if captured.Status == "COMPLETED" {

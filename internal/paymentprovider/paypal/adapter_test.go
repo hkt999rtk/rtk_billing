@@ -46,15 +46,15 @@ func TestCreateCaptureAndQueryOnlyCreditCompletedMatchingCapture(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.PurchaseUnits) != 1 || !matchesUnit(request.PurchaseUnits[0], testRef, 300, payment.CurrencyTWD) {
 				t.Error("create amount or reference mismatch")
 			}
-			w.Write([]byte(`{"id":"` + testOrder + `","status":"CREATED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300"}}],"links":[{"rel":"payer-action","href":"https://www.sandbox.paypal.com/checkoutnow?token=` + testOrder + `"}]}`))
+			w.Write([]byte(`{"id":"` + testOrder + `","status":"PAYER_ACTION_REQUIRED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"}}],"links":[{"rel":"payer-action","href":"https://www.sandbox.paypal.com/checkoutnow?token=` + testOrder + `"}]}`))
 		case "/v2/checkout/orders/" + testOrder:
 			status := "APPROVED"
 			payments := ""
 			if captured.Load() {
 				status = "COMPLETED"
-				payments = `,"payments":{"captures":[{"id":"CAPTURE-1","status":"COMPLETED","amount":{"currency_code":"TWD","value":"300"}}]}`
+				payments = `,"payments":{"captures":[{"id":"CAPTURE-1","status":"COMPLETED","amount":{"currency_code":"TWD","value":"300.00"}}]}`
 			}
-			w.Write([]byte(`{"id":"` + testOrder + `","status":"` + status + `","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300"}` + payments + `}]}`))
+			w.Write([]byte(`{"id":"` + testOrder + `","status":"` + status + `","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"}` + payments + `}]}`))
 		case "/v2/checkout/orders/" + testOrder + "/capture":
 			if r.Header.Get("PayPal-Request-Id") != "capture-"+testRef {
 				t.Error("capture idempotency key missing")
@@ -97,7 +97,7 @@ func TestWebhookRequiresPayPalVerification(t *testing.T) {
 		}
 		if r.URL.Path == "/v2/checkout/orders/"+testOrder {
 			fetched.Store(true)
-			w.Write([]byte(`{"id":"` + testOrder + `","status":"COMPLETED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300"},"payments":{"captures":[{"id":"CAPTURE-1","status":"COMPLETED","amount":{"currency_code":"TWD","value":"300"}}]}}]}`))
+			w.Write([]byte(`{"id":"` + testOrder + `","status":"COMPLETED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"},"payments":{"captures":[{"id":"CAPTURE-1","status":"COMPLETED","amount":{"currency_code":"TWD","value":"300.00"}}]}}]}`))
 			return
 		}
 		if r.URL.Path != "/v1/notifications/verify-webhook-signature" {
@@ -115,7 +115,7 @@ func TestWebhookRequiresPayPalVerification(t *testing.T) {
 		}
 		w.Write([]byte(`{"verification_status":"` + status + `"}`))
 	})
-	request := payment.WebhookRequest{Header: http.Header{}, Body: []byte(`{"id":"WH-EVENT-1","event_type":"PAYMENT.CAPTURE.COMPLETED","resource":{"id":"CAPTURE-1","status":"COMPLETED","amount":{"currency_code":"TWD","value":"300"},"supplementary_data":{"related_ids":{"order_id":"` + testOrder + `"}}}}`)}
+	request := payment.WebhookRequest{Header: http.Header{}, Body: []byte(`{"id":"WH-EVENT-1","event_type":"PAYMENT.CAPTURE.COMPLETED","resource":{"id":"CAPTURE-1","status":"COMPLETED","amount":{"currency_code":"TWD","value":"300.00"},"supplementary_data":{"related_ids":{"order_id":"` + testOrder + `"}}}}`)}
 	for _, name := range []string{"Paypal-Transmission-Id", "Paypal-Transmission-Time", "Paypal-Cert-Url", "Paypal-Auth-Algo", "Paypal-Transmission-Sig"} {
 		request.Header.Set(name, "signed")
 	}
@@ -136,5 +136,26 @@ func TestProductionRejectsEndpointOverride(t *testing.T) {
 	_, err := New(Config{Environment: "production", EndpointBaseURL: "http://localhost:1234"})
 	if err == nil {
 		t.Fatal("production override accepted")
+	}
+}
+
+func TestPayPalTWDWholeAmount(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  int64
+		valid bool
+	}{
+		{"300", 300, true},
+		{"300.00", 300, true},
+		{"300.01", 0, false},
+		{"300.0", 0, false},
+		{"0.00", 0, false},
+		{"-300.00", 0, false},
+		{"9223372036854775808.00", 0, false},
+	} {
+		got, valid := paypalTWDWholeAmount(tc.value)
+		if got != tc.want || valid != tc.valid {
+			t.Errorf("amount %q: got (%d, %t), want (%d, %t)", tc.value, got, valid, tc.want, tc.valid)
+		}
 	}
 }
