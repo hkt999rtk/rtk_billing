@@ -89,19 +89,28 @@ type PricingRate struct {
 }
 
 type UsageFact struct {
-	ID             string    `json:"id,omitempty"`
-	UsageID        string    `json:"usage_id"`
-	OrganizationID string    `json:"organization_id"`
-	ProductID      string    `json:"product_id,omitempty"`
-	ServiceCode    string    `json:"service_code"`
-	MetricCode     string    `json:"metric_code"`
-	Quantity       int64     `json:"quantity"`
-	QuantityScale  int       `json:"quantity_scale"`
-	Unit           string    `json:"unit"`
-	WindowStart    time.Time `json:"window_start"`
-	WindowEnd      time.Time `json:"window_end"`
-	Source         string    `json:"source"`
-	SourceSHA256   string    `json:"source_sha256"`
+	ID             string            `json:"id,omitempty"`
+	UsageID        string            `json:"usage_id"`
+	OrganizationID string            `json:"organization_id"`
+	ProductID      string            `json:"product_id,omitempty"`
+	ServiceCode    string            `json:"service_code"`
+	MetricCode     string            `json:"metric_code"`
+	Quantity       int64             `json:"quantity"`
+	QuantityScale  int               `json:"quantity_scale"`
+	Unit           string            `json:"unit"`
+	WindowStart    time.Time         `json:"window_start"`
+	WindowEnd      time.Time         `json:"window_end"`
+	Source         string            `json:"source"`
+	SourceSHA256   string            `json:"source_sha256"`
+	OTAGrant       *OTAGrantEvidence `json:"ota_grant,omitempty"`
+}
+
+// OTAGrantEvidence identifies the enabled Product revision that authorized
+// one OTA task, verified download, or artifact write at its source.
+type OTAGrantEvidence struct {
+	ProductServiceRevision int64     `json:"product_service_revision"`
+	ServiceGrantSHA256     string    `json:"service_grant_sha256"`
+	AuthorizedAt           time.Time `json:"authorized_at"`
 }
 
 type InvoiceLine struct {

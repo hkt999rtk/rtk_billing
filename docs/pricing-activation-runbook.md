@@ -45,6 +45,13 @@ historical grant evidence is insufficient. OTA is not tax-exempt: all service
 line subtotals are combined before applying the reviewed invoice tax policy
 once. The actual invoice tax rate and formal invoice treatment remain pending.
 
+The internal usage-fact API can preserve the original Product grant revision,
+digest and authorization time for OTA task, verified-download and artifact-write
+facts in immutable columns. These fields are optional during source rollout and
+have not been checked against Account Manager history. A stored witness alone
+does not qualify a fact for charging. Monthly storage still needs a bounded
+per-object witness transfer and historical verification at Billing close.
+
 Before pricing exists, accepted OTA facts remain immutable evidence while
 `BillableUsageFacts` excludes them from invoices and estimated charges. A
 mixed-service month still needs priced non-OTA facts; a missing non-OTA rate or
