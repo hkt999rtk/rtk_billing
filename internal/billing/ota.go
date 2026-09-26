@@ -64,3 +64,49 @@ func ProposedOTARates() []PricingRate {
 // ProposedOTATaskRate preserves the original draft helper for callers that
 // need to describe only the task item.
 func ProposedOTATaskRate() PricingRate { return ProposedOTARates()[0] }
+
+// OTAPricingState distinguishes an unpriced OTA source from a complete OTA
+// price book. A partial or changed meter set must not silently price facts.
+func OTAPricingState(rates []PricingRate) (enabled, complete bool) {
+	units := map[string]string{
+		MetricOTADeviceTask:              UnitOTADeviceTask,
+		MetricOTASuccessfulDownloadGiB:   UnitOTAGiB,
+		MetricOTAArtifactStorageGiBMonth: UnitOTAGiBMonth,
+		MetricOTAArtifactWrite:           UnitOTAArtifactWrite,
+	}
+	seen := make(map[string]bool, len(units))
+	for _, rate := range rates {
+		if rate.ServiceCode != ServiceOTA {
+			continue
+		}
+		enabled = true
+		unit, ok := units[rate.MetricCode]
+		if !ok || unit != rate.Unit || seen[rate.MetricCode] {
+			return true, false
+		}
+		seen[rate.MetricCode] = true
+	}
+	return enabled, !enabled || len(seen) == len(units)
+}
+
+// BillableUsageFacts omits historical OTA evidence only while the selected
+// pricing version contains no OTA rate. The caller retains the original facts.
+func BillableUsageFacts(facts []UsageFact, rates []PricingRate) ([]UsageFact, error) {
+	enabled, complete := OTAPricingState(rates)
+	if !complete {
+		return nil, ErrInvalidInvoice
+	}
+	out := make([]UsageFact, 0, len(facts))
+	for _, fact := range facts {
+		if fact.ServiceCode == ServiceOTA {
+			if !ValidOTAUsageFact(fact) {
+				return nil, ErrInvalidInvoice
+			}
+			if !enabled {
+				continue
+			}
+		}
+		out = append(out, fact)
+	}
+	return out, nil
+}

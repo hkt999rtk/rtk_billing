@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -38,6 +39,53 @@ func TestProposedOTARatesProduceFourProductLines(t *testing.T) {
 	writeTotal, _, _, err := PriceUsage(rates[3], 1_000_000, 0)
 	if err != nil || writeTotal != 144 {
 		t.Fatalf("million write price = %d, err=%v; want NT$144", writeTotal, err)
+	}
+}
+
+func TestPreactivationOTAFactsAreAuditOnlyInDrafts(t *testing.T) {
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	invoice := Invoice{OrganizationID: "cloud", PricingVersionID: "old", Currency: CurrencyTWD,
+		PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0)}
+	mqttRate := PricingRate{ServiceCode: "mqtt", MetricCode: "publish_count", Unit: "requests", UnitPriceMinor: 32,
+		UnitPriceScale: 6, RoundingMode: RoundingHalfUp}
+	otaFact := UsageFact{UsageID: "ota-old", OrganizationID: "cloud", ProductID: "product", ServiceCode: ServiceOTA,
+		MetricCode: MetricOTADeviceTask, Quantity: 1, Unit: UnitOTADeviceTask,
+		WindowStart: start, WindowEnd: start.Add(time.Minute)}
+	mqttFact := UsageFact{UsageID: "mqtt-old", OrganizationID: "cloud", ServiceCode: "mqtt", MetricCode: "publish_count",
+		Quantity: 1_000_000, Unit: "requests", WindowStart: start, WindowEnd: start.Add(time.Minute)}
+	facts := []UsageFact{otaFact, mqttFact}
+	draft, err := BuildDraftInvoice(invoice, facts, []PricingRate{mqttRate})
+	if err != nil || len(draft.Lines) != 1 || draft.Lines[0].ServiceCode != "mqtt" || draft.TotalMinor != 32 {
+		t.Fatalf("preactivation OTA changed MQTT invoice: draft=%+v err=%v", draft, err)
+	}
+	if len(facts) != 2 || facts[0] != otaFact {
+		t.Fatal("original OTA evidence was mutated")
+	}
+	filtered, err := BillableUsageFacts(facts, []PricingRate{mqttRate})
+	if err != nil || len(filtered) != 1 || filtered[0].ServiceCode != "mqtt" {
+		t.Fatalf("billable facts=%+v err=%v", filtered, err)
+	}
+	if _, err := BuildDraftInvoice(invoice, facts, nil); !errors.Is(err, ErrRateNotFound) {
+		t.Fatalf("missing non-OTA rate must fail closed, got %v", err)
+	}
+	for name, rates := range map[string][]PricingRate{
+		"partial": append([]PricingRate{mqttRate}, ProposedOTARates()[:3]...),
+		"wrong-unit": func() []PricingRate {
+			ota := ProposedOTARates()
+			ota[0].Unit = "requests"
+			return append([]PricingRate{mqttRate}, ota...)
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := BuildDraftInvoice(invoice, facts, rates); !errors.Is(err, ErrInvalidInvoice) {
+				t.Fatalf("invalid OTA card must fail closed, got %v", err)
+			}
+		})
+	}
+	invalidOTA := otaFact
+	invalidOTA.Unit = "requests"
+	if _, err := BuildDraftInvoice(invoice, []UsageFact{invalidOTA, mqttFact}, []PricingRate{mqttRate}); !errors.Is(err, ErrInvalidInvoice) {
+		t.Fatalf("invalid unpriced OTA evidence must fail closed, got %v", err)
 	}
 }
 

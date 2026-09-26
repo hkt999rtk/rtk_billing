@@ -1,6 +1,6 @@
 # Product OTA Billing Design
 
-Status: draft target design; four-meter pricing is proposed, not activated.
+Status: four pre-tax unit prices approved; no OTA pricing version activated.
 
 Owner: rtk_billing.
 
@@ -18,7 +18,7 @@ period, and invoice boundaries. It does not override the contract.
 by Product and meter; `internal/billing/money.go` uses checked integer
 arithmetic and rounds after aggregation. `internal/billingstore/pricing.go`
 stores immutable facts and versioned rates. `internal/billing/ota.go`
-validates all four OTA meter contracts and defines unactivated proposed rates.
+validates all four OTA meter contracts and defines approved but unactivated rates.
 `internal/billingstore/ota_period_seals.go` accepts independent immutable
 Platform and producer seals; `internal/billingstore/invoices.go` verifies
 their Product sets, counts and fact digest before closing a priced OTA month.
@@ -27,7 +27,7 @@ staging CDN, invoice evidence or activated customer charging.
 
 The four `service_code=ota` meters are:
 
-| Metric | Unit | Quantity scale | Proposed TWD rate before tax |
+| Metric | Unit | Quantity scale | Approved TWD rate before tax; not effective |
 | --- | --- | ---: | ---: |
 | `device_task` | `tasks` | 0 | NT$96 / 1,000 |
 | `successful_download_gib` | `GiB` | 9 | NT$0.96 / GiB |
@@ -61,7 +61,7 @@ logs, object GETs, URL grants or installation success.
 
 GiB facts use nano-units (`quantity_scale=9`) derived from actual 2^30-byte
 GiB with checked half-up conversion. The storage producer retains exact
-byte-second evidence and converts once per Product/month. The proposed
+byte-second evidence and converts once per Product/month. The approved
 `PricingRate` values are `96/10^3`, `96/10^2`, `96/10^2`, and
 `144/10^6` TWD respectively. Invoices aggregate by organization, Product,
 service, metric and unit, then apply the rate version effective at period
@@ -72,6 +72,21 @@ Only an authorized commercial approval, full staging qualification and an
 explicit pricing-version activation can start customer charges. The
 effective date must be the next full UTC billing month or later. Historical
 OTA receipts are not retroactively charged.
+
+While the selected pricing version contains **zero** OTA rates, Billing
+retains accepted OTA facts as immutable evidence but excludes them from
+invoice lines, usage estimates, and billable fact counts. Those facts alone
+do not satisfy the non-OTA usage requirement for closing a mixed-service
+month. A non-OTA fact without a rate, or a partial/invalid OTA rate set,
+still fails closed. When a future version contains all four OTA rates,
+its effective interval selects only that month's facts; prior months keep
+their old version. The current immediate activation API deliberately
+rejects every OTA-containing version until future UTC-month scheduling and
+commercial qualification are complete. A draft version or this code change
+cannot start customer charges. The tenant usage API's `fact_count` and
+`usage_through` describe only the facts used for priced lines and forecasts;
+the immutable Billing fact table and producer receipt/outbox remain the
+operational audit sources for excluded OTA facts.
 
 ## Source-Complete Close
 

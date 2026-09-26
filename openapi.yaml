@@ -666,8 +666,8 @@ paths:
                 type: object
                 additionalProperties: true
                 properties:
-                  fact_count: { type: integer, minimum: 0 }
-                  usage_through: { type: string, format: date-time, nullable: true }
+                  fact_count: { type: integer, minimum: 0, description: Number of facts included in priced usage lines; unpriced OTA audit facts are excluded. }
+                  usage_through: { type: string, format: date-time, nullable: true, description: Latest source time among facts included in priced usage lines. }
         '403':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001

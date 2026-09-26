@@ -148,25 +148,7 @@ func otaUTCMonth(start, end time.Time) bool {
 }
 
 func otaPricingComplete(rates []billing.PricingRate) (enabled, complete bool) {
-	units := map[string]string{
-		billing.MetricOTADeviceTask:              billing.UnitOTADeviceTask,
-		billing.MetricOTASuccessfulDownloadGiB:   billing.UnitOTAGiB,
-		billing.MetricOTAArtifactStorageGiBMonth: billing.UnitOTAGiBMonth,
-		billing.MetricOTAArtifactWrite:           billing.UnitOTAArtifactWrite,
-	}
-	seen := make(map[string]bool, len(units))
-	for _, rate := range rates {
-		if rate.ServiceCode != billing.ServiceOTA {
-			continue
-		}
-		enabled = true
-		unit, ok := units[rate.MetricCode]
-		if !ok || unit != rate.Unit || seen[rate.MetricCode] {
-			return true, false
-		}
-		seen[rate.MetricCode] = true
-	}
-	return enabled, !enabled || len(seen) == len(units)
+	return billing.OTAPricingState(rates)
 }
 
 // PutOTAPeriodSeal accepts exact replays and rejects any changed evidence.

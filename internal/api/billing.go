@@ -74,16 +74,18 @@ func (s *Server) requireBilling(c *gin.Context) bool {
 }
 
 type billingUsageResponse struct {
-	PeriodStart  time.Time             `json:"period_start"`
-	PeriodEnd    time.Time             `json:"period_end"`
-	Currency     billing.Currency      `json:"currency"`
-	Subtotal     int64                 `json:"subtotal_minor"`
-	Tax          int64                 `json:"tax_minor"`
-	Total        int64                 `json:"total_minor"`
-	Lines        []billing.InvoiceLine `json:"lines"`
-	Estimated    bool                  `json:"estimated"`
-	FactCount    int                   `json:"fact_count"`
-	UsageThrough *time.Time            `json:"usage_through,omitempty"`
+	PeriodStart time.Time             `json:"period_start"`
+	PeriodEnd   time.Time             `json:"period_end"`
+	Currency    billing.Currency      `json:"currency"`
+	Subtotal    int64                 `json:"subtotal_minor"`
+	Tax         int64                 `json:"tax_minor"`
+	Total       int64                 `json:"total_minor"`
+	Lines       []billing.InvoiceLine `json:"lines"`
+	Estimated   bool                  `json:"estimated"`
+	// These fields describe facts included in the priced estimate, not all
+	// immutable source facts retained for operational audit.
+	FactCount    int        `json:"fact_count"`
+	UsageThrough *time.Time `json:"usage_through,omitempty"`
 }
 
 type billingForecast struct {
@@ -144,8 +146,12 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	if err != nil {
 		return billingUsageResponse{}, err
 	}
+	billableFacts, err := billing.BillableUsageFacts(facts, pricing.Rates)
+	if err != nil {
+		return billingUsageResponse{}, err
+	}
 	var usageThrough *time.Time
-	for _, fact := range facts {
+	for _, fact := range billableFacts {
 		if usageThrough == nil || fact.WindowEnd.After(*usageThrough) {
 			value := fact.WindowEnd.UTC()
 			usageThrough = &value
@@ -154,13 +160,13 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	draft, err := billing.BuildDraftInvoice(billing.Invoice{
 		OrganizationID: organizationID, PricingVersionID: pricing.ID, Currency: currency.Settlement,
 		PeriodStart: start, PeriodEnd: end, Recipient: profile,
-	}, facts, pricing.Rates)
+	}, billableFacts, pricing.Rates)
 	if err != nil {
 		return billingUsageResponse{}, err
 	}
 	return billingUsageResponse{PeriodStart: start, PeriodEnd: end, Currency: draft.Currency,
 		Subtotal: draft.SubtotalMinor, Tax: draft.TaxMinor, Total: draft.TotalMinor, Lines: draft.Lines, Estimated: true,
-		FactCount: len(facts), UsageThrough: usageThrough}, nil
+		FactCount: len(billableFacts), UsageThrough: usageThrough}, nil
 }
 
 func forecastBillingUsage(usage billingUsageResponse, calculatedAt time.Time) billingForecast {

@@ -59,7 +59,12 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ActivatePricingVersion(ctx, version.ID, now); err != nil {
+	if _, err := store.ActivatePricingVersion(ctx, version.ID, now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("immediate OTA activation must stay blocked until scheduled activation exists: %v", err)
+	}
+	// Fixture for post-activation close behavior. Production activation remains
+	// blocked until P2 can publish a future complete UTC month.
+	if _, err := db.Exec(ctx, `UPDATE pricing_plan_versions SET status='active', activated_at=$2 WHERE id=$1`, version.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	fact := billing.UsageFact{
