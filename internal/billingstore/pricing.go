@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"strings"
 	"time"
 
@@ -364,7 +365,8 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		if fact.ServiceCode != billing.ServiceOTA ||
 			fact.MetricCode != billing.MetricOTADeviceTask &&
 				fact.MetricCode != billing.MetricOTASuccessfulDownloadGiB &&
-				fact.MetricCode != billing.MetricOTAArtifactWrite ||
+				fact.MetricCode != billing.MetricOTAArtifactWrite &&
+				(fact.MetricCode != billing.MetricOTAArtifactStorageGiBMonth || fact.OTAStorageObject == nil) ||
 			grant.ProductServiceRevision < 1 || len(grant.ServiceGrantSHA256) != 64 ||
 			strings.ToLower(grant.ServiceGrantSHA256) != grant.ServiceGrantSHA256 ||
 			grant.AuthorizedAt.IsZero() {
@@ -375,6 +377,21 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		}
 		grant.AuthorizedAt = grant.AuthorizedAt.UTC().Truncate(time.Microsecond)
 		fact.OTAGrant = &grant
+	}
+	if fact.OTAStorageObject != nil {
+		object := *fact.OTAStorageObject
+		value, ok := new(big.Int).SetString(object.ByteMicroseconds, 10)
+		if fact.ServiceCode != billing.ServiceOTA || fact.MetricCode != billing.MetricOTAArtifactStorageGiBMonth ||
+			fact.OTAGrant == nil || len(object.ObjectSHA256) != 64 ||
+			strings.ToLower(object.ObjectSHA256) != object.ObjectSHA256 ||
+			len(object.ByteMicroseconds) > 40 || !ok || value.Sign() < 0 ||
+			value.String() != object.ByteMicroseconds || !otaUTCMonth(fact.WindowStart, fact.WindowEnd) {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		if _, err := hex.DecodeString(object.ObjectSHA256); err != nil {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		fact.OTAStorageObject = &object
 	}
 	fact.WindowStart = fact.WindowStart.UTC().Truncate(time.Microsecond)
 	fact.WindowEnd = fact.WindowEnd.UTC().Truncate(time.Microsecond)
@@ -404,21 +421,27 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 	}
 	var id string
 	var grantRevision, grantSHA, grantAuthorizedAt any
+	var objectSHA, byteMicros any
 	if fact.OTAGrant != nil {
 		grantRevision = fact.OTAGrant.ProductServiceRevision
 		grantSHA = fact.OTAGrant.ServiceGrantSHA256
 		grantAuthorizedAt = fact.OTAGrant.AuthorizedAt
 	}
+	if fact.OTAStorageObject != nil {
+		objectSHA = fact.OTAStorageObject.ObjectSHA256
+		byteMicros = fact.OTAStorageObject.ByteMicroseconds
+	}
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO billing_usage_facts (usage_id, organization_id, service_code, metric_code, quantity,
 		    quantity_scale, unit, window_start, window_end, source, source_sha256, product_id,
-		    ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid,$13,$14,$15)
+		    ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at,
+		    ota_storage_object_sha256, ota_storage_byte_microseconds)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid,$13,$14,$15,$16,$17)
 		ON CONFLICT (usage_id) DO NOTHING
 		RETURNING id::text
 	`, fact.UsageID, fact.OrganizationID, fact.ServiceCode, fact.MetricCode, fact.Quantity, fact.QuantityScale,
 		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256), fact.ProductID,
-		grantRevision, grantSHA, grantAuthorizedAt).Scan(&id)
+		grantRevision, grantSHA, grantAuthorizedAt, objectSHA, byteMicros).Scan(&id)
 	created := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		var constraint *pgconn.PgError
@@ -451,17 +474,22 @@ func (s *Store) GetUsageFact(ctx context.Context, usageID string) (billing.Usage
 	var grantRevision sql.NullInt64
 	var grantSHA sql.NullString
 	var grantAuthorizedAt sql.NullTime
+	var objectSHA, byteMicros sql.NullString
 	err := s.db.QueryRow(ctx, `
 		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
 		       unit, window_start, window_end, source, source_sha256,
-		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at
+		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at,
+		       ota_storage_object_sha256, ota_storage_byte_microseconds
 		FROM billing_usage_facts WHERE usage_id = $1 AND `+visibility,
 		args...).Scan(&out.ID, &out.UsageID, &out.OrganizationID, &out.ProductID, &out.ServiceCode, &out.MetricCode, &out.Quantity,
 		&out.QuantityScale, &out.Unit, &out.WindowStart, &out.WindowEnd, &out.Source, &out.SourceSHA256,
-		&grantRevision, &grantSHA, &grantAuthorizedAt)
+		&grantRevision, &grantSHA, &grantAuthorizedAt, &objectSHA, &byteMicros)
 	if err == nil && grantRevision.Valid && grantSHA.Valid && grantAuthorizedAt.Valid {
 		out.OTAGrant = &billing.OTAGrantEvidence{ProductServiceRevision: grantRevision.Int64,
 			ServiceGrantSHA256: grantSHA.String, AuthorizedAt: grantAuthorizedAt.Time.UTC()}
+	}
+	if err == nil && objectSHA.Valid && byteMicros.Valid {
+		out.OTAStorageObject = &billing.OTAStorageObjectEvidence{ObjectSHA256: objectSHA.String, ByteMicroseconds: byteMicros.String}
 	}
 	return out, mapNotFound(err)
 }
@@ -477,7 +505,8 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	rows, err := s.db.Query(ctx, `
 		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
 		       unit, window_start, window_end, source, source_sha256,
-		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at
+		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at,
+		       ota_storage_object_sha256, ota_storage_byte_microseconds
 		FROM billing_usage_facts
 		WHERE organization_id = $1 AND window_start >= $2 AND window_end <= $3 AND `+visibility+`
 		ORDER BY service_code, metric_code, unit, window_start, usage_id
@@ -492,14 +521,18 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 		var grantRevision sql.NullInt64
 		var grantSHA sql.NullString
 		var grantAuthorizedAt sql.NullTime
+		var objectSHA, byteMicros sql.NullString
 		if err := rows.Scan(&fact.ID, &fact.UsageID, &fact.OrganizationID, &fact.ProductID, &fact.ServiceCode, &fact.MetricCode, &fact.Quantity,
 			&fact.QuantityScale, &fact.Unit, &fact.WindowStart, &fact.WindowEnd, &fact.Source, &fact.SourceSHA256,
-			&grantRevision, &grantSHA, &grantAuthorizedAt); err != nil {
+			&grantRevision, &grantSHA, &grantAuthorizedAt, &objectSHA, &byteMicros); err != nil {
 			return nil, err
 		}
 		if grantRevision.Valid && grantSHA.Valid && grantAuthorizedAt.Valid {
 			fact.OTAGrant = &billing.OTAGrantEvidence{ProductServiceRevision: grantRevision.Int64,
 				ServiceGrantSHA256: grantSHA.String, AuthorizedAt: grantAuthorizedAt.Time.UTC()}
+		}
+		if objectSHA.Valid && byteMicros.Valid {
+			fact.OTAStorageObject = &billing.OTAStorageObjectEvidence{ObjectSHA256: objectSHA.String, ByteMicroseconds: byteMicros.String}
 		}
 		out = append(out, fact)
 	}
@@ -513,7 +546,15 @@ func sameUsageFact(a, b billing.UsageFact) bool {
 		a.ServiceCode == b.ServiceCode && a.MetricCode == b.MetricCode &&
 		a.Quantity == b.Quantity && a.QuantityScale == b.QuantityScale && a.Unit == b.Unit &&
 		a.WindowStart.Equal(b.WindowStart) && a.WindowEnd.Equal(b.WindowEnd) &&
-		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256 && sameOTAGrant(a.OTAGrant, b.OTAGrant)
+		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256 && sameOTAGrant(a.OTAGrant, b.OTAGrant) &&
+		sameOTAStorageObject(a.OTAStorageObject, b.OTAStorageObject)
+}
+
+func sameOTAStorageObject(a, b *billing.OTAStorageObjectEvidence) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func sameOTAGrant(a, b *billing.OTAGrantEvidence) bool {

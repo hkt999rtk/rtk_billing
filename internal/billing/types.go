@@ -89,20 +89,28 @@ type PricingRate struct {
 }
 
 type UsageFact struct {
-	ID             string            `json:"id,omitempty"`
-	UsageID        string            `json:"usage_id"`
-	OrganizationID string            `json:"organization_id"`
-	ProductID      string            `json:"product_id,omitempty"`
-	ServiceCode    string            `json:"service_code"`
-	MetricCode     string            `json:"metric_code"`
-	Quantity       int64             `json:"quantity"`
-	QuantityScale  int               `json:"quantity_scale"`
-	Unit           string            `json:"unit"`
-	WindowStart    time.Time         `json:"window_start"`
-	WindowEnd      time.Time         `json:"window_end"`
-	Source         string            `json:"source"`
-	SourceSHA256   string            `json:"source_sha256"`
-	OTAGrant       *OTAGrantEvidence `json:"ota_grant,omitempty"`
+	ID               string                    `json:"id,omitempty"`
+	UsageID          string                    `json:"usage_id"`
+	OrganizationID   string                    `json:"organization_id"`
+	ProductID        string                    `json:"product_id,omitempty"`
+	ServiceCode      string                    `json:"service_code"`
+	MetricCode       string                    `json:"metric_code"`
+	Quantity         int64                     `json:"quantity"`
+	QuantityScale    int                       `json:"quantity_scale"`
+	Unit             string                    `json:"unit"`
+	WindowStart      time.Time                 `json:"window_start"`
+	WindowEnd        time.Time                 `json:"window_end"`
+	Source           string                    `json:"source"`
+	SourceSHA256     string                    `json:"source_sha256"`
+	OTAGrant         *OTAGrantEvidence         `json:"ota_grant,omitempty"`
+	OTAStorageObject *OTAStorageObjectEvidence `json:"ota_storage_object,omitempty"`
+}
+
+// OTAStorageObjectEvidence binds one physical object and its exact byte-time
+// contribution to an immutable Product/month storage fact.
+type OTAStorageObjectEvidence struct {
+	ObjectSHA256     string `json:"object_sha256"`
+	ByteMicroseconds string `json:"byte_microseconds"`
 }
 
 // OTAGrantEvidence identifies the enabled Product revision that authorized
