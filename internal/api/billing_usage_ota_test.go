@@ -17,9 +17,10 @@ import (
 
 type otaUsagePreviewStore struct {
 	billingPersistence
-	pricing billing.PricingVersion
-	facts   []billing.UsageFact
-	profile billing.BillingProfile
+	pricing  billing.PricingVersion
+	facts    []billing.UsageFact
+	profile  billing.BillingProfile
+	grantErr error
 }
 
 func (s otaUsagePreviewStore) EnsureBillingProfile(context.Context, string, time.Time) (billing.BillingProfile, bool, error) {
@@ -32,6 +33,10 @@ func (s otaUsagePreviewStore) ActivePricingVersion(context.Context, time.Time, b
 
 func (s otaUsagePreviewStore) ListUsageFacts(context.Context, string, time.Time, time.Time) ([]billing.UsageFact, error) {
 	return s.facts, nil
+}
+
+func (s otaUsagePreviewStore) VerifyOTAFactGrants(context.Context, []billing.UsageFact) error {
+	return s.grantErr
 }
 
 func TestBillingUsagePreviewExcludesPreactivationOTAFacts(t *testing.T) {
@@ -116,6 +121,17 @@ func TestBillingUsagePreviewHoldsOTAOutsideCurrentOwnerUTCMonth(t *testing.T) {
 	usage, err = s.billingUsageForPeriod(context.Background(), "cloud", billing.BillingProfile{}, start, end)
 	if err != nil || usage.OTAEstimateStatus != "estimated" || usage.FactCount != 2 || len(usage.Lines) != 2 || usage.Total <= 32 {
 		t.Fatalf("complete UTC owner month usage=%+v err=%v", usage, err)
+	}
+	store.grantErr = errors.New("historical Product grant unavailable")
+	s.billing.store = store
+	usage, err = s.billingUsageForPeriod(context.Background(), "cloud", billing.BillingProfile{}, start, end)
+	if err != nil || usage.Total != 32 || usage.FactCount != 1 || len(usage.Lines) != 1 ||
+		usage.Lines[0].ServiceCode != "mqtt" || usage.OTAEstimateStatus != "held_for_review" ||
+		usage.OTAEstimateReason != "grant_unverified" {
+		t.Fatalf("unverified OTA estimate was exposed: usage=%+v err=%v", usage, err)
+	}
+	if forecast := forecastBillingUsage(usage, end); forecast.State != "unavailable" {
+		t.Fatalf("unverified OTA estimate projected a full bill: %+v", forecast)
 	}
 }
 

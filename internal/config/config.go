@@ -20,6 +20,8 @@ type Config struct {
 	BillingDebitSource            string
 	OTAPlatformSealToken          string
 	OTAProducerSealToken          string
+	OTAGrantHistoryBaseURL        string
+	OTAGrantHistoryToken          string
 	PaymentReferenceEncryptionKey string
 	SimulatorEnabled              bool
 	SimulatorBaseURL              string
@@ -49,6 +51,8 @@ func Load() (Config, error) {
 		BillingDebitSource:            strings.TrimSpace(os.Getenv("BILLING_DEBIT_SOURCE")),
 		OTAPlatformSealToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_PLATFORM_SEAL_TOKEN")),
 		OTAProducerSealToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_PRODUCER_SEAL_TOKEN")),
+		OTAGrantHistoryBaseURL:        strings.TrimSpace(os.Getenv("BILLING_OTA_GRANT_HISTORY_BASE_URL")),
+		OTAGrantHistoryToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_GRANT_HISTORY_TOKEN")),
 		PaymentReferenceEncryptionKey: strings.TrimSpace(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY")),
 		SimulatorEnabled:              strings.EqualFold(env("PAYMENT_SIMULATOR_ENABLED", "false"), "true"),
 		SimulatorBaseURL:              strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_BASE_URL")),
@@ -103,6 +107,16 @@ func Load() (Config, error) {
 				cfg.SimulatorCallbackSecret, cfg.NewebPayHashKey, cfg.PaymentReferenceEncryptionKey) {
 			return Config{}, errors.New("OTA period seal credentials must be distinct 32+ character service secrets")
 		}
+	}
+	if (cfg.OTAGrantHistoryBaseURL == "") != (cfg.OTAGrantHistoryToken == "") {
+		return Config{}, errors.New("BILLING_OTA_GRANT_HISTORY_BASE_URL and BILLING_OTA_GRANT_HISTORY_TOKEN must be configured together")
+	}
+	if cfg.OTAGrantHistoryToken != "" && (len(cfg.OTAGrantHistoryToken) < 32 ||
+		strings.ContainsAny(cfg.OTAGrantHistoryToken, " \t\r\n") ||
+		credentialReuse(cfg.OTAGrantHistoryToken, cfg.ServiceToken, cfg.InternalToken,
+			cfg.HandoffToken, cfg.CloudCreationToken, cfg.BillingDebitToken,
+			cfg.OTAPlatformSealToken, cfg.OTAProducerSealToken)) {
+		return Config{}, errors.New("OTA grant history credential must be a distinct 32+ character service secret")
 	}
 	if cfg.SimulatorEnabled {
 		if err := ValidateSimulatorEnvironment(cfg.Environment); err != nil {

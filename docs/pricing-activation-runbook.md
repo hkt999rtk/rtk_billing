@@ -47,10 +47,16 @@ once. The actual invoice tax rate and formal invoice treatment remain pending.
 
 The internal usage-fact API can preserve the original Product grant revision,
 digest and authorization time for OTA task, verified-download and artifact-write
-facts in immutable columns. These fields are optional during source rollout and
-have not been checked against Account Manager history. A stored witness alone
-does not qualify a fact for charging. Monthly storage still needs a bounded
-per-object witness transfer and historical verification at Billing close.
+facts in immutable columns. These fields are optional during source rollout.
+If a reviewed OTA rate card is later activated, invoice close requires an
+Account Manager historical lookup for each distinct event grant, matching the
+Product, enabled revision, digest and authorization interval. Missing client
+configuration, missing witness or a failed lookup leaves the period incomplete
+with `ota_grant_unverified`. Positive Product-month storage facts are also held
+until bounded per-object evidence and verification exist; a stored witness
+alone does not qualify a fact for charging. The current usage preview applies
+the same grant check; it withholds OTA lines and the full-bill forecast when
+history cannot be verified. OTA rate activation remains blocked.
 
 Before pricing exists, accepted OTA facts remain immutable evidence while
 `BillableUsageFacts` excludes them from invoices and estimated charges. A
