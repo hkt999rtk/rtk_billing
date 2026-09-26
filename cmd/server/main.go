@@ -88,6 +88,7 @@ func main() {
 			log.Fatal(err)
 		}
 		billingStore.SetOTAGrantVerifier(verifier)
+		billingStore.SetOTATierVerifier(verifier)
 	}
 	if cfg.OTAPlatformSealToken != "" {
 		if err := server.ConfigureOTAPeriodSeals(api.OTAPeriodSealAPIOptions{

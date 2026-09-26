@@ -136,6 +136,10 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		if err != nil {
 			return billing.Invoice{}, false, err
 		}
+		if err := s.VerifyOTAAccountEligibility(ctx, in.OrganizationID, in.AccountID, in.PeriodStart, in.PeriodEnd); err != nil {
+			_ = s.markPeriodIncomplete(ctx, periodID, "ota_account_eligibility_unverified", in.Now)
+			return billing.Invoice{}, false, ErrIncomplete
+		}
 		if err := s.verifyOTAPeriodSeals(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd); err != nil {
 			if errors.Is(err, ErrIncomplete) {
 				_ = s.markPeriodIncomplete(ctx, periodID, "ota_source_incomplete", in.Now)

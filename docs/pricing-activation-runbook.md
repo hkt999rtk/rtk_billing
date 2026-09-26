@@ -1,8 +1,8 @@
 # OTA Pricing Activation Runbook
 
-Status: design-stage operating procedure; **do not use it to publish an OTA rate card yet**.
+Status: reviewed publication tooling exists in code; **do not publish an OTA rate card before environment qualification, migration review, CDN margin review and an approved future UTC month**.
 
-Owner: Billing and Finance. Last reviewed: 2026-09-26.
+Owner: Billing and Finance. Last reviewed: 2026-09-27.
 
 Use this with the [OTA billing design](ota-device-task-billing.md), the
 [pricing and invoicing contract](../../rtk_cloud_contracts_doc/pricing_and_invoicing.md),
@@ -31,19 +31,20 @@ them. A Product's OTA grant permits the service; it does not make a rate
 effective. Only the Billing version applicable to an invoice period can price
 facts. `internal/billingstore/pricing.go` currently permits a **draft** with OTA
 rates but rejects activation of every OTA-containing version through the
-immediate `/v1/internal/billing/pricing-versions/{id}/activate` route. Do not
-bypass this protection through SQL or another internal endpoint. No OTA retail
-version has been activated by this runbook. The generic activation route can
-schedule a **non-OTA** card for a future UTC month boundary and serializes its
-publication with invoice close; it still rejects OTA rates until the complete
-approval, scope, tax, and month rules below are implemented.
+generic `/v1/internal/billing/pricing-versions/{id}/activate` route. The
+separate `publish-reviewed-ota` route checks the current complete base, the
+exact four OTA rates, deterministic digest, two distinct reviewers, 5%
+invoice-total tax, Product/account scope and a future UTC month boundary in
+one serialized transaction. It records the publication in
+`ota_pricing_publications`. Do not bypass these checks through SQL. No OTA
+retail version has been activated by this runbook.
 For paid Managed Cloud, a Product with the `ota` option and a qualifying source
 receipt is the OTA charge boundary; there is no separate OTA contract opt-in.
 After disable, authorized prior work may complete and existing artifact bytes
 remain billable until physical deletion. A Product ID without verifiable
 historical grant evidence is insufficient. OTA is not tax-exempt: all service
 line subtotals are combined before applying the reviewed invoice tax policy
-once. The actual invoice tax rate and formal invoice treatment remain pending.
+once. The approved policy for the new OTA-inclusive TWD card is Taiwan business tax at 5% (500 basis points), `invoice_total`, and `half_up` rounding on the combined pre-tax subtotal. OTA has neither a separate surcharge nor an exemption. Government electronic-invoice issuance and filing are outside this phase; internal Billing invoice records remain.
 
 The internal usage-fact API can preserve the original Product grant revision,
 digest and authorization time for OTA task, verified-download and artifact-write
@@ -59,7 +60,7 @@ recomputes each Product's rounded monthly total from those contributions.
 A positive legacy Product-month storage aggregate without per-object evidence
 cannot be charged. The current usage preview applies the same check; it
 withholds OTA lines and the full-bill forecast when evidence cannot be
-verified. OTA rate activation remains blocked.
+verified. Publication remains subject to environment qualification and the approved future month.
 
 Before pricing exists, accepted OTA facts remain immutable evidence while
 `BillableUsageFacts` excludes them from invoices and estimated charges. A
@@ -141,11 +142,11 @@ contains all of the following:
 
 | Decision / prerequisite | Required evidence and implementation |
 | --- | --- |
-| Tax | Finance/Legal sign-off for the invoice tax rate, category, rounding and formal invoice treatment. New OTA pricing uses `invoice_total`: round each pre-tax line, sum all services, calculate tax once on that subtotal, then allocate tax to lines for reconciliation. Existing issued invoices and prior `line` versions retain their old meaning. `tax_rate_basis_points=0` on an OTA rate is not an exemption or approval. |
-| Applicability | Paid Managed Cloud Products with a verified OTA grant and qualifying source receipt are eligible, including bounded completion and storage after disable. Implement that evidence check in invoice close, usage estimates, and the tenant price API with the same effective interval. Evaluation and Private Cloud retain their separate commercial terms. Missing or ambiguous assignment must fail closed. |
+| Tax | The approved new OTA-inclusive TWD card uses `invoice_total`, Taiwan standard business tax at 5% (500 basis points), `half_up`, and the `standard` category: round each pre-tax line, sum all services, calculate tax once on that subtotal, then allocate tax to lines for reconciliation. Government electronic-invoice issuance and filing are deferred. Existing issued invoices and prior `line` versions retain their old meaning. `tax_rate_basis_points=0` on an OTA rate is not an exemption. Reconfirm this frozen policy in the approved manifest before publication. |
+| Applicability | Paid Managed Cloud eligibility is Account Manager `commercial_for_full_period=true` for the complete UTC month plus `commercial_accounts.state=active` at settlement. No extra contract/plan marker is required. Each charged OTA fact also needs a verified Product grant and qualifying source receipt, including bounded completion and storage after disable. The invoice close and usage estimate checks are implemented; the tenant price API must apply the same effective interval and qualify its display. Evaluation and Private Cloud retain their separate terms. Missing or ambiguous evidence fails closed. |
 | Meter precision | Require a reviewed, non-null rate `quantity_scale` on the publishable full card and the four exact OTA service/metric/unit/price/rounding identities. The nullable rate field now round-trips and rejects mismatched facts when set; historical nulls still need explicit review. |
-| Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. Still persist the approved base identity, scope, manifest digest, approvers and approval timestamp; draft creation must recheck them atomically. No approved draft/publish transaction exists yet. |
-| UTC cutover | The generic activation path now permits one future `00:00:00Z` first-of-month **non-OTA** version, keeps contiguous non-overlapping intervals, and serializes with invoice close. It marks the prior row `retired` when published, but interval selection continues to use it until the cutover. OTA publication remains blocked until the reviewed manifest and the remaining month/ownership policy are implemented. Preserve historical intervals and invoices. |
+| Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. The reviewed publication transaction rechecks the exact draft against the then-current base and approved digest, and records scope, reviewers, tax and cutover in `ota_pricing_publications`. The operator must preserve the external approval packet and create the draft only from its reviewed complete candidate. |
+| UTC cutover | The generic activation path permits one future `00:00:00Z` first-of-month **non-OTA** version. The separate reviewed OTA path applies the same serialized non-overlap and invoice protections, additionally requiring the frozen full-card manifest and tax policy. It marks the prior row `retired` when published, but interval selection continues to use it until the cutover. Operational publication still requires target-environment qualification; preserve historical intervals and invoices. |
 | Ownership/month policy | OTA-priced invoice close requires an exact UTC month and a current responsibility period that began no later than that month's start. Missing ownership evidence, a mid-month transfer, or Cloud closure leaves an explicit `incomplete` period for manual review. The current tenant preview now uses the UTC month once OTA is priced and withholds OTA estimates on partial/current-owner windows while retaining other service estimates; it reports `held_for_review` and disables the full-bill forecast. Still specify migration from historical profile-local months and any approved allocation or later-owner close policy without exposing another owner's data. |
 
 The four approved prices do not answer these questions. Finance must also
@@ -192,11 +193,11 @@ Reject the candidate if any non-OTA row changes or disappears without its own
 commercial approval, an OTA row is missing/duplicated/altered, another future
 version conflicts, tax/scope is unresolved, the base has drifted, or an
 issued/closing period intersects the proposed cutover. Create an immutable
-draft only after a second reviewer accepts the exact manifest digest and the
-future P1 transaction revalidates it. The current generic
-`POST /v1/internal/billing/pricing-versions` accepts a caller-supplied rate
-list and has none of these complete-card checks; **do not use it as this
-procedure's preflight or publication mechanism**.
+draft only after a second reviewer accepts the exact manifest digest; the
+reviewed publication transaction revalidates it against the live base. The generic
+`POST /v1/internal/billing/pricing-versions` only creates a draft. It is
+**not** the preflight or publication mechanism; the operator must use the
+read-only review and the separate reviewed publication route.
 
 Keep in the audit packet: redacted inventory, old and candidate full-card
 manifests and digest, rate-by-rate diff, all Finance/Legal and Billing
@@ -246,8 +247,8 @@ shared staging run from this document alone.
 
 ## 5. Publish only a qualified future month (future P2/R1)
 
-This section is the acceptance sequence for tooling that has **not** been
-built. It is not a command to use today's immediate activation API.
+This section is the acceptance sequence for the reviewed publication tooling.
+It is not permission to activate a card in an unqualified environment.
 
 1. Finance, Billing and operations recheck the approval packet and select the
    first **not-yet-started full UTC month** allowed by notice and contract
@@ -257,8 +258,10 @@ built. It is not a command to use today's immediate activation API.
    target environment. Compare the current base, all pending versions and
    invoice/period states with the approved manifest digest. A mismatch aborts
    the publication before any write.
-3. Use the future transactional publisher, once implemented and tested, to
-   store the reviewed full version and its effective interval. Re-read the
+3. Use `POST /v1/internal/billing/pricing-versions/{id}/publish-reviewed-ota`
+   with the approved base ID, rate-set SHA-256, two distinct reviewers and
+   approval time. The transactional publisher rechecks the full draft, stores
+   the audit row and schedules its effective interval. Re-read the
    database and tenant current/upcoming API: **before** the boundary the old
    version must still price the month; the new version must be merely
    upcoming. Verify authenticated Cloud Admin wording, notice and tax.
@@ -285,7 +288,7 @@ data. Publish the report's location and immutable CI/run links in the handoff.
 | When a gate fails | Required response |
 | --- | --- |
 | Before draft/publication | Stop; retain the read-only inventory and failed diff. Correct the model or manifest, obtain fresh approval, and re-run qualification. Do not create a partial OTA-only card. |
-| After scheduling but before the cutover | Use a **future, audited cancellation/replacement transaction only after it exists and is tested**; verify the old card remains selected. Today's API has no safe future OTA scheduling or cancellation. Never delete or edit a pricing row directly. |
+| After scheduling but before the cutover | Use a **future, audited cancellation/replacement transaction only after it exists and is tested**; verify the old card remains selected. The API can schedule a reviewed future OTA card, but it has no safe cancellation or replacement path; therefore require the final notice and cutover decision before publication. Never delete or edit a pricing row directly. |
 | After the cutover, before invoice issue | Hold affected period close as incomplete and continue preserving receipts/outbox. Diagnose source, dual seals, CDN anomalies, scope/tax and rate selection. A corrective version may apply only from a later approved full UTC month. |
 | After invoice issue | Preserve the immutable invoice and its rate/fact snapshots. Use the approved adjustment/credit and customer-notice process when implemented; do not rewrite the invoice, move old facts to another month, or backdate a new OTA rate. |
 

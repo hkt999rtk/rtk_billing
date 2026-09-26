@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,14 +14,16 @@ import (
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/billingidentity"
+	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
 )
 
 type otaUsagePreviewStore struct {
 	billingPersistence
-	pricing  billing.PricingVersion
-	facts    []billing.UsageFact
-	profile  billing.BillingProfile
-	grantErr error
+	pricing        billing.PricingVersion
+	facts          []billing.UsageFact
+	profile        billing.BillingProfile
+	grantErr       error
+	eligibilityErr error
 }
 
 func (s otaUsagePreviewStore) EnsureBillingProfile(context.Context, string, time.Time) (billing.BillingProfile, bool, error) {
@@ -31,12 +34,20 @@ func (s otaUsagePreviewStore) ActivePricingVersion(context.Context, time.Time, b
 	return s.pricing, nil
 }
 
+func (s otaUsagePreviewStore) UpcomingPricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error) {
+	return billing.PricingVersion{}, billingstore.ErrPricingUnavailable
+}
+
 func (s otaUsagePreviewStore) ListUsageFacts(context.Context, string, time.Time, time.Time) ([]billing.UsageFact, error) {
 	return s.facts, nil
 }
 
 func (s otaUsagePreviewStore) VerifyOTAFactGrants(context.Context, []billing.UsageFact) error {
 	return s.grantErr
+}
+
+func (s otaUsagePreviewStore) VerifyOTAAccountEligibility(context.Context, string, string, time.Time, time.Time) error {
+	return s.eligibilityErr
 }
 
 func TestBillingUsagePreviewExcludesPreactivationOTAFacts(t *testing.T) {
@@ -159,5 +170,58 @@ func TestBillingUsageAPIReportsHeldOTAEstimate(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusOK ||
 		body.OTAEstimateStatus != "held_for_review" || body.OTAEstimateReason != "period_not_utc_month" || body.FactCount != 0 || len(body.Lines) != 0 {
 		t.Fatalf("usage API status=%d body=%s err=%v", response.Code, response.Body.String(), err)
+	}
+}
+
+func TestBillingUsagePreviewHoldsOTACostWhenAccountEligibilityCannotBeProven(t *testing.T) {
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	mqttRate := billing.PricingRate{ServiceCode: "mqtt", MetricCode: "publish_count", Unit: "requests",
+		UnitPriceMinor: 32, UnitPriceScale: 6, RoundingMode: billing.RoundingHalfUp}
+	store := otaUsagePreviewStore{pricing: billing.PricingVersion{ID: "ota", Rates: append(testPricedOTARates(), mqttRate)},
+		facts: []billing.UsageFact{
+			{UsageID: "ota", OrganizationID: "cloud", ProductID: "product", ServiceCode: billing.ServiceOTA,
+				MetricCode: billing.MetricOTADeviceTask, Quantity: 1000, Unit: billing.UnitOTADeviceTask,
+				WindowStart: start, WindowEnd: start.Add(time.Minute)},
+			{UsageID: "mqtt", OrganizationID: "cloud", ServiceCode: "mqtt", MetricCode: "publish_count",
+				Quantity: 1_000_000, Unit: "requests", WindowStart: start, WindowEnd: start.Add(time.Minute)},
+		}, eligibilityErr: errors.New("tier evidence unavailable")}
+	s := &Server{billing: &billingRuntime{store: store}}
+	usage, err := s.billingUsageForPeriod(context.Background(), "cloud", billing.BillingProfile{}, start, end)
+	if err != nil || usage.OTAEstimateStatus != "held_for_review" || usage.OTAEstimateReason != "account_eligibility_unverified" ||
+		usage.FactCount != 1 || len(usage.Lines) != 1 || usage.Lines[0].ServiceCode != "mqtt" || usage.Total != 32 {
+		t.Fatalf("unverified account exposed OTA cost: usage=%+v err=%v", usage, err)
+	}
+}
+
+func TestTenantPriceBookShowsCurrentTaxPolicyAndProvisionalOTAEligibility(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	start := billingUTCMonthStart(now)
+	taxRate := int64(500)
+	pricing := billing.PricingVersion{ID: "published", Currency: billing.CurrencyTWD, Status: "retired",
+		EffectiveFrom: start, Rates: testPricedOTARates(), TaxMode: billing.TaxModeInvoiceTotal,
+		InvoiceTaxRateBasisPoints: &taxRate, InvoiceTaxRoundingMode: billing.RoundingHalfUp,
+		InvoiceTaxCategory: "standard"}
+	store := otaUsagePreviewStore{pricing: pricing}
+	s := &Server{billing: &billingRuntime{store: store, now: func() time.Time { return now }}}
+	read := func() (int, string) {
+		response := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(response)
+		c.Params = gin.Params{{Key: "orgId", Value: "cloud"}}
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/orgs/cloud/billing/pricing", nil)
+		c.Request = c.Request.WithContext(billingidentity.WithScope(c.Request.Context(), billingidentity.Scope{AccountID: "account"}))
+		s.getBillingPricing(c)
+		return response.Code, response.Body.String()
+	}
+	code, body := read()
+	if code != http.StatusOK || !strings.Contains(body, `"ota_eligibility":"provisional"`) ||
+		!strings.Contains(body, `"invoice_tax_rate_basis_points":500`) || !strings.Contains(body, `"current":`) {
+		t.Fatalf("price book status=%d body=%s", code, body)
+	}
+	store.eligibilityErr = errors.New("evaluation or inactive")
+	s.billing.store = store
+	code, body = read()
+	if code != http.StatusOK || !strings.Contains(body, `"ota_eligibility":"held_for_review"`) {
+		t.Fatalf("ineligible price book status=%d body=%s", code, body)
 	}
 }

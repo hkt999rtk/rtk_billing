@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
@@ -23,6 +24,7 @@ type Store struct {
 	db               database.Connection
 	tenantRead       bool
 	otaGrantVerifier OTAGrantVerifier
+	otaTierVerifier  OTATierVerifier
 }
 
 func New(db *pgxpool.Pool) *Store { return &Store{db: db} }
@@ -33,6 +35,14 @@ type OTAGrantVerifier interface {
 
 func (s *Store) SetOTAGrantVerifier(verifier OTAGrantVerifier) {
 	s.otaGrantVerifier = verifier
+}
+
+type OTATierVerifier interface {
+	VerifyCommercialMonth(context.Context, string, time.Time, time.Time) error
+}
+
+func (s *Store) SetOTATierVerifier(verifier OTATierVerifier) {
+	s.otaTierVerifier = verifier
 }
 
 type rowScanner interface {

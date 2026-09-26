@@ -36,6 +36,15 @@ type historicalGrant struct {
 	ValidUntil             *time.Time `json:"valid_until,omitempty"`
 }
 
+type billingTierPeriod struct {
+	BrandCloudID            string     `json:"brand_cloud_id"`
+	Tier                    string     `json:"tier"`
+	CoveredFrom             *time.Time `json:"covered_from,omitempty"`
+	HistoryCoversStart      bool       `json:"history_covers_start"`
+	ChangedWithinPeriod     bool       `json:"changed_within_period"`
+	CommercialForFullPeriod bool       `json:"commercial_for_full_period"`
+}
+
 func NewClient(baseURL, token string, client *http.Client) (*Client, error) {
 	base, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || base == nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" ||
@@ -94,6 +103,47 @@ func (c *Client) VerifyOTAGrant(ctx context.Context, cloudID, productID string, 
 		grant.ServiceGrantSHA256 != witness.ServiceGrantSHA256 || grant.ValidFrom.IsZero() ||
 		witness.AuthorizedAt.Before(grant.ValidFrom) ||
 		grant.ValidUntil != nil && !witness.AuthorizedAt.Before(*grant.ValidUntil) {
+		return ErrUnverified
+	}
+	return nil
+}
+
+// VerifyCommercialMonth obtains Account Manager's immutable tier evidence for
+// the entire UTC month. A current tier cannot prove an earlier billing period.
+func (c *Client) VerifyCommercialMonth(ctx context.Context, cloudID string, start, end time.Time) error {
+	if c == nil || c.base == nil || c.http == nil || cloudID == "" ||
+		start.Location() != time.UTC || end.Location() != time.UTC ||
+		!start.Equal(time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC)) ||
+		!end.Equal(start.AddDate(0, 1, 0)) {
+		return ErrUnverified
+	}
+	endpoint := *c.base
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/v1/internal/brand-clouds/" +
+		url.PathEscape(cloudID) + "/billing-tier"
+	query := endpoint.Query()
+	query.Set("period_start", start.Format(time.RFC3339Nano))
+	query.Set("period_end", end.Format(time.RFC3339Nano))
+	endpoint.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return fmt.Errorf("%w: request", ErrUnverified)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: tier history unavailable", ErrUnverified)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: tier history HTTP %d", ErrUnverified, resp.StatusCode)
+	}
+	var period billingTierPeriod
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 4097))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&period); err != nil || decoder.Decode(new(any)) != io.EOF ||
+		period.BrandCloudID != cloudID || period.Tier != "commercial" ||
+		period.CoveredFrom == nil || period.CoveredFrom.After(start) ||
+		!period.HistoryCoversStart || period.ChangedWithinPeriod || !period.CommercialForFullPeriod {
 		return ErrUnverified
 	}
 	return nil

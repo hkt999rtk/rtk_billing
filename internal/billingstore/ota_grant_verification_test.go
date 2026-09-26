@@ -13,6 +13,12 @@ import (
 
 type otaGrantVerifierFunc func(context.Context, string, string, billing.OTAGrantEvidence) error
 
+type otaTierVerifierFunc func(context.Context, string, time.Time, time.Time) error
+
+func (f otaTierVerifierFunc) VerifyCommercialMonth(ctx context.Context, cloud string, start, end time.Time) error {
+	return f(ctx, cloud, start, end)
+}
+
 func (f otaGrantVerifierFunc) VerifyOTAGrant(ctx context.Context, cloud, product string, grant billing.OTAGrantEvidence) error {
 	return f(ctx, cloud, product, grant)
 }
