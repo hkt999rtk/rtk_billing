@@ -52,6 +52,13 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		return billing.Invoice{}, false, err
 	}
 	defer tx.Rollback(ctx)
+	// Pricing publication takes the exclusive form of this transaction lock.
+	// Hold the shared form through invoice issue so a cutover cannot race the
+	// version selected for this period. Shared locks allow unrelated accounts
+	// to close concurrently.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext('billing-pricing-activation'))`); err != nil {
+		return billing.Invoice{}, false, err
+	}
 	var accountID string
 	if err := tx.QueryRow(ctx, `SELECT id::text FROM commercial_accounts
 		WHERE id=$1 AND organization_id=$2 AND currency=$3 FOR UPDATE`, in.AccountID, in.OrganizationID, in.Currency).Scan(&accountID); err != nil {
