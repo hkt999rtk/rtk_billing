@@ -3,6 +3,7 @@ package billing
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,21 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 	}
 	if invoice.State != "" && invoice.State != InvoiceStateDraft {
 		return Invoice{}, ErrInvoiceIssued
+	}
+	if invoice.TaxMode == "" {
+		invoice.TaxMode = TaxModeLine
+	}
+	if invoice.TaxMode != TaxModeLine && invoice.TaxMode != TaxModeInvoiceTotal {
+		return Invoice{}, ErrInvalidInvoice
+	}
+	if invoice.TaxMode == TaxModeLine && (invoice.InvoiceTaxRateBasisPoints != nil || invoice.InvoiceTaxRoundingMode != "" || invoice.InvoiceTaxCategory != "") {
+		return Invoice{}, ErrInvalidInvoice
+	}
+	if invoice.TaxMode == TaxModeInvoiceTotal {
+		if invoice.InvoiceTaxRateBasisPoints == nil || *invoice.InvoiceTaxRateBasisPoints < 0 || *invoice.InvoiceTaxRateBasisPoints > 10000 ||
+			strings.TrimSpace(invoice.InvoiceTaxCategory) == "" || !validRoundingMode(invoice.InvoiceTaxRoundingMode) {
+			return Invoice{}, ErrInvalidInvoice
+		}
 	}
 	rateByMetric := make(map[string]PricingRate, len(rates))
 	for _, rate := range rates {
@@ -84,7 +100,13 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 		parts := strings.Split(key, "\x00")
 		rate := rateByMetric[strings.Join(parts[:3], "\x00")]
 		agg := aggregates[key]
-		subtotal, tax, total, err := PriceUsage(rate, agg.quantity, agg.scale)
+		var subtotal, tax, total int64
+		if invoice.TaxMode == TaxModeInvoiceTotal {
+			subtotal, err = PriceSubtotal(rate, agg.quantity, agg.scale)
+			total = subtotal
+		} else {
+			subtotal, tax, total, err = PriceUsage(rate, agg.quantity, agg.scale)
+		}
 		if err != nil {
 			return Invoice{}, err
 		}
@@ -98,9 +120,17 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 			UsageFactRefs: agg.refs,
 		}
 		invoice.Lines = append(invoice.Lines, line)
+		if subtotal > int64(^uint64(0)>>1)-invoice.SubtotalMinor || tax > int64(^uint64(0)>>1)-invoice.TaxMinor || total > int64(^uint64(0)>>1)-invoice.TotalMinor {
+			return Invoice{}, ErrOverflow
+		}
 		invoice.SubtotalMinor += subtotal
 		invoice.TaxMinor += tax
 		invoice.TotalMinor += total
+	}
+	if invoice.TaxMode == TaxModeInvoiceTotal {
+		if err := allocateInvoiceTax(&invoice); err != nil {
+			return Invoice{}, err
+		}
 	}
 	invoice.AmountSettledMinor = 0
 	invoice.AmountDueMinor = invoice.TotalMinor
@@ -111,6 +141,58 @@ func BuildDraftInvoice(invoice Invoice, facts []UsageFact, rates []PricingRate) 
 		return Invoice{}, err
 	}
 	return invoice, nil
+}
+
+func validRoundingMode(mode RoundingMode) bool {
+	return mode == RoundingHalfUp || mode == RoundingDown || mode == RoundingUp
+}
+
+func allocateInvoiceTax(invoice *Invoice) error {
+	rate := *invoice.InvoiceTaxRateBasisPoints
+	numerator := new(big.Int).Mul(big.NewInt(invoice.SubtotalMinor), big.NewInt(rate))
+	tax, err := roundedInt64(numerator, big.NewInt(10000), invoice.InvoiceTaxRoundingMode)
+	if err != nil {
+		return err
+	}
+	total := new(big.Int).Add(big.NewInt(invoice.SubtotalMinor), big.NewInt(tax))
+	if !total.IsInt64() {
+		return ErrOverflow
+	}
+	type share struct {
+		index     int
+		remainder int64
+	}
+	shares := make([]share, len(invoice.Lines))
+	var allocated int64
+	for i := range invoice.Lines {
+		part := new(big.Int).Mul(big.NewInt(invoice.Lines[i].SubtotalMinor), big.NewInt(rate))
+		quotient, remainder := new(big.Int), new(big.Int)
+		quotient.QuoRem(part, big.NewInt(10000), remainder)
+		if !quotient.IsInt64() || quotient.Int64() > tax-allocated {
+			return ErrOverflow
+		}
+		invoice.Lines[i].TaxMinor = quotient.Int64()
+		allocated += quotient.Int64()
+		shares[i] = share{index: i, remainder: remainder.Int64()}
+	}
+	sort.SliceStable(shares, func(i, j int) bool { return shares[i].remainder > shares[j].remainder })
+	remaining := tax - allocated
+	if remaining < 0 || remaining > int64(len(shares)) {
+		return ErrInvoiceMismatch
+	}
+	for i := int64(0); i < remaining; i++ {
+		invoice.Lines[shares[i].index].TaxMinor++
+	}
+	for i := range invoice.Lines {
+		lineTotal := new(big.Int).Add(big.NewInt(invoice.Lines[i].SubtotalMinor), big.NewInt(invoice.Lines[i].TaxMinor))
+		if !lineTotal.IsInt64() {
+			return ErrOverflow
+		}
+		invoice.Lines[i].TotalMinor = lineTotal.Int64()
+	}
+	invoice.TaxMinor = tax
+	invoice.TotalMinor = total.Int64()
+	return nil
 }
 
 func IssueInvoice(invoice Invoice, number string, now time.Time, dueAt time.Time) (Invoice, error) {

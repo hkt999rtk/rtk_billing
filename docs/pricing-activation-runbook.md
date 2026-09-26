@@ -37,6 +37,13 @@ version has been activated by this runbook. The generic activation route can
 schedule a **non-OTA** card for a future UTC month boundary and serializes its
 publication with invoice close; it still rejects OTA rates until the complete
 approval, scope, tax, and month rules below are implemented.
+For paid Managed Cloud, a Product with the `ota` option and a qualifying source
+receipt is the OTA charge boundary; there is no separate OTA contract opt-in.
+After disable, authorized prior work may complete and existing artifact bytes
+remain billable until physical deletion. A Product ID without verifiable
+historical grant evidence is insufficient. OTA is not tax-exempt: all service
+line subtotals are combined before applying the reviewed invoice tax policy
+once. The actual invoice tax rate and formal invoice treatment remain pending.
 
 Before pricing exists, accepted OTA facts remain immutable evidence while
 `BillableUsageFacts` excludes them from invoices and estimated charges. A
@@ -118,8 +125,8 @@ contains all of the following:
 
 | Decision / prerequisite | Required evidence and implementation |
 | --- | --- |
-| Tax | Finance/Legal sign-off for category, rate or exemption basis, effective dates, and treatment of historical non-OTA rates. Persist an explicit tax category and approved value; do not treat the database default of zero as sign-off. |
-| Applicability | Decide whether all managed-cloud accounts share one card or whether tier/account/contract exceptions apply. Implement that selection in invoice close, usage estimates, and the tenant price API with the same effective interval. Define evaluation and private-contract treatment. Missing or ambiguous assignment must fail closed. |
+| Tax | Finance/Legal sign-off for the invoice tax rate, category, rounding and formal invoice treatment. New OTA pricing uses `invoice_total`: round each pre-tax line, sum all services, calculate tax once on that subtotal, then allocate tax to lines for reconciliation. Existing issued invoices and prior `line` versions retain their old meaning. `tax_rate_basis_points=0` on an OTA rate is not an exemption or approval. |
+| Applicability | Paid Managed Cloud Products with a verified OTA grant and qualifying source receipt are eligible, including bounded completion and storage after disable. Implement that evidence check in invoice close, usage estimates, and the tenant price API with the same effective interval. Evaluation and Private Cloud retain their separate commercial terms. Missing or ambiguous assignment must fail closed. |
 | Meter precision | Require a reviewed, non-null rate `quantity_scale` on the publishable full card and the four exact OTA service/metric/unit/price/rounding identities. The nullable rate field now round-trips and rejects mismatched facts when set; historical nulls still need explicit review. |
 | Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. Still persist the approved base identity, scope, manifest digest, approvers and approval timestamp; draft creation must recheck them atomically. No approved draft/publish transaction exists yet. |
 | UTC cutover | The generic activation path now permits one future `00:00:00Z` first-of-month **non-OTA** version, keeps contiguous non-overlapping intervals, and serializes with invoice close. It marks the prior row `retired` when published, but interval selection continues to use it until the cutover. OTA publication remains blocked until the reviewed manifest and the remaining month/ownership policy are implemented. Preserve historical intervals and invoices. |
@@ -139,9 +146,9 @@ approved manifest. Sort rate identities deterministically by
 `(service_code, metric_code, unit)` and produce a machine-readable full-card
 diff and digest. The candidate must copy **every** applicable non-OTA row
 unchanged, then add exactly the four OTA rows above. Review description,
-price minor/scale, expected fact scale, rounding, tax category/rate, scope,
+price minor/scale, expected fact scale, rounding, invoice tax mode/category/rate, scope,
 currency TWD and UTC interval. A per-Product OTA grant is not a substitute
-for account/contract selection. Do not promote Cloud Admin reference prices
+for paid Managed Cloud account eligibility. Do not promote Cloud Admin reference prices
 or the other unapproved service benchmarks into this card.
 
 The first technical check is available from the Billing repository. Provide a
@@ -194,7 +201,7 @@ for each row before proposing production publication:
 | CDN/object path | Signed private-origin CDN URL, direct device download, HTTP Range resume, token expiry/revocation bound, object SHA/size, first durable assignment, matching grant and authenticated `downloaded` receipt. Confirm URL issuance, CDN GETs, partial/failed transfers and retries create no extra customer download charge. |
 | Four source meters | First assignment, first verified download, actual physical byte-seconds through deletion, and successful object creation each have immutable receipts, idempotent Billing facts, correct Product and UTC window, quantities and source digests. Reconcile raw CDN egress separately as provider cost/anomaly evidence. |
 | Completeness | Platform `platform_grants` seal covers every historically authorized Product; producer `ota_producer` seal covers facts/objects and all four metric counts. Compare source high-water and delivered outbox with Billing fact IDs/content; verify exact Product sets and fact SHA-256. Include zero-use, disabled and retired Products. Missing/mismatched seals, unknown objects and unexplained CDN anomalies must leave the close `incomplete`. |
-| Price and period | Verify full UTC-month invoice/estimate, both sides of the future cutover, other services on the same card, tax and per-Product line rounding, owner transfer/closure holds, old months with OTA evidence but no OTA charge, and unchanged issued invoices. Test the actual signed-in current/upcoming price API and its account scope when A1 exists; the current reference page is not proof of an effective card. |
+| Price and period | Verify full UTC-month invoice/estimate, both sides of the future cutover, other services on the same card, pre-tax per-Product line rounding, one tax calculation on the combined invoice subtotal and deterministic line allocation, owner transfer/closure holds, old months with OTA evidence but no OTA charge, and unchanged issued invoices. Test the actual signed-in current/upcoming price API and its account scope when A1 exists; the current reference page is not proof of an effective card. |
 
 `internal/billingstore/invoices.go` rejects an OTA-priced close outside a
 complete UTC month or without a current owner covering the full month,

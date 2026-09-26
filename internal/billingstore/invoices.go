@@ -184,6 +184,8 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	draft, err := billing.BuildDraftInvoice(billing.Invoice{
 		OrganizationID: in.OrganizationID, AccountID: in.AccountID, PeriodID: periodID,
 		PricingVersionID: pricing.ID, Currency: in.Currency, PeriodStart: in.PeriodStart.UTC(), PeriodEnd: in.PeriodEnd.UTC(),
+		TaxMode: pricing.TaxMode, InvoiceTaxRateBasisPoints: pricing.InvoiceTaxRateBasisPoints,
+		InvoiceTaxRoundingMode: pricing.InvoiceTaxRoundingMode, InvoiceTaxCategory: pricing.InvoiceTaxCategory,
 		Recipient: profile, Version: 1, CreatedAt: in.Now.UTC(), UpdatedAt: in.Now.UTC(),
 	}, billableFacts, pricing.Rates)
 	if err != nil {
@@ -225,12 +227,14 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	err = tx.QueryRow(ctx, `
 		INSERT INTO billing_invoices (invoice_number, organization_id, account_id, period_id, pricing_version_id,
 		    currency, state, period_start, period_end, subtotal_minor, tax_minor, total_minor,
-		    amount_settled_minor, amount_due_minor, recipient_snapshot, issued_at, due_at, version, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0,$12,$13,$14,$15,$16,$17,$17)
+		    amount_settled_minor, amount_due_minor, recipient_snapshot, issued_at, due_at, version, created_at, updated_at,
+		    tax_mode, invoice_tax_rate_basis_points, invoice_tax_rounding_mode, invoice_tax_category)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0,$12,$13,$14,$15,$16,$17,$17,$18,$19,$20,$21)
 		RETURNING id::text
 	`, issued.InvoiceNumber, issued.OrganizationID, issued.AccountID, periodID, issued.PricingVersionID,
 		issued.Currency, issued.State, issued.PeriodStart, issued.PeriodEnd, issued.SubtotalMinor, issued.TaxMinor,
-		issued.TotalMinor, recipientJSON, issued.IssuedAt, issued.DueAt, issued.Version, in.Now.UTC()).Scan(&issued.ID)
+		issued.TotalMinor, recipientJSON, issued.IssuedAt, issued.DueAt, issued.Version, in.Now.UTC(),
+		issued.TaxMode, issued.InvoiceTaxRateBasisPoints, nullableTaxRounding(issued.InvoiceTaxRoundingMode), nullableTaxCategory(issued.InvoiceTaxCategory)).Scan(&issued.ID)
 	if err != nil {
 		return billing.Invoice{}, false, err
 	}
@@ -383,6 +387,8 @@ const invoiceSelect = `
 	       invoices.total_minor, invoices.amount_settled_minor, invoices.amount_due_minor,
 	       invoices.recipient_snapshot, invoices.issued_at, invoices.due_at, invoices.settled_at,
 	       invoices.version, invoices.created_at, invoices.updated_at,
+	       invoices.tax_mode, invoices.invoice_tax_rate_basis_points,
+	       COALESCE(invoices.invoice_tax_rounding_mode,''), COALESCE(invoices.invoice_tax_category,''),
 	       COALESCE(settlement.ledger_entry_id::text, '')
 	FROM billing_invoices AS invoices
 	LEFT JOIN invoice_settlement_links AS settlement ON settlement.invoice_id = invoices.id`
@@ -394,6 +400,7 @@ func scanInvoice(row rowScanner) (billing.Invoice, error) {
 		&out.PricingVersionID, &out.Currency, &out.State, &out.PeriodStart, &out.PeriodEnd,
 		&out.SubtotalMinor, &out.TaxMinor, &out.TotalMinor, &out.AmountSettledMinor, &out.AmountDueMinor,
 		&recipient, &out.IssuedAt, &out.DueAt, &out.SettledAt, &out.Version, &out.CreatedAt, &out.UpdatedAt,
+		&out.TaxMode, &out.InvoiceTaxRateBasisPoints, &out.InvoiceTaxRoundingMode, &out.InvoiceTaxCategory,
 		&out.SettlementLedgerID)
 	if err != nil {
 		return billing.Invoice{}, mapNotFound(err)

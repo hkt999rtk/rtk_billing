@@ -120,6 +120,46 @@ func TestBillingPersistenceInvoiceLifecycle(t *testing.T) {
 	}
 }
 
+func TestInvoiceTotalTaxDraftPersistsButCannotActivateWithoutReview(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := database.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	testutil.LockIntegrationDatabase(t, db)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	store := New(db)
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	rate := int64(500)
+	category := "standard"
+	created, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
+		PlanKey: "invoice-total-tax-draft", Version: 1, Currency: billing.CurrencyTWD,
+		EffectiveFrom: start, CreatedBy: "integration-test", Now: start.Add(-time.Hour),
+		TaxMode: billing.TaxModeInvoiceTotal, InvoiceTaxRateBasisPoints: &rate,
+		InvoiceTaxRoundingMode: billing.RoundingHalfUp, InvoiceTaxCategory: category,
+		Rates: []billing.PricingRate{{ServiceCode: "logger", MetricCode: "ingest", Description: "Log ingest", Unit: "requests",
+			UnitPriceMinor: 1, RoundingMode: billing.RoundingHalfUp, TaxCategory: &category}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetPricingVersion(ctx, created.ID)
+	if err != nil || loaded.TaxMode != billing.TaxModeInvoiceTotal || loaded.InvoiceTaxRateBasisPoints == nil ||
+		*loaded.InvoiceTaxRateBasisPoints != rate || loaded.InvoiceTaxCategory != category || loaded.InvoiceTaxRoundingMode != billing.RoundingHalfUp {
+		t.Fatalf("tax policy roundtrip: %+v err=%v", loaded, err)
+	}
+	if _, err := store.ActivatePricingVersion(ctx, created.ID, start.Add(-time.Hour)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("unreviewed invoice-total draft must not activate: %v", err)
+	}
+}
+
 func TestPricingHistoryKeepsOldPeriodsAndRejectsAmbiguity(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {

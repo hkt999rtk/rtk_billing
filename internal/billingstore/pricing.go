@@ -18,13 +18,17 @@ import (
 )
 
 type CreatePricingVersionInput struct {
-	PlanKey       string
-	Version       int64
-	Currency      billing.Currency
-	EffectiveFrom time.Time
-	Rates         []billing.PricingRate
-	CreatedBy     string
-	Now           time.Time
+	PlanKey                   string
+	Version                   int64
+	Currency                  billing.Currency
+	EffectiveFrom             time.Time
+	Rates                     []billing.PricingRate
+	TaxMode                   billing.TaxCalculationMode
+	InvoiceTaxRateBasisPoints *int64
+	InvoiceTaxRoundingMode    billing.RoundingMode
+	InvoiceTaxCategory        string
+	CreatedBy                 string
+	Now                       time.Time
 }
 
 func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersionInput) (billing.PricingVersion, error) {
@@ -36,6 +40,19 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 	if in.Now.IsZero() {
 		in.Now = time.Now().UTC()
 	}
+	if in.TaxMode == "" {
+		in.TaxMode = billing.TaxModeLine
+	}
+	if in.TaxMode == billing.TaxModeLine {
+		if in.InvoiceTaxRateBasisPoints != nil || in.InvoiceTaxRoundingMode != "" || in.InvoiceTaxCategory != "" {
+			return billing.PricingVersion{}, ErrConflict
+		}
+	} else if in.TaxMode != billing.TaxModeInvoiceTotal || in.InvoiceTaxRateBasisPoints == nil ||
+		*in.InvoiceTaxRateBasisPoints < 0 || *in.InvoiceTaxRateBasisPoints > 10000 ||
+		(in.InvoiceTaxRoundingMode != billing.RoundingHalfUp && in.InvoiceTaxRoundingMode != billing.RoundingDown && in.InvoiceTaxRoundingMode != billing.RoundingUp) ||
+		strings.TrimSpace(in.InvoiceTaxCategory) == "" {
+		return billing.PricingVersion{}, ErrConflict
+	}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return billing.PricingVersion{}, err
@@ -43,11 +60,15 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 	defer tx.Rollback(ctx)
 	var out billing.PricingVersion
 	err = tx.QueryRow(ctx, `
-		INSERT INTO pricing_plan_versions (plan_key, version, currency, status, effective_from, created_by, created_at)
-		VALUES ($1, $2, $3, 'draft', $4, $5, $6)
-		RETURNING id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at
-	`, strings.TrimSpace(in.PlanKey), in.Version, in.Currency, in.EffectiveFrom.UTC(), strings.TrimSpace(in.CreatedBy), in.Now.UTC()).Scan(
-		&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt)
+		INSERT INTO pricing_plan_versions (plan_key, version, currency, status, effective_from, created_by, created_at,
+		    tax_mode, invoice_tax_rate_basis_points, invoice_tax_rounding_mode, invoice_tax_category)
+		VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at,
+		    tax_mode, invoice_tax_rate_basis_points, COALESCE(invoice_tax_rounding_mode,''), COALESCE(invoice_tax_category,'')
+	`, strings.TrimSpace(in.PlanKey), in.Version, in.Currency, in.EffectiveFrom.UTC(), strings.TrimSpace(in.CreatedBy), in.Now.UTC(),
+		in.TaxMode, in.InvoiceTaxRateBasisPoints, nullableTaxRounding(in.InvoiceTaxRoundingMode), nullableTaxCategory(in.InvoiceTaxCategory)).Scan(
+		&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt,
+		&out.TaxMode, &out.InvoiceTaxRateBasisPoints, &out.InvoiceTaxRoundingMode, &out.InvoiceTaxCategory)
 	if err != nil {
 		return billing.PricingVersion{}, err
 	}
@@ -107,10 +128,13 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 	var code billing.Currency
 	var status string
 	var effectiveFrom time.Time
-	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom); err != nil {
+	var taxMode billing.TaxCalculationMode
+	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from, tax_mode FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom, &taxMode); err != nil {
 		return billing.PricingVersion{}, mapNotFound(err)
 	}
-	if status != "draft" || !currency.CanSettle(code) {
+	if status != "draft" || !currency.CanSettle(code) || taxMode == billing.TaxModeInvoiceTotal {
+		// Invoice-total drafts are reviewable, but require a separate approved
+		// activation path with a complete tax and Product-eligibility manifest.
 		return billing.PricingVersion{}, ErrConflict
 	}
 	view := *s
@@ -215,9 +239,11 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 func (s *Store) GetPricingVersion(ctx context.Context, id string) (billing.PricingVersion, error) {
 	var out billing.PricingVersion
 	err := s.db.QueryRow(ctx, `
-		SELECT id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at
+		SELECT id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at,
+		       tax_mode, invoice_tax_rate_basis_points, COALESCE(invoice_tax_rounding_mode,''), COALESCE(invoice_tax_category,'')
 		FROM pricing_plan_versions WHERE id = $1
-	`, id).Scan(&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt)
+	`, id).Scan(&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt,
+		&out.TaxMode, &out.InvoiceTaxRateBasisPoints, &out.InvoiceTaxRoundingMode, &out.InvoiceTaxCategory)
 	if err != nil {
 		return billing.PricingVersion{}, mapNotFound(err)
 	}
@@ -227,6 +253,20 @@ func (s *Store) GetPricingVersion(ctx context.Context, id string) (billing.Prici
 	}
 	out.Rates = rates
 	return out, nil
+}
+
+func nullableTaxRounding(mode billing.RoundingMode) any {
+	if mode == "" {
+		return nil
+	}
+	return mode
+}
+
+func nullableTaxCategory(category string) any {
+	if strings.TrimSpace(category) == "" {
+		return nil
+	}
+	return strings.TrimSpace(category)
 }
 
 func (s *Store) ActivePricingVersion(ctx context.Context, at time.Time, currency billing.Currency) (billing.PricingVersion, error) {

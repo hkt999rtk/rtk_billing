@@ -22,6 +22,13 @@ const (
 	RoundingUp     RoundingMode = "up"
 )
 
+type TaxCalculationMode string
+
+const (
+	TaxModeLine         TaxCalculationMode = "line"
+	TaxModeInvoiceTotal TaxCalculationMode = "invoice_total"
+)
+
 type InvoiceState string
 
 const (
@@ -50,16 +57,20 @@ type BillingProfile struct {
 }
 
 type PricingVersion struct {
-	ID             string        `json:"id"`
-	PlanKey        string        `json:"plan_key"`
-	Version        int64         `json:"version"`
-	Currency       Currency      `json:"currency"`
-	Status         string        `json:"status"`
-	EffectiveFrom  time.Time     `json:"effective_from"`
-	EffectiveUntil *time.Time    `json:"effective_until,omitempty"`
-	Rates          []PricingRate `json:"rates"`
-	ActivatedAt    *time.Time    `json:"activated_at,omitempty"`
-	CreatedAt      time.Time     `json:"created_at"`
+	ID                        string             `json:"id"`
+	PlanKey                   string             `json:"plan_key"`
+	Version                   int64              `json:"version"`
+	Currency                  Currency           `json:"currency"`
+	Status                    string             `json:"status"`
+	EffectiveFrom             time.Time          `json:"effective_from"`
+	EffectiveUntil            *time.Time         `json:"effective_until,omitempty"`
+	Rates                     []PricingRate      `json:"rates"`
+	ActivatedAt               *time.Time         `json:"activated_at,omitempty"`
+	CreatedAt                 time.Time          `json:"created_at"`
+	TaxMode                   TaxCalculationMode `json:"tax_mode"`
+	InvoiceTaxRateBasisPoints *int64             `json:"invoice_tax_rate_basis_points,omitempty"`
+	InvoiceTaxRoundingMode    RoundingMode       `json:"invoice_tax_rounding_mode,omitempty"`
+	InvoiceTaxCategory        string             `json:"invoice_tax_category,omitempty"`
 }
 
 type PricingRate struct {
@@ -122,32 +133,36 @@ type InvoiceDocument struct {
 }
 
 type Invoice struct {
-	ID                   string           `json:"id"`
-	InvoiceNumber        string           `json:"invoice_number"`
-	OrganizationID       string           `json:"organization_id"`
-	AccountID            string           `json:"account_id,omitempty"`
-	PeriodID             string           `json:"period_id,omitempty"`
-	PricingVersionID     string           `json:"pricing_version_id"`
-	Currency             Currency         `json:"currency"`
-	State                InvoiceState     `json:"state"`
-	PeriodStart          time.Time        `json:"period_start"`
-	PeriodEnd            time.Time        `json:"period_end"`
-	SubtotalMinor        int64            `json:"subtotal_minor"`
-	TaxMinor             int64            `json:"tax_minor"`
-	TotalMinor           int64            `json:"total_minor"`
-	AmountSettledMinor   int64            `json:"amount_settled_minor"`
-	AmountDueMinor       int64            `json:"amount_due_minor"`
-	Recipient            BillingProfile   `json:"recipient"`
-	Lines                []InvoiceLine    `json:"lines"`
-	Document             *InvoiceDocument `json:"document,omitempty"`
-	SettlementLedgerID   string           `json:"settlement_ledger_id,omitempty"`
-	SettlementActivityID string           `json:"settlement_activity_id,omitempty"`
-	IssuedAt             *time.Time       `json:"issued_at,omitempty"`
-	DueAt                *time.Time       `json:"due_at,omitempty"`
-	SettledAt            *time.Time       `json:"settled_at,omitempty"`
-	Version              int64            `json:"version"`
-	CreatedAt            time.Time        `json:"created_at"`
-	UpdatedAt            time.Time        `json:"updated_at"`
+	ID                        string             `json:"id"`
+	InvoiceNumber             string             `json:"invoice_number"`
+	OrganizationID            string             `json:"organization_id"`
+	AccountID                 string             `json:"account_id,omitempty"`
+	PeriodID                  string             `json:"period_id,omitempty"`
+	PricingVersionID          string             `json:"pricing_version_id"`
+	TaxMode                   TaxCalculationMode `json:"tax_mode"`
+	InvoiceTaxRateBasisPoints *int64             `json:"invoice_tax_rate_basis_points,omitempty"`
+	InvoiceTaxRoundingMode    RoundingMode       `json:"invoice_tax_rounding_mode,omitempty"`
+	InvoiceTaxCategory        string             `json:"invoice_tax_category,omitempty"`
+	Currency                  Currency           `json:"currency"`
+	State                     InvoiceState       `json:"state"`
+	PeriodStart               time.Time          `json:"period_start"`
+	PeriodEnd                 time.Time          `json:"period_end"`
+	SubtotalMinor             int64              `json:"subtotal_minor"`
+	TaxMinor                  int64              `json:"tax_minor"`
+	TotalMinor                int64              `json:"total_minor"`
+	AmountSettledMinor        int64              `json:"amount_settled_minor"`
+	AmountDueMinor            int64              `json:"amount_due_minor"`
+	Recipient                 BillingProfile     `json:"recipient"`
+	Lines                     []InvoiceLine      `json:"lines"`
+	Document                  *InvoiceDocument   `json:"document,omitempty"`
+	SettlementLedgerID        string             `json:"settlement_ledger_id,omitempty"`
+	SettlementActivityID      string             `json:"settlement_activity_id,omitempty"`
+	IssuedAt                  *time.Time         `json:"issued_at,omitempty"`
+	DueAt                     *time.Time         `json:"due_at,omitempty"`
+	SettledAt                 *time.Time         `json:"settled_at,omitempty"`
+	Version                   int64              `json:"version"`
+	CreatedAt                 time.Time          `json:"created_at"`
+	UpdatedAt                 time.Time          `json:"updated_at"`
 }
 
 type ActivityState string

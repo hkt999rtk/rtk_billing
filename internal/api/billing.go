@@ -196,6 +196,8 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	}
 	draft, err := billing.BuildDraftInvoice(billing.Invoice{
 		OrganizationID: organizationID, PricingVersionID: pricing.ID, Currency: currency.Settlement,
+		TaxMode: pricing.TaxMode, InvoiceTaxRateBasisPoints: pricing.InvoiceTaxRateBasisPoints,
+		InvoiceTaxRoundingMode: pricing.InvoiceTaxRoundingMode, InvoiceTaxCategory: pricing.InvoiceTaxCategory,
 		PeriodStart: start, PeriodEnd: end, Recipient: profile,
 	}, billableFacts, pricing.Rates)
 	if err != nil {
@@ -516,11 +518,15 @@ func (s *Server) exportBillingStatement(c *gin.Context) {
 }
 
 type createPricingVersionRequest struct {
-	PlanKey       string                `json:"plan_key"`
-	Version       int64                 `json:"version"`
-	Currency      billing.Currency      `json:"currency"`
-	EffectiveFrom time.Time             `json:"effective_from"`
-	Rates         []billing.PricingRate `json:"rates"`
+	PlanKey                   string                     `json:"plan_key"`
+	Version                   int64                      `json:"version"`
+	Currency                  billing.Currency           `json:"currency"`
+	EffectiveFrom             time.Time                  `json:"effective_from"`
+	Rates                     []billing.PricingRate      `json:"rates"`
+	TaxMode                   billing.TaxCalculationMode `json:"tax_mode"`
+	InvoiceTaxRateBasisPoints *int64                     `json:"invoice_tax_rate_basis_points"`
+	InvoiceTaxRoundingMode    billing.RoundingMode       `json:"invoice_tax_rounding_mode"`
+	InvoiceTaxCategory        string                     `json:"invoice_tax_category"`
 }
 
 func (s *Server) createBillingPricingVersion(c *gin.Context) {
@@ -534,6 +540,8 @@ func (s *Server) createBillingPricingVersion(c *gin.Context) {
 	version, err := s.billing.store.CreatePricingVersion(c.Request.Context(), billingstore.CreatePricingVersionInput{
 		PlanKey: request.PlanKey, Version: request.Version, Currency: request.Currency,
 		EffectiveFrom: request.EffectiveFrom, Rates: request.Rates, CreatedBy: "internal-api", Now: s.billing.now(),
+		TaxMode: request.TaxMode, InvoiceTaxRateBasisPoints: request.InvoiceTaxRateBasisPoints,
+		InvoiceTaxRoundingMode: request.InvoiceTaxRoundingMode, InvoiceTaxCategory: request.InvoiceTaxCategory,
 	})
 	if err != nil {
 		writeBillingError(c, err)
