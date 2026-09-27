@@ -204,6 +204,15 @@ func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.
 		if err != nil || review.RateSetSHA256 != approval.RateSetSHA256 {
 			return billing.PricingVersion{}, ErrConflict
 		}
+		var draftBase, draftDigest, draftScope string
+		var draftEffective time.Time
+		if err := tx.QueryRow(ctx, `SELECT base_version_id::text, rate_set_sha256, scope_code, effective_from
+			FROM ota_pricing_drafts WHERE pricing_version_id=$1 FOR SHARE`, id).Scan(
+			&draftBase, &draftDigest, &draftScope, &draftEffective); err != nil ||
+			draftBase != approval.BaseVersionID || draftDigest != approval.RateSetSHA256 ||
+			draftScope != "commercial_active_product_ota" || !draftEffective.Equal(effectiveFrom) {
+			return billing.PricingVersion{}, ErrConflict
+		}
 	}
 	scheduled := effectiveFrom.After(now.UTC())
 	if approval != nil && !scheduled {

@@ -63,18 +63,47 @@ func TestReviewedOTAPublicationRequiresExactCardTaxAndFutureUTCMonth(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.CreateOTAPricingDraft(ctx, CreateOTAPricingDraftInput{
+		BaseVersionID: base.ID, EffectiveFrom: cutover.Add(time.Hour), CreatedBy: "integration-test"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("mid-month OTA draft accepted: %v", err)
+	}
+	if _, err := store.CreateOTAPricingDraft(ctx, CreateOTAPricingDraftInput{
+		BaseVersionID: testutil.OrganizationID("stale-base"), EffectiveFrom: cutover, CreatedBy: "integration-test"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale OTA base accepted: %v", err)
+	}
+	var draftCount int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM ota_pricing_drafts`).Scan(&draftCount); err != nil || draftCount != 0 {
+		t.Fatalf("failed validation left a draft: count=%d err=%v", draftCount, err)
+	}
+	created, err := store.CreateOTAPricingDraft(ctx, CreateOTAPricingDraftInput{
+		BaseVersionID: base.ID, EffectiveFrom: cutover, CreatedBy: "integration-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := created.PricingVersion
+	if created.RateSetSHA256 != review.Review.RateSetSHA256 || created.BaseVersionID != base.ID ||
+		len(draft.Rates) != len(rates) {
+		t.Fatalf("atomic draft does not match reviewed complete card: %+v", created)
+	}
+	if _, err := db.Exec(ctx, `UPDATE ota_pricing_drafts SET rate_set_sha256=$2
+		WHERE pricing_version_id=$1`, draft.ID, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("draft manifest was mutable")
+	}
+	approval := ReviewedOTAPublication{BaseVersionID: base.ID, RateSetSHA256: review.Review.RateSetSHA256,
+		FirstReviewer: "finance-reviewer", SecondReviewer: "billing-reviewer", ApprovedAt: now.Add(-time.Minute)}
+	if _, err := store.ActivatePricingVersion(ctx, draft.ID, now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("generic activation accepted OTA: %v", err)
+	}
 	taxRate := int64(500)
-	draft, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{PlanKey: "ota-reviewed-test", Version: 2,
+	unreviewedDraft, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{PlanKey: "ota-reviewed-test", Version: 4,
 		Currency: billing.CurrencyTWD, EffectiveFrom: cutover, CreatedBy: "integration-test", Now: now,
 		Rates: rates, TaxMode: billing.TaxModeInvoiceTotal, InvoiceTaxRateBasisPoints: &taxRate,
 		InvoiceTaxRoundingMode: billing.RoundingHalfUp, InvoiceTaxCategory: standard})
 	if err != nil {
 		t.Fatal(err)
 	}
-	approval := ReviewedOTAPublication{BaseVersionID: base.ID, RateSetSHA256: review.Review.RateSetSHA256,
-		FirstReviewer: "finance-reviewer", SecondReviewer: "billing-reviewer", ApprovedAt: now.Add(-time.Minute)}
-	if _, err := store.ActivatePricingVersion(ctx, draft.ID, now); !errors.Is(err, ErrConflict) {
-		t.Fatalf("generic activation accepted OTA: %v", err)
+	if _, err := store.PublishReviewedOTAPricingVersion(ctx, unreviewedDraft.ID, now, approval); !errors.Is(err, ErrConflict) {
+		t.Fatalf("unrecorded OTA draft accepted: %v", err)
 	}
 	wrongTax := int64(0)
 	untaxedDraft, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{PlanKey: "ota-reviewed-test", Version: 3,
@@ -119,6 +148,11 @@ func TestReviewedOTAPublicationRequiresExactCardTaxAndFutureUTCMonth(t *testing.
 		WHERE pricing_version_id=$1`, draft.ID).Scan(&digest, &scope); err != nil ||
 		digest != approval.RateSetSHA256 || scope != "commercial_active_product_ota" {
 		t.Fatalf("publication audit missing: digest=%s scope=%s err=%v", digest, scope, err)
+	}
+	if err := db.QueryRow(ctx, `SELECT rate_set_sha256, scope_code FROM ota_pricing_drafts
+		WHERE pricing_version_id=$1`, draft.ID).Scan(&digest, &scope); err != nil ||
+		digest != approval.RateSetSHA256 || scope != "commercial_active_product_ota" {
+		t.Fatalf("draft manifest missing: digest=%s scope=%s err=%v", digest, scope, err)
 	}
 	if _, err := store.PublishReviewedOTAPricingVersion(ctx, draft.ID, now, approval); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate publication accepted: %v", err)

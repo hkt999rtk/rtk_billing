@@ -35,8 +35,10 @@ generic `/v1/internal/billing/pricing-versions/{id}/activate` route. The
 separate `publish-reviewed-ota` route checks the current complete base, the
 exact four OTA rates, deterministic digest, two distinct reviewers, 5%
 invoice-total tax, Product/account scope and a future UTC month boundary in
-one serialized transaction. It records the publication in
-`ota_pricing_publications`. Do not bypass these checks through SQL. No OTA
+one serialized transaction. It requires a complete draft assembled by
+`cmd/ota-pricing-draft` with its digest in `ota_pricing_drafts`, then records
+the publication in `ota_pricing_publications`. Do not bypass these checks
+through SQL. No OTA
 retail version has been activated by this runbook.
 For paid Managed Cloud, a Product with the `ota` option and a qualifying source
 receipt is the OTA charge boundary; there is no separate OTA contract opt-in.
@@ -145,7 +147,7 @@ contains all of the following:
 | Tax | The approved new OTA-inclusive TWD card uses `invoice_total`, Taiwan standard business tax at 5% (500 basis points), `half_up`, and the `standard` category: round each pre-tax line, sum all services, calculate tax once on that subtotal, then allocate tax to lines for reconciliation. Government electronic-invoice issuance and filing are deferred. Existing issued invoices and prior `line` versions retain their old meaning. `tax_rate_basis_points=0` on an OTA rate is not an exemption. Reconfirm this frozen policy in the approved manifest before publication. |
 | Applicability | Paid Managed Cloud eligibility is Account Manager `commercial_for_full_period=true` for the complete UTC month plus `commercial_accounts.state=active` at settlement. No extra contract/plan marker is required. Each charged OTA fact also needs a verified Product grant and qualifying source receipt, including bounded completion and storage after disable. The invoice close and usage estimate checks are implemented; the tenant price API must apply the same effective interval and qualify its display. Evaluation and Private Cloud retain their separate terms. Missing or ambiguous evidence fails closed. |
 | Meter precision | Require a reviewed, non-null rate `quantity_scale` on the publishable full card and the four exact OTA service/metric/unit/price/rounding identities. The nullable rate field now round-trips and rejects mismatched facts when set; historical nulls still need explicit review. |
-| Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. The reviewed publication transaction rechecks the exact draft against the then-current base and approved digest, and records scope, reviewers, tax and cutover in `ota_pricing_publications`. The operator must preserve the external approval packet and create the draft only from its reviewed complete candidate. |
+| Version provenance | The read-only review tool checks the selected base ID and produces a deterministic rate-set digest. The atomic draft command copies the current complete base and adds exactly four approved OTA rows in one locked transaction, recording scope, tax and digest in `ota_pricing_drafts`. The reviewed publication transaction rechecks that manifest and the then-current base against the approved digest, and records reviewers and cutover in `ota_pricing_publications`. The operator must preserve the external approval packet. |
 | UTC cutover | The generic activation path permits one future `00:00:00Z` first-of-month **non-OTA** version. The separate reviewed OTA path applies the same serialized non-overlap and invoice protections, additionally requiring the frozen full-card manifest and tax policy. It marks the prior row `retired` when published, but interval selection continues to use it until the cutover. Operational publication still requires target-environment qualification; preserve historical intervals and invoices. |
 | Ownership/month policy | OTA-priced invoice close requires an exact UTC month and a current responsibility period that began no later than that month's start. Missing ownership evidence, a mid-month transfer, or Cloud closure leaves an explicit `incomplete` period for manual review. The current tenant preview now uses the UTC month once OTA is priced and withholds OTA estimates on partial/current-owner windows while retaining other service estimates; it reports `held_for_review` and disables the full-bill forecast. Still specify migration from historical profile-local months and any approved allocation or later-owner close policy without exposing another owner's data. |
 
@@ -156,10 +158,9 @@ CDN bytes, retries and Range requests are provider costs, not an extra
 customer meter. Use the actual provider contract, regions, tiers, cache
 behavior, retry/Range ratio, exchange rate and tax in the margin record.
 
-## 3. Build and review the complete candidate card (partial P1 tooling)
+## 3. Build and review the complete candidate card
 
-The intended tool must consume the read-only consistent snapshot and the
-approved manifest. Sort rate identities deterministically by
+Sort rate identities deterministically by
 `(service_code, metric_code, unit)` and produce a machine-readable full-card
 diff and digest. The candidate must copy **every** applicable non-OTA row
 unchanged, then add exactly the four OTA rows above. Review description,
@@ -189,12 +190,29 @@ draft is later created. Store its output with restricted approval evidence;
 it contains the full internal price card. A failed review leaves the database
 unchanged.
 
+After the technical review and external Finance/Billing scope and tax review,
+create the unpublished card with a write-authorized Billing connection:
+
+```bash
+DATABASE_URL="$WRITE_BILLING_DSN" go run ./cmd/ota-pricing-draft \
+  --base-version "$CURRENT_TWD_VERSION_ID" \
+  --effective-from "YYYY-MM-01T00:00:00Z" \
+  --created-by "$OPERATOR_ID"
+```
+
+The command does not consume or trust a supplied rate array. In a serialized
+transaction it re-reads the current complete TWD card, requires the supplied
+base ID and a future UTC month start, rejects another published future card,
+copies every non-OTA row unchanged, adds only the four approved OTA rates,
+fixes invoice-total Taiwan tax at 5%, and writes the draft plus its immutable
+manifest digest. Compare the returned digest and full rate card with the
+approved review packet. Creation does **not** activate or publish prices.
+
 Reject the candidate if any non-OTA row changes or disappears without its own
 commercial approval, an OTA row is missing/duplicated/altered, another future
 version conflicts, tax/scope is unresolved, the base has drifted, or an
-issued/closing period intersects the proposed cutover. Create an immutable
-draft only after a second reviewer accepts the exact manifest digest; the
-reviewed publication transaction revalidates it against the live base. The generic
+issued/closing period intersects the proposed cutover. The reviewed publication
+transaction revalidates the atomic draft against the live base. The generic
 `POST /v1/internal/billing/pricing-versions` only creates a draft. It is
 **not** the preflight or publication mechanism; the operator must use the
 read-only review and the separate reviewed publication route.
