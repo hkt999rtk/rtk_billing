@@ -79,6 +79,12 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	store := New(db)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
+	store.SetOTATierVerifier(otaTierVerifierFunc(func(_ context.Context, cloud string, observedStart, observedEnd time.Time) error {
+		if cloud == "" || !observedStart.Equal(start) || !observedEnd.Equal(end) {
+			return ErrIncomplete
+		}
+		return nil
+	}))
 	now := end.Add(time.Hour)
 	version, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
 		PlanKey: "ota-test", Version: 1, Currency: billing.CurrencyTWD,
@@ -102,6 +108,8 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 		Quantity: 2_000_000_000, QuantityScale: 9, Unit: billing.UnitOTAGiB,
 		WindowStart: start.Add(time.Minute), WindowEnd: start.Add(2 * time.Minute),
 		Source: "ota-producer", SourceSHA256: strings.Repeat("a", 64),
+		OTAGrant: &billing.OTAGrantEvidence{ProductServiceRevision: 1,
+			ServiceGrantSHA256: strings.Repeat("b", 64), AuthorizedAt: start},
 	}
 	for name, mutate := range map[string]func(*billing.UsageFact){
 		"missing-product": func(f *billing.UsageFact) { f.ProductID = "" },
@@ -202,6 +210,40 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	producer.FactSetSHA256 = &factSHA
 	if _, created, err := store.PutOTAPeriodSeal(ctx, producer); err != nil || !created {
 		t.Fatalf("producer seal insert: created=%v err=%v", created, err)
+	}
+	store.SetOTATierVerifier(nil)
+	if _, _, err := store.PrepareInvoice(ctx, closeInput); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("OTA close without account tier history: %v", err)
+	}
+	var eligibilityCode string
+	if err := db.QueryRow(ctx, `SELECT close_error_code FROM billing_periods WHERE organization_id=$1`, org).Scan(&eligibilityCode); err != nil || eligibilityCode != "ota_account_eligibility_unverified" {
+		t.Fatalf("unverified account close code=%q err=%v", eligibilityCode, err)
+	}
+	store.SetOTATierVerifier(otaTierVerifierFunc(func(_ context.Context, cloud string, observedStart, observedEnd time.Time) error { return nil }))
+	if _, _, err := store.PrepareInvoice(ctx, closeInput); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("OTA fact closed without historical grant verifier: %v", err)
+	}
+	var grantCode string
+	if err := db.QueryRow(ctx, `SELECT close_error_code FROM billing_periods WHERE organization_id=$1`, org).Scan(&grantCode); err != nil || grantCode != "ota_grant_unverified" {
+		t.Fatalf("unverified grant close code=%q err=%v", grantCode, err)
+	}
+	store.SetOTAGrantVerifier(otaGrantVerifierFunc(func(_ context.Context, cloud, observedProduct string, witness billing.OTAGrantEvidence) error {
+		if cloud != org || observedProduct != product || witness != *fact.OTAGrant {
+			return ErrIncomplete
+		}
+		return nil
+	}))
+	if _, err := db.Exec(ctx, `UPDATE commercial_accounts SET state='attention_required' WHERE id=$1`, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.PrepareInvoice(ctx, closeInput); !errors.Is(err, ErrIncomplete) {
+		t.Fatalf("non-active Billing account allowed OTA close: %v", err)
+	}
+	if err := db.QueryRow(ctx, `SELECT close_error_code FROM billing_periods WHERE organization_id=$1`, org).Scan(&eligibilityCode); err != nil || eligibilityCode != "ota_account_eligibility_unverified" {
+		t.Fatalf("non-active account close code=%q err=%v", eligibilityCode, err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE commercial_accounts SET state='active' WHERE id=$1`, account.ID); err != nil {
+		t.Fatal(err)
 	}
 	invoice, created, err := store.PrepareInvoice(ctx, closeInput)
 	if err != nil || !created || invoice.TotalMinor != 2 || len(invoice.Lines) != 1 || invoice.Lines[0].ProductID != product {

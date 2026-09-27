@@ -2,6 +2,7 @@ package billing
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -71,6 +72,73 @@ func TestBuildDraftInvoiceKeepsProductDetailsAndTotals(t *testing.T) {
 		[]PricingRate{{ServiceCode: "logger", MetricCode: "ingest_gib", Unit: "GiB", UnitPriceMinor: 10, RoundingMode: RoundingHalfUp}})
 	if err != nil || len(invoice.Lines) != 2 || invoice.SubtotalMinor != 50 || invoice.Lines[0].ProductID != "product-a" || invoice.Lines[1].ProductID != "product-b" {
 		t.Fatalf("invoice=%+v err=%v", invoice, err)
+	}
+}
+
+func TestInvoiceTotalTaxUsesCombinedSubtotalAndStableAllocation(t *testing.T) {
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	rate := int64(500)
+	facts := []UsageFact{
+		{UsageID: "b", OrganizationID: "org", ProductID: "product-b", ServiceCode: "logger", MetricCode: "ingest", Quantity: 5, Unit: "requests", WindowStart: start, WindowEnd: start.Add(time.Minute)},
+		{UsageID: "a", OrganizationID: "org", ProductID: "product-a", ServiceCode: "logger", MetricCode: "ingest", Quantity: 5, Unit: "requests", WindowStart: start, WindowEnd: start.Add(time.Minute)},
+	}
+	rates := []PricingRate{{ServiceCode: "logger", MetricCode: "ingest", Unit: "requests", UnitPriceMinor: 1, RoundingMode: RoundingHalfUp}}
+	base := Invoice{OrganizationID: "org", PricingVersionID: "price", Currency: CurrencyTWD, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0),
+		TaxMode: TaxModeInvoiceTotal, InvoiceTaxRateBasisPoints: &rate, InvoiceTaxRoundingMode: RoundingHalfUp, InvoiceTaxCategory: "standard"}
+	got, err := BuildDraftInvoice(base, facts, rates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SubtotalMinor != 10 || got.TaxMinor != 1 || got.TotalMinor != 11 || len(got.Lines) != 2 ||
+		got.Lines[0].ProductID != "product-a" || got.Lines[0].TaxMinor != 1 || got.Lines[1].TaxMinor != 0 {
+		t.Fatalf("invoice total tax allocation: %+v", got)
+	}
+	reordered, err := BuildDraftInvoice(base, []UsageFact{facts[1], facts[0]}, rates)
+	if err != nil || reordered.Lines[0].TaxMinor != got.Lines[0].TaxMinor || reordered.Lines[1].TaxMinor != got.Lines[1].TaxMinor {
+		t.Fatalf("input order changed tax allocation: %+v err=%v", reordered, err)
+	}
+	legacy := base
+	legacy.TaxMode, legacy.InvoiceTaxRateBasisPoints, legacy.InvoiceTaxRoundingMode, legacy.InvoiceTaxCategory = TaxModeLine, nil, "", ""
+	legacy, err = BuildDraftInvoice(legacy, facts, rates)
+	if err != nil || legacy.TaxMinor != 0 {
+		t.Fatalf("legacy line tax changed: %+v err=%v", legacy, err)
+	}
+	missing := base
+	missing.InvoiceTaxRateBasisPoints = nil
+	if _, err := BuildDraftInvoice(missing, facts, rates); !errors.Is(err, ErrInvalidInvoice) {
+		t.Fatalf("missing approved tax rate must fail closed: %v", err)
+	}
+}
+
+func TestTaiwanBusinessTaxIsCalculatedOnceOnOTAAndOtherServices(t *testing.T) {
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	taxRate := int64(500)
+	pricing := PricingVersion{ID: "taiwan-ota", Currency: CurrencyTWD,
+		TaxMode: TaxModeInvoiceTotal, InvoiceTaxRateBasisPoints: &taxRate,
+		InvoiceTaxRoundingMode: RoundingHalfUp, InvoiceTaxCategory: "standard"}
+	pricing.Rates = append(ProposedOTARates(), PricingRate{ServiceCode: "mqtt", MetricCode: "publish_count",
+		Unit: "requests", UnitPriceMinor: 32, UnitPriceScale: 6, RoundingMode: RoundingHalfUp})
+	for i := range pricing.Rates {
+		if pricing.Rates[i].ServiceCode == ServiceOTA {
+			category := "standard"
+			pricing.Rates[i].TaxCategory = &category
+		}
+	}
+	facts := make([]UsageFact, 0, 1001)
+	for i := 0; i < 1000; i++ {
+		facts = append(facts, UsageFact{UsageID: fmt.Sprintf("ota-task-%04d", i), OrganizationID: "org", ProductID: "product",
+			ServiceCode: ServiceOTA, MetricCode: MetricOTADeviceTask, Quantity: 1, Unit: UnitOTADeviceTask,
+			WindowStart: start, WindowEnd: start.Add(time.Minute)})
+	}
+	facts = append(facts, UsageFact{UsageID: "mqtt", OrganizationID: "org", ServiceCode: "mqtt", MetricCode: "publish_count",
+		Quantity: 1_000_000, Unit: "requests", WindowStart: start, WindowEnd: start.Add(time.Minute)})
+	invoice, err := BuildDraftInvoice(Invoice{OrganizationID: "org", PricingVersionID: pricing.ID, Currency: pricing.Currency,
+		PeriodStart: start, PeriodEnd: end, TaxMode: pricing.TaxMode,
+		InvoiceTaxRateBasisPoints: pricing.InvoiceTaxRateBasisPoints,
+		InvoiceTaxRoundingMode:    pricing.InvoiceTaxRoundingMode, InvoiceTaxCategory: pricing.InvoiceTaxCategory}, facts, pricing.Rates)
+	if err != nil || invoice.SubtotalMinor != 128 || invoice.TaxMinor != 6 || invoice.TotalMinor != 134 || len(invoice.Lines) != 2 {
+		t.Fatalf("Taiwan tax on combined OTA/MQTT subtotal: invoice=%+v err=%v", invoice, err)
 	}
 }
 

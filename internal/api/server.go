@@ -73,6 +73,7 @@ func New(options Options) (*Server, error) {
 	internal := r.Group("/v1/internal", s.requireInternalToken())
 	internal.POST("/billing/pricing-versions", s.createBillingPricingVersion)
 	internal.POST("/billing/pricing-versions/:pricingVersionId/activate", s.activateBillingPricingVersion)
+	internal.POST("/billing/pricing-versions/:pricingVersionId/publish-reviewed-ota", s.publishReviewedOTAPricingVersion)
 	internal.POST("/billing/usage-facts", s.putBillingUsageFact)
 	internal.POST("/billing/periods/close", s.closeBillingPeriod)
 	internal.GET("/billing/access/:orgId", s.getBillingAccess)
@@ -91,6 +92,7 @@ func (s *Server) Router() http.Handler { return s.router }
 
 func (s *Server) registerTenantRoutes(org *gin.RouterGroup) {
 	org.GET("/billing/account", s.requirePermission("billing_account.read"), s.getBillingAccount)
+	org.GET("/billing/pricing", s.requirePermission("billing_account.read"), s.getBillingPricing)
 	org.GET("/billing/summary", s.requirePermission("billing_summary.read"), s.getBillingSummary)
 	org.GET("/billing/usage", s.requirePermission("billing_usage.read"), s.getBillingUsage)
 	org.GET("/billing/invoices", s.requirePermission("invoice.read"), s.listBillingInvoices)

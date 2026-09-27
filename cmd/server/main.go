@@ -14,6 +14,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/billingstore"
 	"github.com/hkt999rtk/rtk_billing/internal/config"
 	"github.com/hkt999rtk/rtk_billing/internal/database"
+	"github.com/hkt999rtk/rtk_billing/internal/otagrant"
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentcrypto"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentprovider/newebpay"
@@ -89,6 +90,14 @@ func main() {
 		}
 	}
 	billingStore := billingstore.New(db)
+	if cfg.OTAGrantHistoryBaseURL != "" {
+		verifier, err := otagrant.NewClient(cfg.OTAGrantHistoryBaseURL, cfg.OTAGrantHistoryToken, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		billingStore.SetOTAGrantVerifier(verifier)
+		billingStore.SetOTATierVerifier(verifier)
+	}
 	if cfg.OTAPlatformSealToken != "" {
 		if err := server.ConfigureOTAPeriodSeals(api.OTAPeriodSealAPIOptions{
 			PlatformToken: cfg.OTAPlatformSealToken, ProducerToken: cfg.OTAProducerSealToken, Store: billingStore,

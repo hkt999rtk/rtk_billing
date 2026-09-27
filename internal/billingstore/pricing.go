@@ -2,8 +2,10 @@ package billingstore
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"strings"
 	"time"
 
@@ -18,13 +20,17 @@ import (
 )
 
 type CreatePricingVersionInput struct {
-	PlanKey       string
-	Version       int64
-	Currency      billing.Currency
-	EffectiveFrom time.Time
-	Rates         []billing.PricingRate
-	CreatedBy     string
-	Now           time.Time
+	PlanKey                   string
+	Version                   int64
+	Currency                  billing.Currency
+	EffectiveFrom             time.Time
+	Rates                     []billing.PricingRate
+	TaxMode                   billing.TaxCalculationMode
+	InvoiceTaxRateBasisPoints *int64
+	InvoiceTaxRoundingMode    billing.RoundingMode
+	InvoiceTaxCategory        string
+	CreatedBy                 string
+	Now                       time.Time
 }
 
 func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersionInput) (billing.PricingVersion, error) {
@@ -36,6 +42,19 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 	if in.Now.IsZero() {
 		in.Now = time.Now().UTC()
 	}
+	if in.TaxMode == "" {
+		in.TaxMode = billing.TaxModeLine
+	}
+	if in.TaxMode == billing.TaxModeLine {
+		if in.InvoiceTaxRateBasisPoints != nil || in.InvoiceTaxRoundingMode != "" || in.InvoiceTaxCategory != "" {
+			return billing.PricingVersion{}, ErrConflict
+		}
+	} else if in.TaxMode != billing.TaxModeInvoiceTotal || in.InvoiceTaxRateBasisPoints == nil ||
+		*in.InvoiceTaxRateBasisPoints < 0 || *in.InvoiceTaxRateBasisPoints > 10000 ||
+		(in.InvoiceTaxRoundingMode != billing.RoundingHalfUp && in.InvoiceTaxRoundingMode != billing.RoundingDown && in.InvoiceTaxRoundingMode != billing.RoundingUp) ||
+		strings.TrimSpace(in.InvoiceTaxCategory) == "" {
+		return billing.PricingVersion{}, ErrConflict
+	}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return billing.PricingVersion{}, err
@@ -43,11 +62,15 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 	defer tx.Rollback(ctx)
 	var out billing.PricingVersion
 	err = tx.QueryRow(ctx, `
-		INSERT INTO pricing_plan_versions (plan_key, version, currency, status, effective_from, created_by, created_at)
-		VALUES ($1, $2, $3, 'draft', $4, $5, $6)
-		RETURNING id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at
-	`, strings.TrimSpace(in.PlanKey), in.Version, in.Currency, in.EffectiveFrom.UTC(), strings.TrimSpace(in.CreatedBy), in.Now.UTC()).Scan(
-		&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt)
+		INSERT INTO pricing_plan_versions (plan_key, version, currency, status, effective_from, created_by, created_at,
+		    tax_mode, invoice_tax_rate_basis_points, invoice_tax_rounding_mode, invoice_tax_category)
+		VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at,
+		    tax_mode, invoice_tax_rate_basis_points, COALESCE(invoice_tax_rounding_mode,''), COALESCE(invoice_tax_category,'')
+	`, strings.TrimSpace(in.PlanKey), in.Version, in.Currency, in.EffectiveFrom.UTC(), strings.TrimSpace(in.CreatedBy), in.Now.UTC(),
+		in.TaxMode, in.InvoiceTaxRateBasisPoints, nullableTaxRounding(in.InvoiceTaxRoundingMode), nullableTaxCategory(in.InvoiceTaxCategory)).Scan(
+		&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt,
+		&out.TaxMode, &out.InvoiceTaxRateBasisPoints, &out.InvoiceTaxRoundingMode, &out.InvoiceTaxCategory)
 	if err != nil {
 		return billing.PricingVersion{}, err
 	}
@@ -90,7 +113,25 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 	return out, nil
 }
 
+type ReviewedOTAPublication struct {
+	BaseVersionID  string    `json:"base_version_id"`
+	RateSetSHA256  string    `json:"rate_set_sha256"`
+	FirstReviewer  string    `json:"first_reviewer"`
+	SecondReviewer string    `json:"second_reviewer"`
+	ApprovedAt     time.Time `json:"approved_at"`
+}
+
 func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.Time) (billing.PricingVersion, error) {
+	return s.activatePricingVersion(ctx, id, now, nil)
+}
+
+// PublishReviewedOTAPricingVersion is the only OTA activation path. The
+// generic activation route remains blocked for OTA and invoice-total drafts.
+func (s *Store) PublishReviewedOTAPricingVersion(ctx context.Context, id string, now time.Time, approval ReviewedOTAPublication) (billing.PricingVersion, error) {
+	return s.activatePricingVersion(ctx, id, now, &approval)
+}
+
+func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.Time, approval *ReviewedOTAPublication) (billing.PricingVersion, error) {
 	if !required(id) {
 		return billing.PricingVersion{}, ErrConflict
 	}
@@ -107,10 +148,21 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 	var code billing.Currency
 	var status string
 	var effectiveFrom time.Time
-	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom); err != nil {
+	var taxMode billing.TaxCalculationMode
+	var taxRate *int64
+	var taxRounding billing.RoundingMode
+	var taxCategory string
+	if err := tx.QueryRow(ctx, `SELECT currency, status, effective_from, tax_mode,
+		invoice_tax_rate_basis_points, COALESCE(invoice_tax_rounding_mode,''), COALESCE(invoice_tax_category,'')
+		FROM pricing_plan_versions WHERE id = $1 FOR UPDATE`, id).Scan(&code, &status, &effectiveFrom, &taxMode, &taxRate, &taxRounding, &taxCategory); err != nil {
 		return billing.PricingVersion{}, mapNotFound(err)
 	}
 	if status != "draft" || !currency.CanSettle(code) {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	if approval == nil && taxMode == billing.TaxModeInvoiceTotal {
+		// Invoice-total drafts are reviewable, but require a separate approved
+		// activation path with a complete tax and Product-eligibility manifest.
 		return billing.PricingVersion{}, ErrConflict
 	}
 	view := *s
@@ -123,13 +175,49 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 	if !otaComplete {
 		return billing.PricingVersion{}, ErrConflict
 	}
-	// OTA publication still requires the reviewed complete-card manifest,
-	// explicit tax and account scope, and the UTC-month close policy. Generic
-	// pricing can be scheduled, but this route cannot start OTA charges.
-	if otaEnabled {
+	if approval == nil && otaEnabled {
 		return billing.PricingVersion{}, ErrConflict
 	}
+	if approval != nil {
+		approval.FirstReviewer = strings.TrimSpace(approval.FirstReviewer)
+		approval.SecondReviewer = strings.TrimSpace(approval.SecondReviewer)
+		if !otaEnabled || code != billing.CurrencyTWD || taxMode != billing.TaxModeInvoiceTotal ||
+			taxRate == nil || *taxRate != 500 || taxRounding != billing.RoundingHalfUp || taxCategory != "standard" ||
+			!required(approval.BaseVersionID) || !required(approval.FirstReviewer) || !required(approval.SecondReviewer) ||
+			approval.FirstReviewer == approval.SecondReviewer || approval.ApprovedAt.IsZero() || approval.ApprovedAt.After(now.UTC()) ||
+			len(approval.RateSetSHA256) != 64 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		if _, err := hex.DecodeString(approval.RateSetSHA256); err != nil || strings.ToLower(approval.RateSetSHA256) != approval.RateSetSHA256 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		for _, rate := range rates {
+			if rate.TaxCategory == nil || *rate.TaxCategory != "standard" {
+				return billing.PricingVersion{}, ErrConflict
+			}
+		}
+		base, err := view.ActivePricingVersion(ctx, now.UTC(), code)
+		if err != nil || base.ID != approval.BaseVersionID {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		review, err := billing.ReviewOTACandidateRates(base.ID, base.Rates, rates)
+		if err != nil || review.RateSetSHA256 != approval.RateSetSHA256 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		var draftBase, draftDigest, draftScope string
+		var draftEffective time.Time
+		if err := tx.QueryRow(ctx, `SELECT base_version_id::text, rate_set_sha256, scope_code, effective_from
+			FROM ota_pricing_drafts WHERE pricing_version_id=$1 FOR SHARE`, id).Scan(
+			&draftBase, &draftDigest, &draftScope, &draftEffective); err != nil ||
+			draftBase != approval.BaseVersionID || draftDigest != approval.RateSetSHA256 ||
+			draftScope != "commercial_active_product_ota" || !draftEffective.Equal(effectiveFrom) {
+			return billing.PricingVersion{}, ErrConflict
+		}
+	}
 	scheduled := effectiveFrom.After(now.UTC())
+	if approval != nil && !scheduled {
+		return billing.PricingVersion{}, ErrConflict
+	}
 	if scheduled {
 		monthStart := time.Date(effectiveFrom.UTC().Year(), effectiveFrom.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 		if !effectiveFrom.Equal(monthStart) {
@@ -191,6 +279,9 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 		}
 	}
 	if previousID != "" {
+		if approval != nil && previousID != approval.BaseVersionID {
+			return billing.PricingVersion{}, ErrConflict
+		}
 		var invoiced bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_invoices
 			WHERE pricing_version_id=$1 AND period_start >= $2)`, previousID, effectiveFrom.UTC()).Scan(&invoiced); err != nil {
@@ -200,6 +291,17 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 			return billing.PricingVersion{}, ErrConflict
 		}
 		if _, err := tx.Exec(ctx, `UPDATE pricing_plan_versions SET status='retired', effective_until=$2 WHERE id=$1`, previousID, effectiveFrom.UTC()); err != nil {
+			return billing.PricingVersion{}, err
+		}
+	}
+	if approval != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO ota_pricing_publications
+			(pricing_version_id, base_version_id, rate_set_sha256, scope_code, first_reviewer,
+			 second_reviewer, approved_at, published_at, effective_from, tax_mode,
+			 tax_rate_basis_points, tax_rounding_mode, tax_category)
+			VALUES ($1,$2,$3,'commercial_active_product_ota',$4,$5,$6,$7,$8,'invoice_total',500,'half_up','standard')`,
+			id, approval.BaseVersionID, approval.RateSetSHA256, approval.FirstReviewer,
+			approval.SecondReviewer, approval.ApprovedAt.UTC(), now.UTC(), effectiveFrom.UTC()); err != nil {
 			return billing.PricingVersion{}, err
 		}
 	}
@@ -215,9 +317,11 @@ func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.
 func (s *Store) GetPricingVersion(ctx context.Context, id string) (billing.PricingVersion, error) {
 	var out billing.PricingVersion
 	err := s.db.QueryRow(ctx, `
-		SELECT id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at
+		SELECT id::text, plan_key, version, currency, status, effective_from, effective_until, activated_at, created_at,
+		       tax_mode, invoice_tax_rate_basis_points, COALESCE(invoice_tax_rounding_mode,''), COALESCE(invoice_tax_category,'')
 		FROM pricing_plan_versions WHERE id = $1
-	`, id).Scan(&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt)
+	`, id).Scan(&out.ID, &out.PlanKey, &out.Version, &out.Currency, &out.Status, &out.EffectiveFrom, &out.EffectiveUntil, &out.ActivatedAt, &out.CreatedAt,
+		&out.TaxMode, &out.InvoiceTaxRateBasisPoints, &out.InvoiceTaxRoundingMode, &out.InvoiceTaxCategory)
 	if err != nil {
 		return billing.PricingVersion{}, mapNotFound(err)
 	}
@@ -229,6 +333,20 @@ func (s *Store) GetPricingVersion(ctx context.Context, id string) (billing.Prici
 	return out, nil
 }
 
+func nullableTaxRounding(mode billing.RoundingMode) any {
+	if mode == "" {
+		return nil
+	}
+	return mode
+}
+
+func nullableTaxCategory(category string) any {
+	if strings.TrimSpace(category) == "" {
+		return nil
+	}
+	return strings.TrimSpace(category)
+}
+
 func (s *Store) ActivePricingVersion(ctx context.Context, at time.Time, currency billing.Currency) (billing.PricingVersion, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id::text FROM pricing_plan_versions
@@ -236,6 +354,36 @@ func (s *Store) ActivePricingVersion(ctx context.Context, at time.Time, currency
 		  AND (effective_until IS NULL OR effective_until > $2)
 		ORDER BY effective_from DESC, version DESC LIMIT 2
 	`, currency, at.UTC())
+	if err != nil {
+		return billing.PricingVersion{}, err
+	}
+	defer rows.Close()
+	var id string
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return billing.PricingVersion{}, err
+		}
+		return billing.PricingVersion{}, ErrPricingUnavailable
+	}
+	if err := rows.Scan(&id); err != nil {
+		return billing.PricingVersion{}, err
+	}
+	if rows.Next() {
+		return billing.PricingVersion{}, ErrConflict
+	}
+	if err := rows.Err(); err != nil {
+		return billing.PricingVersion{}, err
+	}
+	rows.Close()
+	return s.GetPricingVersion(ctx, id)
+}
+
+// UpcomingPricingVersion returns the single next published interval. A draft
+// remains invisible to customers until it is explicitly published.
+func (s *Store) UpcomingPricingVersion(ctx context.Context, after time.Time, code billing.Currency) (billing.PricingVersion, error) {
+	rows, err := s.db.Query(ctx, `SELECT id::text FROM pricing_plan_versions
+		WHERE currency=$1 AND status IN ('active','retired') AND effective_from>$2
+		ORDER BY effective_from ASC LIMIT 2`, code, after.UTC())
 	if err != nil {
 		return billing.PricingVersion{}, err
 	}
@@ -318,6 +466,39 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 	if !billing.ValidOTAUsageFact(fact) {
 		return billing.UsageFact{}, false, ErrConflict
 	}
+	if fact.OTAGrant != nil {
+		grant := *fact.OTAGrant
+		if fact.ServiceCode != billing.ServiceOTA ||
+			fact.MetricCode != billing.MetricOTADeviceTask &&
+				fact.MetricCode != billing.MetricOTASuccessfulDownloadGiB &&
+				fact.MetricCode != billing.MetricOTAArtifactWrite &&
+				(fact.MetricCode != billing.MetricOTAArtifactStorageGiBMonth || fact.OTAStorageObject == nil) ||
+			grant.ProductServiceRevision < 1 || len(grant.ServiceGrantSHA256) != 64 ||
+			strings.ToLower(grant.ServiceGrantSHA256) != grant.ServiceGrantSHA256 ||
+			grant.AuthorizedAt.IsZero() {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		if _, err := hex.DecodeString(grant.ServiceGrantSHA256); err != nil {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		grant.AuthorizedAt = grant.AuthorizedAt.UTC().Truncate(time.Microsecond)
+		fact.OTAGrant = &grant
+	}
+	if fact.OTAStorageObject != nil {
+		object := *fact.OTAStorageObject
+		value, ok := new(big.Int).SetString(object.ByteMicroseconds, 10)
+		if fact.ServiceCode != billing.ServiceOTA || fact.MetricCode != billing.MetricOTAArtifactStorageGiBMonth ||
+			fact.OTAGrant == nil || len(object.ObjectSHA256) != 64 ||
+			strings.ToLower(object.ObjectSHA256) != object.ObjectSHA256 ||
+			len(object.ByteMicroseconds) > 40 || !ok || value.Sign() < 0 ||
+			value.String() != object.ByteMicroseconds || !otaUTCMonth(fact.WindowStart, fact.WindowEnd) {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		if _, err := hex.DecodeString(object.ObjectSHA256); err != nil {
+			return billing.UsageFact{}, false, ErrConflict
+		}
+		fact.OTAStorageObject = &object
+	}
 	fact.WindowStart = fact.WindowStart.UTC().Truncate(time.Microsecond)
 	fact.WindowEnd = fact.WindowEnd.UTC().Truncate(time.Microsecond)
 	if fact.WindowStart.IsZero() || !fact.WindowEnd.After(fact.WindowStart) {
@@ -345,14 +526,28 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 		return billing.UsageFact{}, false, ErrInvoiceImmutable
 	}
 	var id string
+	var grantRevision, grantSHA, grantAuthorizedAt any
+	var objectSHA, byteMicros any
+	if fact.OTAGrant != nil {
+		grantRevision = fact.OTAGrant.ProductServiceRevision
+		grantSHA = fact.OTAGrant.ServiceGrantSHA256
+		grantAuthorizedAt = fact.OTAGrant.AuthorizedAt
+	}
+	if fact.OTAStorageObject != nil {
+		objectSHA = fact.OTAStorageObject.ObjectSHA256
+		byteMicros = fact.OTAStorageObject.ByteMicroseconds
+	}
 	err := s.db.QueryRow(ctx, `
 		INSERT INTO billing_usage_facts (usage_id, organization_id, service_code, metric_code, quantity,
-		    quantity_scale, unit, window_start, window_end, source, source_sha256, product_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid)
+		    quantity_scale, unit, window_start, window_end, source, source_sha256, product_id,
+		    ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at,
+		    ota_storage_object_sha256, ota_storage_byte_microseconds)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::uuid,$13,$14,$15,$16,$17)
 		ON CONFLICT (usage_id) DO NOTHING
 		RETURNING id::text
 	`, fact.UsageID, fact.OrganizationID, fact.ServiceCode, fact.MetricCode, fact.Quantity, fact.QuantityScale,
-		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256), fact.ProductID).Scan(&id)
+		fact.Unit, fact.WindowStart.UTC(), fact.WindowEnd.UTC(), fact.Source, strings.ToLower(fact.SourceSHA256), fact.ProductID,
+		grantRevision, grantSHA, grantAuthorizedAt, objectSHA, byteMicros).Scan(&id)
 	created := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		var constraint *pgconn.PgError
@@ -382,12 +577,26 @@ func (s *Store) GetUsageFact(ctx context.Context, usageID string) (billing.Usage
 		visibility = "organization_id=$2 AND " + usageVisibility(ctx, &args)
 	}
 	var out billing.UsageFact
+	var grantRevision sql.NullInt64
+	var grantSHA sql.NullString
+	var grantAuthorizedAt sql.NullTime
+	var objectSHA, byteMicros sql.NullString
 	err := s.db.QueryRow(ctx, `
 		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
-		       unit, window_start, window_end, source, source_sha256
+		       unit, window_start, window_end, source, source_sha256,
+		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at,
+		       ota_storage_object_sha256, ota_storage_byte_microseconds
 		FROM billing_usage_facts WHERE usage_id = $1 AND `+visibility,
 		args...).Scan(&out.ID, &out.UsageID, &out.OrganizationID, &out.ProductID, &out.ServiceCode, &out.MetricCode, &out.Quantity,
-		&out.QuantityScale, &out.Unit, &out.WindowStart, &out.WindowEnd, &out.Source, &out.SourceSHA256)
+		&out.QuantityScale, &out.Unit, &out.WindowStart, &out.WindowEnd, &out.Source, &out.SourceSHA256,
+		&grantRevision, &grantSHA, &grantAuthorizedAt, &objectSHA, &byteMicros)
+	if err == nil && grantRevision.Valid && grantSHA.Valid && grantAuthorizedAt.Valid {
+		out.OTAGrant = &billing.OTAGrantEvidence{ProductServiceRevision: grantRevision.Int64,
+			ServiceGrantSHA256: grantSHA.String, AuthorizedAt: grantAuthorizedAt.Time.UTC()}
+	}
+	if err == nil && objectSHA.Valid && byteMicros.Valid {
+		out.OTAStorageObject = &billing.OTAStorageObjectEvidence{ObjectSHA256: objectSHA.String, ByteMicroseconds: byteMicros.String}
+	}
 	return out, mapNotFound(err)
 }
 
@@ -401,7 +610,9 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	visibility := usageVisibility(ctx, &args)
 	rows, err := s.db.Query(ctx, `
 		SELECT id::text, usage_id, organization_id::text, COALESCE(product_id::text,''), service_code, metric_code, quantity, quantity_scale,
-		       unit, window_start, window_end, source, source_sha256
+		       unit, window_start, window_end, source, source_sha256,
+		       ota_grant_revision, ota_grant_sha256, ota_grant_authorized_at,
+		       ota_storage_object_sha256, ota_storage_byte_microseconds
 		FROM billing_usage_facts
 		WHERE organization_id = $1 AND window_start >= $2 AND window_end <= $3 AND `+visibility+`
 		ORDER BY service_code, metric_code, unit, window_start, usage_id
@@ -413,9 +624,21 @@ func (s *Store) ListUsageFacts(ctx context.Context, organizationID string, start
 	out := make([]billing.UsageFact, 0)
 	for rows.Next() {
 		var fact billing.UsageFact
+		var grantRevision sql.NullInt64
+		var grantSHA sql.NullString
+		var grantAuthorizedAt sql.NullTime
+		var objectSHA, byteMicros sql.NullString
 		if err := rows.Scan(&fact.ID, &fact.UsageID, &fact.OrganizationID, &fact.ProductID, &fact.ServiceCode, &fact.MetricCode, &fact.Quantity,
-			&fact.QuantityScale, &fact.Unit, &fact.WindowStart, &fact.WindowEnd, &fact.Source, &fact.SourceSHA256); err != nil {
+			&fact.QuantityScale, &fact.Unit, &fact.WindowStart, &fact.WindowEnd, &fact.Source, &fact.SourceSHA256,
+			&grantRevision, &grantSHA, &grantAuthorizedAt, &objectSHA, &byteMicros); err != nil {
 			return nil, err
+		}
+		if grantRevision.Valid && grantSHA.Valid && grantAuthorizedAt.Valid {
+			fact.OTAGrant = &billing.OTAGrantEvidence{ProductServiceRevision: grantRevision.Int64,
+				ServiceGrantSHA256: grantSHA.String, AuthorizedAt: grantAuthorizedAt.Time.UTC()}
+		}
+		if objectSHA.Valid && byteMicros.Valid {
+			fact.OTAStorageObject = &billing.OTAStorageObjectEvidence{ObjectSHA256: objectSHA.String, ByteMicroseconds: byteMicros.String}
 		}
 		out = append(out, fact)
 	}
@@ -429,5 +652,21 @@ func sameUsageFact(a, b billing.UsageFact) bool {
 		a.ServiceCode == b.ServiceCode && a.MetricCode == b.MetricCode &&
 		a.Quantity == b.Quantity && a.QuantityScale == b.QuantityScale && a.Unit == b.Unit &&
 		a.WindowStart.Equal(b.WindowStart) && a.WindowEnd.Equal(b.WindowEnd) &&
-		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256
+		a.Source == b.Source && a.SourceSHA256 == b.SourceSHA256 && sameOTAGrant(a.OTAGrant, b.OTAGrant) &&
+		sameOTAStorageObject(a.OTAStorageObject, b.OTAStorageObject)
+}
+
+func sameOTAStorageObject(a, b *billing.OTAStorageObjectEvidence) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameOTAGrant(a, b *billing.OTAGrantEvidence) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.ProductServiceRevision == b.ProductServiceRevision &&
+		a.ServiceGrantSHA256 == b.ServiceGrantSHA256 && a.AuthorizedAt.Equal(b.AuthorizedAt)
 }

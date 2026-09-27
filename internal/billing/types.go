@@ -22,6 +22,13 @@ const (
 	RoundingUp     RoundingMode = "up"
 )
 
+type TaxCalculationMode string
+
+const (
+	TaxModeLine         TaxCalculationMode = "line"
+	TaxModeInvoiceTotal TaxCalculationMode = "invoice_total"
+)
+
 type InvoiceState string
 
 const (
@@ -50,16 +57,20 @@ type BillingProfile struct {
 }
 
 type PricingVersion struct {
-	ID             string        `json:"id"`
-	PlanKey        string        `json:"plan_key"`
-	Version        int64         `json:"version"`
-	Currency       Currency      `json:"currency"`
-	Status         string        `json:"status"`
-	EffectiveFrom  time.Time     `json:"effective_from"`
-	EffectiveUntil *time.Time    `json:"effective_until,omitempty"`
-	Rates          []PricingRate `json:"rates"`
-	ActivatedAt    *time.Time    `json:"activated_at,omitempty"`
-	CreatedAt      time.Time     `json:"created_at"`
+	ID                        string             `json:"id"`
+	PlanKey                   string             `json:"plan_key"`
+	Version                   int64              `json:"version"`
+	Currency                  Currency           `json:"currency"`
+	Status                    string             `json:"status"`
+	EffectiveFrom             time.Time          `json:"effective_from"`
+	EffectiveUntil            *time.Time         `json:"effective_until,omitempty"`
+	Rates                     []PricingRate      `json:"rates"`
+	ActivatedAt               *time.Time         `json:"activated_at,omitempty"`
+	CreatedAt                 time.Time          `json:"created_at"`
+	TaxMode                   TaxCalculationMode `json:"tax_mode"`
+	InvoiceTaxRateBasisPoints *int64             `json:"invoice_tax_rate_basis_points,omitempty"`
+	InvoiceTaxRoundingMode    RoundingMode       `json:"invoice_tax_rounding_mode,omitempty"`
+	InvoiceTaxCategory        string             `json:"invoice_tax_category,omitempty"`
 }
 
 type PricingRate struct {
@@ -78,19 +89,36 @@ type PricingRate struct {
 }
 
 type UsageFact struct {
-	ID             string    `json:"id,omitempty"`
-	UsageID        string    `json:"usage_id"`
-	OrganizationID string    `json:"organization_id"`
-	ProductID      string    `json:"product_id,omitempty"`
-	ServiceCode    string    `json:"service_code"`
-	MetricCode     string    `json:"metric_code"`
-	Quantity       int64     `json:"quantity"`
-	QuantityScale  int       `json:"quantity_scale"`
-	Unit           string    `json:"unit"`
-	WindowStart    time.Time `json:"window_start"`
-	WindowEnd      time.Time `json:"window_end"`
-	Source         string    `json:"source"`
-	SourceSHA256   string    `json:"source_sha256"`
+	ID               string                    `json:"id,omitempty"`
+	UsageID          string                    `json:"usage_id"`
+	OrganizationID   string                    `json:"organization_id"`
+	ProductID        string                    `json:"product_id,omitempty"`
+	ServiceCode      string                    `json:"service_code"`
+	MetricCode       string                    `json:"metric_code"`
+	Quantity         int64                     `json:"quantity"`
+	QuantityScale    int                       `json:"quantity_scale"`
+	Unit             string                    `json:"unit"`
+	WindowStart      time.Time                 `json:"window_start"`
+	WindowEnd        time.Time                 `json:"window_end"`
+	Source           string                    `json:"source"`
+	SourceSHA256     string                    `json:"source_sha256"`
+	OTAGrant         *OTAGrantEvidence         `json:"ota_grant,omitempty"`
+	OTAStorageObject *OTAStorageObjectEvidence `json:"ota_storage_object,omitempty"`
+}
+
+// OTAStorageObjectEvidence binds one physical object and its exact byte-time
+// contribution to an immutable Product/month storage fact.
+type OTAStorageObjectEvidence struct {
+	ObjectSHA256     string `json:"object_sha256"`
+	ByteMicroseconds string `json:"byte_microseconds"`
+}
+
+// OTAGrantEvidence identifies the enabled Product revision that authorized
+// one OTA task, verified download, or artifact write at its source.
+type OTAGrantEvidence struct {
+	ProductServiceRevision int64     `json:"product_service_revision"`
+	ServiceGrantSHA256     string    `json:"service_grant_sha256"`
+	AuthorizedAt           time.Time `json:"authorized_at"`
 }
 
 type InvoiceLine struct {
@@ -122,32 +150,36 @@ type InvoiceDocument struct {
 }
 
 type Invoice struct {
-	ID                   string           `json:"id"`
-	InvoiceNumber        string           `json:"invoice_number"`
-	OrganizationID       string           `json:"organization_id"`
-	AccountID            string           `json:"account_id,omitempty"`
-	PeriodID             string           `json:"period_id,omitempty"`
-	PricingVersionID     string           `json:"pricing_version_id"`
-	Currency             Currency         `json:"currency"`
-	State                InvoiceState     `json:"state"`
-	PeriodStart          time.Time        `json:"period_start"`
-	PeriodEnd            time.Time        `json:"period_end"`
-	SubtotalMinor        int64            `json:"subtotal_minor"`
-	TaxMinor             int64            `json:"tax_minor"`
-	TotalMinor           int64            `json:"total_minor"`
-	AmountSettledMinor   int64            `json:"amount_settled_minor"`
-	AmountDueMinor       int64            `json:"amount_due_minor"`
-	Recipient            BillingProfile   `json:"recipient"`
-	Lines                []InvoiceLine    `json:"lines"`
-	Document             *InvoiceDocument `json:"document,omitempty"`
-	SettlementLedgerID   string           `json:"settlement_ledger_id,omitempty"`
-	SettlementActivityID string           `json:"settlement_activity_id,omitempty"`
-	IssuedAt             *time.Time       `json:"issued_at,omitempty"`
-	DueAt                *time.Time       `json:"due_at,omitempty"`
-	SettledAt            *time.Time       `json:"settled_at,omitempty"`
-	Version              int64            `json:"version"`
-	CreatedAt            time.Time        `json:"created_at"`
-	UpdatedAt            time.Time        `json:"updated_at"`
+	ID                        string             `json:"id"`
+	InvoiceNumber             string             `json:"invoice_number"`
+	OrganizationID            string             `json:"organization_id"`
+	AccountID                 string             `json:"account_id,omitempty"`
+	PeriodID                  string             `json:"period_id,omitempty"`
+	PricingVersionID          string             `json:"pricing_version_id"`
+	TaxMode                   TaxCalculationMode `json:"tax_mode"`
+	InvoiceTaxRateBasisPoints *int64             `json:"invoice_tax_rate_basis_points,omitempty"`
+	InvoiceTaxRoundingMode    RoundingMode       `json:"invoice_tax_rounding_mode,omitempty"`
+	InvoiceTaxCategory        string             `json:"invoice_tax_category,omitempty"`
+	Currency                  Currency           `json:"currency"`
+	State                     InvoiceState       `json:"state"`
+	PeriodStart               time.Time          `json:"period_start"`
+	PeriodEnd                 time.Time          `json:"period_end"`
+	SubtotalMinor             int64              `json:"subtotal_minor"`
+	TaxMinor                  int64              `json:"tax_minor"`
+	TotalMinor                int64              `json:"total_minor"`
+	AmountSettledMinor        int64              `json:"amount_settled_minor"`
+	AmountDueMinor            int64              `json:"amount_due_minor"`
+	Recipient                 BillingProfile     `json:"recipient"`
+	Lines                     []InvoiceLine      `json:"lines"`
+	Document                  *InvoiceDocument   `json:"document,omitempty"`
+	SettlementLedgerID        string             `json:"settlement_ledger_id,omitempty"`
+	SettlementActivityID      string             `json:"settlement_activity_id,omitempty"`
+	IssuedAt                  *time.Time         `json:"issued_at,omitempty"`
+	DueAt                     *time.Time         `json:"due_at,omitempty"`
+	SettledAt                 *time.Time         `json:"settled_at,omitempty"`
+	Version                   int64              `json:"version"`
+	CreatedAt                 time.Time          `json:"created_at"`
+	UpdatedAt                 time.Time          `json:"updated_at"`
 }
 
 type ActivityState string
