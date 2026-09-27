@@ -517,7 +517,7 @@ func TestRepeatedUnknownQueryReusesDurableJobUntilConclusive(t *testing.T) {
 	provider := fake.New("webhook-secret")
 	provider.QueueCharge(fake.Outcome{Err: payment.NewProviderError(payment.ProviderErrorUnknown, "timeout", true, context.DeadlineExceeded)})
 	provider.QueueQuery(
-		fake.Outcome{Result: payment.ProviderResult{State: payment.PaymentIntentStateUnknown, ProviderCode: "pending"}},
+		fake.Outcome{Err: payment.NewProviderError(payment.ProviderErrorAuthentication, "status_lookup_unauthorized", false, nil)},
 		fake.Outcome{Result: payment.ProviderResult{State: payment.PaymentIntentStateSucceeded, ProviderTransactionReference: "fake-repeat-1", ProviderCode: "00"}},
 	)
 	service := newIntegrationService(t, env, provider, clock, true)
@@ -528,6 +528,14 @@ func TestRepeatedUnknownQueryReusesDurableJobUntilConclusive(t *testing.T) {
 	if _, err := service.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	pending, err := env.store.GetPaymentIntent(context.Background(), intent.ID)
+	if err != nil || pending.State != payment.PaymentIntentStateUnknown {
+		t.Fatalf("failed status lookup must remain unknown: intent=%+v err=%v", pending, err)
+	}
+	var credits int
+	if err := env.db.QueryRow(context.Background(), `SELECT count(*) FROM balance_ledger_entries WHERE idempotency_scope = 'payment_intent' AND idempotency_key = $1`, intent.ID).Scan(&credits); err != nil || credits != 0 {
+		t.Fatalf("credit before confirmed payment=%d err=%v", credits, err)
+	}
 	clock.Add(2 * time.Minute)
 	if _, err := service.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -535,6 +543,9 @@ func TestRepeatedUnknownQueryReusesDurableJobUntilConclusive(t *testing.T) {
 	stored, err := env.store.GetPaymentIntent(context.Background(), intent.ID)
 	if err != nil || stored.State != payment.PaymentIntentStateSucceeded {
 		t.Fatalf("intent=%+v err=%v", stored, err)
+	}
+	if err := env.db.QueryRow(context.Background(), `SELECT count(*) FROM balance_ledger_entries WHERE idempotency_scope = 'payment_intent' AND idempotency_key = $1`, intent.ID).Scan(&credits); err != nil || credits != 1 {
+		t.Fatalf("confirmed payment credits=%d err=%v", credits, err)
 	}
 	var unknownJobs, unknownJobAttempts int
 	if err := env.db.QueryRow(context.Background(), `
