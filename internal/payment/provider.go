@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type ProviderOperation string
@@ -127,6 +128,7 @@ type HostedChargeProvider interface {
 
 type QueryRequest struct {
 	IntentID                     string
+	IntentCreatedAt              time.Time
 	AmountMinor                  int64
 	Currency                     Currency
 	MerchantOrderReference       string

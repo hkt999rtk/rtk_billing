@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hkt999rtk/rtk_billing/internal/payment"
 )
@@ -84,6 +85,91 @@ func TestCreateCaptureAndQueryOnlyCreditCompletedMatchingCapture(t *testing.T) {
 	wrong.AmountMinor = 301
 	if _, err := a.Query(ctx, wrong); err == nil {
 		t.Fatal("wrong amount accepted")
+	}
+}
+
+func TestMissingOrderReferenceRecoversWithinPayPalIdempotencyWindow(t *testing.T) {
+	var creates, lookups atomic.Int32
+	a := testAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/oauth2/token":
+			w.Write([]byte(`{"access_token":"token"}`))
+		case "/v2/checkout/orders":
+			creates.Add(1)
+			if r.Header.Get("PayPal-Request-Id") != testRef {
+				t.Error("recovery did not reuse the original request ID")
+			}
+			w.Write([]byte(`{"id":"` + testOrder + `","status":"PAYER_ACTION_REQUIRED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"}}]}`))
+		case "/v2/checkout/orders/" + testOrder:
+			lookups.Add(1)
+			w.Write([]byte(`{"id":"` + testOrder + `","status":"PAYER_ACTION_REQUIRED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"}}]}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	request := payment.QueryRequest{IntentCreatedAt: time.Now().Add(-5 * time.Minute), AmountMinor: 300, Currency: payment.CurrencyTWD, MerchantOrderReference: testRef}
+	result, err := a.Query(context.Background(), request)
+	if err != nil || result.State != payment.PaymentIntentStateFailed || result.ProviderTransactionReference != testOrder || result.ProviderCode != "approval_link_not_delivered" {
+		t.Fatalf("recovered result=%+v err=%v", result, err)
+	}
+	if creates.Load() != 1 || lookups.Load() != 1 {
+		t.Fatalf("creates=%d lookups=%d, want one each", creates.Load(), lookups.Load())
+	}
+}
+
+func TestMissingOrderReferenceRecoversCompletedCapture(t *testing.T) {
+	a := testAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/oauth2/token":
+			w.Write([]byte(`{"access_token":"token"}`))
+		case "/v2/checkout/orders":
+			if r.Header.Get("PayPal-Request-Id") != testRef {
+				t.Error("recovery did not reuse the original request ID")
+			}
+			w.Write([]byte(`{"id":"` + testOrder + `","status":"COMPLETED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"}}]}`))
+		case "/v2/checkout/orders/" + testOrder:
+			w.Write([]byte(`{"id":"` + testOrder + `","status":"COMPLETED","purchase_units":[{"custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"},"payments":{"captures":[{"status":"COMPLETED","custom_id":"` + testRef + `","amount":{"currency_code":"TWD","value":"300.00"}}]}}]}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	result, err := a.Query(context.Background(), payment.QueryRequest{
+		IntentCreatedAt: time.Now().Add(-5 * time.Minute), AmountMinor: 300,
+		Currency: payment.CurrencyTWD, MerchantOrderReference: testRef,
+	})
+	if err != nil || result.State != payment.PaymentIntentStateSucceeded || result.ProviderTransactionReference != testOrder {
+		t.Fatalf("recovered result=%+v err=%v", result, err)
+	}
+}
+
+func TestMissingOrderReferenceDoesNotCreateAfterRecoveryWindow(t *testing.T) {
+	a := testAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected PayPal request %s", r.URL.Path)
+		http.NotFound(w, r)
+	})
+	result, err := a.Query(context.Background(), payment.QueryRequest{
+		IntentCreatedAt: time.Now().Add(-4 * time.Hour), AmountMinor: 300,
+		Currency: payment.CurrencyTWD, MerchantOrderReference: testRef,
+	})
+	if err != nil || result.State != payment.PaymentIntentStateFailed || result.ProviderCode != "unreferenced_order_expired" {
+		t.Fatalf("expired result=%+v err=%v", result, err)
+	}
+}
+
+func TestOAuthAuthenticationFailureIsDefiniteForOrderCreation(t *testing.T) {
+	a := testAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/oauth2/token" {
+			t.Errorf("unexpected order request %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	_, err := a.CreateHostedCharge(context.Background(), payment.HostedChargeRequest{
+		AmountMinor: 300, Currency: payment.CurrencyTWD, MerchantOrderReference: testRef,
+	})
+	if payment.StateForProviderError(err) != payment.PaymentIntentStateFailed {
+		t.Fatalf("state for authentication error = %s, want failed (err=%v)", payment.StateForProviderError(err), err)
 	}
 }
 

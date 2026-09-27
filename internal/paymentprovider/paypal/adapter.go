@@ -123,20 +123,9 @@ type order struct {
 }
 
 func (a *Adapter) CreateHostedCharge(ctx context.Context, in payment.HostedChargeRequest) (payment.HostedChargeResult, error) {
-	if !orderReference.MatchString(in.MerchantOrderReference) || in.Currency != payment.CurrencyTWD || payment.ValidateChargeAmount(in.Currency, in.AmountMinor) != nil {
-		return payment.HostedChargeResult{}, payment.NewProviderError(payment.ProviderErrorInvalidRequest, "invalid_hosted_charge", false, nil)
-	}
-	body := map[string]any{
-		"intent":         "CAPTURE",
-		"purchase_units": []any{map[string]any{"custom_id": in.MerchantOrderReference, "invoice_id": in.MerchantOrderReference, "description": "RTK Cloud account top-up", "amount": amount{CurrencyCode: "TWD", Value: strconv.FormatInt(in.AmountMinor, 10)}}},
-		"payment_source": map[string]any{"paypal": map[string]any{"experience_context": map[string]any{"return_url": a.returnURL, "cancel_url": a.cancelURL, "shipping_preference": "NO_SHIPPING", "user_action": "PAY_NOW"}}},
-	}
-	var out order
-	if err := a.call(ctx, http.MethodPost, "/v2/checkout/orders", in.MerchantOrderReference, body, &out); err != nil {
+	out, err := a.createOrder(ctx, in)
+	if err != nil {
 		return payment.HostedChargeResult{}, err
-	}
-	if !paypalID.MatchString(out.ID) || len(out.PurchaseUnits) != 1 || !matchesUnit(out.PurchaseUnits[0], in.MerchantOrderReference, in.AmountMinor, in.Currency) {
-		return payment.HostedChargeResult{}, payment.NewProviderError(payment.ProviderErrorUnknown, "invalid_order_response", true, nil)
 	}
 	for _, l := range out.Links {
 		if l.Rel == "payer-action" || l.Rel == "approve" {
@@ -147,6 +136,25 @@ func (a *Adapter) CreateHostedCharge(ctx context.Context, in payment.HostedCharg
 		}
 	}
 	return payment.HostedChargeResult{}, payment.NewProviderError(payment.ProviderErrorUnknown, "approval_url_missing", true, nil)
+}
+
+func (a *Adapter) createOrder(ctx context.Context, in payment.HostedChargeRequest) (order, error) {
+	if !orderReference.MatchString(in.MerchantOrderReference) || in.Currency != payment.CurrencyTWD || payment.ValidateChargeAmount(in.Currency, in.AmountMinor) != nil {
+		return order{}, payment.NewProviderError(payment.ProviderErrorInvalidRequest, "invalid_hosted_charge", false, nil)
+	}
+	body := map[string]any{
+		"intent":         "CAPTURE",
+		"purchase_units": []any{map[string]any{"custom_id": in.MerchantOrderReference, "invoice_id": in.MerchantOrderReference, "description": "RTK Cloud account top-up", "amount": amount{CurrencyCode: "TWD", Value: strconv.FormatInt(in.AmountMinor, 10)}}},
+		"payment_source": map[string]any{"paypal": map[string]any{"experience_context": map[string]any{"return_url": a.returnURL, "cancel_url": a.cancelURL, "shipping_preference": "NO_SHIPPING", "user_action": "PAY_NOW"}}},
+	}
+	var out order
+	if err := a.call(ctx, http.MethodPost, "/v2/checkout/orders", in.MerchantOrderReference, body, &out); err != nil {
+		return order{}, err
+	}
+	if !paypalID.MatchString(out.ID) || len(out.PurchaseUnits) != 1 || !matchesUnit(out.PurchaseUnits[0], in.MerchantOrderReference, in.AmountMinor, in.Currency) {
+		return order{}, payment.NewProviderError(payment.ProviderErrorUnknown, "invalid_order_response", true, nil)
+	}
+	return out, nil
 }
 
 func matchesUnit(unit purchaseUnit, ref string, minor int64, currency payment.Currency) bool {
@@ -177,7 +185,34 @@ func paypalTWDWholeAmount(value string) (int64, bool) {
 
 func (a *Adapter) Query(ctx context.Context, in payment.QueryRequest) (payment.ProviderResult, error) {
 	if !paypalID.MatchString(in.ProviderTransactionReference) {
-		return payment.ProviderResult{State: payment.PaymentIntentStateUnknown, ProviderCode: "order_reference_missing"}, nil
+		if !orderReference.MatchString(in.MerchantOrderReference) {
+			return payment.ProviderResult{State: payment.PaymentIntentStateFailed, ProviderCode: "order_reference_missing"}, nil
+		}
+		// Orders accept the same PayPal-Request-Id for six hours, while an
+		// unapproved order normally expires after three hours. Recover only
+		// within that shorter window to avoid creating a second order later.
+		if in.IntentCreatedAt.IsZero() {
+			return payment.ProviderResult{State: payment.PaymentIntentStateUnknown, ProviderCode: "order_creation_age_missing"}, nil
+		}
+		if time.Since(in.IntentCreatedAt) >= 3*time.Hour {
+			return payment.ProviderResult{State: payment.PaymentIntentStateFailed, ProviderCode: "unreferenced_order_expired"}, nil
+		}
+		out, err := a.createOrder(ctx, payment.HostedChargeRequest{
+			AmountMinor: in.AmountMinor, Currency: in.Currency, MerchantOrderReference: in.MerchantOrderReference,
+		})
+		if err != nil {
+			return payment.ProviderResult{}, err
+		}
+		in.ProviderTransactionReference = out.ID
+		result, err := a.Query(ctx, in)
+		if err != nil {
+			return payment.ProviderResult{State: payment.PaymentIntentStateUnknown, ProviderTransactionReference: out.ID, ProviderCode: "recovered_order_query_failed"}, nil
+		}
+		if result.State == payment.PaymentIntentStateRequiresAction {
+			result.State = payment.PaymentIntentStateFailed
+			result.ProviderCode = "approval_link_not_delivered"
+		}
+		return result, nil
 	}
 	out, err := a.getOrder(ctx, in.ProviderTransactionReference)
 	if err != nil {
@@ -295,6 +330,14 @@ func (a *Adapter) do(req *http.Request, out any) error {
 		return payment.NewProviderError(payment.ProviderErrorUnknown, "invalid_response", true, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if (req.URL.Path == "/v1/oauth2/token" || req.Method == http.MethodPost && req.URL.Path == "/v2/checkout/orders") &&
+			(response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
+			return payment.NewProviderError(payment.ProviderErrorAuthentication, fmt.Sprintf("http_%d", response.StatusCode), false, nil)
+		}
+		if req.Method == http.MethodPost && req.URL.Path == "/v2/checkout/orders" &&
+			(response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity) {
+			return payment.NewProviderError(payment.ProviderErrorInvalidRequest, fmt.Sprintf("http_%d", response.StatusCode), false, nil)
+		}
 		return payment.NewProviderError(payment.ProviderErrorUnknown, fmt.Sprintf("http_%d", response.StatusCode), response.StatusCode >= 500, nil)
 	}
 	if out != nil && json.Unmarshal(data, out) != nil {

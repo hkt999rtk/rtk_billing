@@ -648,16 +648,38 @@ func (s *Server) createHostedTopUp(c *gin.Context) {
 		writePaymentError(c, err)
 		return
 	}
+	if providerName == "paypal" && result.Duplicate &&
+		(result.Intent.State != payment.PaymentIntentStateRequiresAction || s.payments.now().After(result.Intent.CreatedAt.Add(3*time.Hour))) {
+		writeError(c, http.StatusConflict, "PAYMENT_CHECKOUT_PENDING", "The existing PayPal checkout cannot be restarted")
+		return
+	}
 	action, err := hosted.CreateHostedCharge(c.Request.Context(), payment.HostedChargeRequest{
 		IntentID: result.Intent.ID, AmountMinor: result.Intent.AmountMinor, Currency: result.Intent.Currency,
 		MerchantOrderReference: result.Intent.MerchantOrderReference, NotifyURL: s.payments.hostedChargeNotifyURL,
 		ReturnURL: s.payments.hostedChargeReturnURL, ItemDescription: "RTK Cloud account top-up",
 	})
 	if err != nil {
+		if providerName == "paypal" && !result.Duplicate {
+			if _, transitionErr := s.payments.store.TransitionIntent(c.Request.Context(), paymentstore.TransitionIntentInput{
+				IntentID: result.Intent.ID, ToState: payment.StateForProviderError(err), Now: s.payments.now(),
+			}); transitionErr != nil {
+				writePaymentError(c, transitionErr)
+				return
+			}
+		}
 		writePaymentError(c, err)
 		return
 	}
 	if !validHostedChargeAction(action) {
+		if providerName == "paypal" && !result.Duplicate {
+			if _, err := s.payments.store.TransitionIntent(c.Request.Context(), paymentstore.TransitionIntentInput{
+				IntentID: result.Intent.ID, ToState: payment.PaymentIntentStateFailed,
+				ProviderTransactionReference: action.ProviderTransactionReference, Now: s.payments.now(),
+			}); err != nil {
+				writePaymentError(c, err)
+				return
+			}
+		}
 		writeError(c, http.StatusBadGateway, "PAYMENT_PROVIDER_RESPONSE_INVALID", "Payment provider returned an invalid hosted action")
 		return
 	}
