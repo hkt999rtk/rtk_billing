@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/hkt999rtk/rtk_billing/internal/accessstore"
 	"github.com/hkt999rtk/rtk_billing/internal/api"
@@ -34,8 +36,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	if err := database.Migrate(ctx, db); err != nil {
+	migrateOnStartup, err := shouldMigrateOnStartup(os.Getenv("BILLING_DB_MIGRATE_ON_STARTUP"))
+	if err != nil {
 		log.Fatal(err)
+	}
+	if migrateOnStartup {
+		if err := database.Migrate(ctx, db); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	audit := auditstore.New(db)
@@ -117,5 +125,16 @@ func main() {
 	if err := http.ListenAndServe(":"+cfg.Port, server.Router()); err != nil {
 		log.Print(err)
 		os.Exit(1)
+	}
+}
+
+func shouldMigrateOnStartup(raw string) (bool, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("BILLING_DB_MIGRATE_ON_STARTUP must be true or false")
 	}
 }

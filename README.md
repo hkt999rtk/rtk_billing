@@ -26,6 +26,15 @@ export BILLING_DEBIT_SOURCE='pricing-service'
 go run ./cmd/server
 ```
 
+For a protected-environment upgrade, run the CI image's
+`/rtk-billing-migrate` binary as a one-shot Job with a migration-owner
+`DATABASE_URL`. Wait for the Job to complete and verify the expected
+`schema_migrations` version before updating the API and workers. Set
+`BILLING_DB_MIGRATE_ON_STARTUP=false` on the API workload so its runtime
+database identity does not attempt schema changes. The default remains
+`true` for existing development deployments. Invalid flag values stop API
+startup. Keep migration credentials out of API and worker Secrets.
+
 `BILLING_SERVICE_TOKEN` is only for the tenant API used by Cloud Admin.
 Pricing, usage, period-close, and access-control routes use
 `BILLING_INTERNAL_TOKEN`; `/v1/internal/billing/debits` uses the dedicated
