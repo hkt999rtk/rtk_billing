@@ -662,13 +662,15 @@ func (s *Server) createHostedTopUp(c *gin.Context) {
 		return
 	}
 	if action.ProviderTransactionReference != "" {
-		if _, err := s.payments.store.TransitionIntent(c.Request.Context(), paymentstore.TransitionIntentInput{
+		transitioned, err := s.payments.store.TransitionIntent(c.Request.Context(), paymentstore.TransitionIntentInput{
 			IntentID: result.Intent.ID, ToState: payment.PaymentIntentStateRequiresAction,
 			ProviderTransactionReference: action.ProviderTransactionReference, Now: s.payments.now(),
-		}); err != nil {
+		})
+		if err != nil {
 			writePaymentError(c, err)
 			return
 		}
+		result.Intent = transitioned.Intent
 	}
 	if !s.writePaymentAudit(c, "hosted_topup_intent_created", "payment_intent", result.Intent.ID, gin.H{
 		"amount_minor": result.Intent.AmountMinor, "currency": result.Intent.Currency, "provider": providerName, "state": result.Intent.State, "duplicate": result.Duplicate,

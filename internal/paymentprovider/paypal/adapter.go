@@ -142,7 +142,7 @@ func (a *Adapter) CreateHostedCharge(ctx context.Context, in payment.HostedCharg
 		if l.Rel == "payer-action" || l.Rel == "approve" {
 			u, e := url.Parse(l.Href)
 			if e == nil && u.Scheme == "https" && (u.Host == "www.paypal.com" || u.Host == "www.sandbox.paypal.com") {
-				return payment.HostedChargeResult{Method: "GET", EndpointURL: l.Href, ProviderTransactionReference: out.ID}, nil
+				return payment.HostedChargeResult{Method: "GET", EndpointURL: l.Href, Fields: map[string]string{}, ProviderTransactionReference: out.ID}, nil
 			}
 		}
 	}

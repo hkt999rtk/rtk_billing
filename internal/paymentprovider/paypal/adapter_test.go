@@ -68,7 +68,7 @@ func TestCreateCaptureAndQueryOnlyCreditCompletedMatchingCapture(t *testing.T) {
 	})
 	ctx := context.Background()
 	action, err := a.CreateHostedCharge(ctx, payment.HostedChargeRequest{AmountMinor: 300, Currency: payment.CurrencyTWD, MerchantOrderReference: testRef})
-	if err != nil || action.Method != "GET" || action.ProviderTransactionReference != testOrder || !strings.Contains(action.EndpointURL, testOrder) {
+	if err != nil || action.Method != "GET" || action.Fields == nil || len(action.Fields) != 0 || action.ProviderTransactionReference != testOrder || !strings.Contains(action.EndpointURL, testOrder) {
 		t.Fatalf("action=%+v err=%v", action, err)
 	}
 	query := payment.QueryRequest{AmountMinor: 300, Currency: payment.CurrencyTWD, MerchantOrderReference: testRef, ProviderTransactionReference: testOrder}
