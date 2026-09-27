@@ -184,8 +184,13 @@ func (s *Service) ProcessJob(ctx context.Context, job payment.ReconciliationJob)
 		result, err = s.query(ctx, provider, work)
 	}
 	if err != nil {
+		state := payment.StateForProviderError(err)
+		if operation == payment.ProviderOperationQuery {
+			// A failed status lookup cannot prove an earlier payment failed.
+			state = payment.PaymentIntentStateUnknown
+		}
 		result = payment.ProviderResult{
-			State:        payment.StateForProviderError(err),
+			State:        state,
 			ProviderCode: providerErrorCode(err),
 		}
 	}
@@ -229,7 +234,7 @@ func (s *Service) charge(ctx context.Context, provider payment.PaymentProvider, 
 
 func (s *Service) query(ctx context.Context, provider payment.PaymentProvider, work paymentstore.ProviderAttemptWork) (payment.ProviderResult, error) {
 	request := payment.QueryRequest{
-		IntentID: work.Intent.ID, AmountMinor: work.Intent.AmountMinor, Currency: work.Intent.Currency,
+		IntentID: work.Intent.ID, IntentCreatedAt: work.Intent.CreatedAt, AmountMinor: work.Intent.AmountMinor, Currency: work.Intent.Currency,
 		MerchantOrderReference:       work.Intent.MerchantOrderReference,
 		ProviderTransactionReference: work.Intent.ProviderTransactionReference,
 		CorrelationID:                work.Intent.CorrelationID,

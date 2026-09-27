@@ -138,7 +138,7 @@ func (a *Adapter) CreateHostedCharge(_ context.Context, request payment.HostedCh
 	if err != nil {
 		return payment.HostedChargeResult{}, payment.NewProviderError(payment.ProviderErrorInvalidRequest, "encryption_failed", false, err)
 	}
-	return payment.HostedChargeResult{EndpointURL: a.mpgURL(), Fields: map[string]string{
+	return payment.HostedChargeResult{Method: "POST", EndpointURL: a.mpgURL(), Fields: map[string]string{
 		"MerchantID": a.merchantID, "TradeInfo": encrypted, "TradeSha": TradeSHA(encrypted, a.hashKey, a.hashIV), "Version": "2.3",
 	}}, nil
 }

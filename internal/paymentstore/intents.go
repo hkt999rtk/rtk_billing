@@ -130,6 +130,25 @@ func transitionIntentTx(ctx context.Context, tx pgx.Tx, account payment.Commerci
 		}
 		account = updatedAccount
 		creditPtr = &credit
+		if intent.Provider == "paypal" && intent.Reason == payment.PaymentIntentReasonManualTopUp {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO billing_topup_email_outbox (
+					intent_id, organization_id, recipient_email, recipient_name, amount_minor,
+					currency, provider, payment_created_at, payment_completed_at, available_at
+				)
+				SELECT $1, a.organization_id, p.contact_email, p.legal_name, $2, $3, $4, $5, $6, $6
+				FROM commercial_accounts a
+				JOIN billing_payment_responsibility bpr ON bpr.account_id = a.id AND bpr.intent_id = $1
+				JOIN billing_responsibility_periods period ON period.id = bpr.period_id
+				JOIN billing_profiles p ON p.organization_id = a.organization_id
+					AND p.ownership_version = period.ownership_version
+				WHERE a.id = $7 AND p.delivery_preference = 'portal_and_email'
+					AND p.requires_configuration = false AND NULLIF(btrim(p.contact_email), '') IS NOT NULL
+				ON CONFLICT (intent_id) DO NOTHING
+			`, intent.ID, intent.AmountMinor, intent.Currency, intent.Provider, intent.CreatedAt, in.Now, account.ID); err != nil {
+				return TransitionIntentResult{}, err
+			}
+		}
 
 		policy, policyErr := getPolicyForUpdate(ctx, tx, account.ID)
 		if policyErr != nil && !errors.Is(policyErr, ErrNotFound) {
@@ -213,6 +232,13 @@ func (s *Store) GetPaymentIntent(ctx context.Context, intentID string) (payment.
 		FROM payment_intents
 		WHERE id = $1
 	`, intentID))
+}
+
+func (s *Store) GetPaymentIntentByProviderReference(ctx context.Context, provider, reference string) (payment.PaymentIntent, error) {
+	if provider == "" || reference == "" {
+		return payment.PaymentIntent{}, ErrNotFound
+	}
+	return scanIntent(s.db.QueryRow(ctx, `SELECT `+intentColumns+` FROM payment_intents WHERE provider=$1 AND provider_transaction_reference=$2`, provider, reference))
 }
 
 func getIntentForUpdate(ctx context.Context, tx pgx.Tx, intentID string) (payment.PaymentIntent, error) {

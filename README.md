@@ -83,6 +83,24 @@ When NewebPay is enabled, `NEWEBPAY_NOTIFY_URL` and `NEWEBPAY_RETURN_URL` are
 fixed server configuration. The customer UI receives only an encrypted hosted
 POST action; PAN, expiry, and CVV are entered solely on the provider page.
 
+PayPal manual top-ups use the hosted Orders v2 checkout. Set `PAYPAL_ENABLED`,
+`PAYPAL_ENVIRONMENT` (`sandbox` or `production`), `PAYPAL_CLIENT_ID`,
+`PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_RETURN_URL`,
+`PAYPAL_CANCEL_URL`, and `PAYPAL_AFTER_RETURN_URL` before enabling it. Configure
+the PayPal app's `PAYMENT.CAPTURE.COMPLETED` webhook to call
+`/v1/payment-webhooks/paypal`. The customer returns through the fixed Billing
+return URL; Billing verifies the order and captured amount before crediting the
+balance. The downloadable top-up PDF is a transaction detail, not a tax invoice.
+
+For automatic transaction-detail email, run `cmd/payment-worker` with
+`PAYMENT_EMAIL_ENABLED=true`, `SENDMAIL_HTTP_BASE_URL`,
+`SENDMAIL_HTTP_BEARER_TOKEN`, and `PAYMENT_EMAIL_PORTAL_BASE_URL`. Billing queues
+the email in the same database transaction as the balance credit and retries
+delivery. It sends to the Billing profile's contact email when delivery is set
+to `portal_and_email`. `PAYMENT_EMAIL_FROM` optionally selects a sender listed
+in the SendMail service's `smtp.allowed_from`; an unset value uses that service's
+default sender. Verify a new sender with the SendMail API before setting it.
+
 ## Test
 
 ```sh
