@@ -64,20 +64,21 @@ func ReviewOTACandidateRates(baseVersionID string, base, candidate []PricingRate
 	if strings.TrimSpace(baseVersionID) == "" || len(base) == 0 || len(candidate) != len(base)+len(ProposedOTARates()) {
 		return OTACardReview{}, fmt.Errorf("%w: base identity or full rate count is missing", ErrOTACardReview)
 	}
-	baseByIdentity := make(map[string]canonicalRate, len(base))
+	baseByIdentity := make(map[string]PricingRate, len(base))
 	for _, rate := range base {
 		if rate.ServiceCode == ServiceOTA {
 			return OTACardReview{}, fmt.Errorf("%w: base already contains OTA", ErrOTACardReview)
 		}
-		canonical, ok := canonicalPricingRate(rate)
-		if !ok {
-			return OTACardReview{}, fmt.Errorf("%w: base rate %s/%s has unresolved metadata", ErrOTACardReview, rate.ServiceCode, rate.MetricCode)
+		if strings.TrimSpace(rate.ServiceCode) != rate.ServiceCode || rate.ServiceCode == "" ||
+			strings.TrimSpace(rate.MetricCode) != rate.MetricCode || rate.MetricCode == "" ||
+			strings.TrimSpace(rate.Unit) != rate.Unit || rate.Unit == "" {
+			return OTACardReview{}, fmt.Errorf("%w: invalid base rate identity", ErrOTACardReview)
 		}
-		key := rateIdentity(canonical)
+		key := rate.ServiceCode + "\x00" + rate.MetricCode + "\x00" + rate.Unit
 		if _, duplicate := baseByIdentity[key]; duplicate {
 			return OTACardReview{}, fmt.Errorf("%w: duplicate base rate %s/%s", ErrOTACardReview, rate.ServiceCode, rate.MetricCode)
 		}
-		baseByIdentity[key] = canonical
+		baseByIdentity[key] = rate
 	}
 	if enabled, complete := OTAPricingState(candidate); !enabled || !complete {
 		return OTACardReview{}, fmt.Errorf("%w: OTA meter set differs from approved prices", ErrOTACardReview)
@@ -97,7 +98,7 @@ func ReviewOTACandidateRates(baseVersionID string, base, candidate []PricingRate
 		seen[key] = true
 		if rate.ServiceCode == ServiceOTA {
 			added = append(added, rate)
-		} else if prior, exists := baseByIdentity[key]; !exists || prior != canonical {
+		} else if prior, exists := baseByIdentity[key]; !exists || !matchesBaseRate(prior, canonical) {
 			return OTACardReview{}, fmt.Errorf("%w: non-OTA rate %s/%s was added or changed", ErrOTACardReview, rate.ServiceCode, rate.MetricCode)
 		}
 		ordered = append(ordered, canonical)
@@ -113,4 +114,16 @@ func ReviewOTACandidateRates(baseVersionID string, base, candidate []PricingRate
 	}
 	digest := sha256.Sum256(raw)
 	return OTACardReview{BaseVersionID: baseVersionID, RateSetSHA256: hex.EncodeToString(digest[:]), AddedOTARates: added}, nil
+}
+
+// Legacy cards predate quantity_scale and tax_category. A reviewed candidate
+// may fill only those missing fields; every previously recorded value and all
+// monetary terms must stay identical. The completed candidate is digest-bound.
+func matchesBaseRate(base PricingRate, candidate canonicalRate) bool {
+	return base.ServiceCode == candidate.ServiceCode && base.MetricCode == candidate.MetricCode &&
+		base.Unit == candidate.Unit && base.Description == candidate.Description &&
+		base.UnitPriceMinor == candidate.UnitPriceMinor && base.UnitPriceScale == candidate.UnitPriceScale &&
+		base.RoundingMode == candidate.RoundingMode && base.TaxRateBasisPoints == candidate.TaxRateBasisPoints &&
+		(base.QuantityScale == nil || *base.QuantityScale == candidate.QuantityScale) &&
+		(base.TaxCategory == nil || *base.TaxCategory == candidate.TaxCategory)
 }

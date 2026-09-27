@@ -309,7 +309,14 @@ func TestTenantFinancialHistoryScopesCountsDownloadsAndReturningOwner(t *testing
 	// current-period method/consent. Preserve the predecessor snapshot internally.
 	policyBody := fmt.Sprintf(`{"enabled":true,"threshold_minor":123,"top_up_amount_minor":10000,"currency":"TWD","payment_method_id":%q,"daily_attempt_limit":2,"daily_amount_limit_minor":20000,"cooldown_seconds":3600,"consent":{"accepted":true,"text_version":"v2","text_sha256":%q,"locale":"zh-TW"}}`, last.methodID, strings.Repeat("e", 64))
 	res = privacyWrite(env, "PUT", base+"/auto-topup", a, "3", `"0"`, policyBody)
-	if res.Code != http.StatusOK || strings.Contains(res.Body.String(), "777") || !strings.Contains(res.Body.String(), last.methodID) {
+	var currentPolicy struct {
+		AutoTopup struct {
+			ThresholdMinor  int64  `json:"threshold_minor"`
+			PaymentMethodID string `json:"payment_method_id"`
+		} `json:"auto_topup"`
+	}
+	if res.Code != http.StatusOK || json.Unmarshal(res.Body.Bytes(), &currentPolicy) != nil ||
+		currentPolicy.AutoTopup.ThresholdMinor != 123 || currentPolicy.AutoTopup.PaymentMethodID != last.methodID {
 		t.Fatalf("new owner policy configuration=%d %s", res.Code, res.Body.String())
 	}
 	if res := privacyWrite(env, "PUT", base+"/auto-topup", a, "3", `"0"`, policyBody); res.Code != http.StatusConflict {

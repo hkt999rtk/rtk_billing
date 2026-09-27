@@ -181,14 +181,23 @@ DATABASE_URL="$READ_ONLY_BILLING_DSN" go run ./cmd/ota-pricing-review \
 ```
 
 The command runs a read-only repeatable-read transaction, verifies the base
-is current and no published future card exists, checks that existing rows are
-unchanged and the four approved OTA meter identities are exact, then emits
+is current and no published future card exists, checks that existing monetary
+terms and known metadata are unchanged and the four approved OTA meter
+identities are exact, then emits
 the selected base and a deterministic candidate rate-set SHA-256. It does
 **not** prove Finance approved the supplied tax category/rate, that the
 account scope is implemented, or that the base will still be current when a
 draft is later created. Store its output with restricted approval evidence;
 it contains the full internal price card. A failed review leaves the database
 unchanged.
+
+For a legacy base with null `quantity_scale` or `tax_category`, the candidate
+must explicitly fill every missing field. The review permits only those null
+fields to be completed; it never changes a known field, rate identity, unit,
+description, price, rounding mode or recorded tax basis points. Check fact
+precision and the approved tax treatment for **each** service, including test
+or qualification services, before signing off. The candidate and digest are
+the approval artifact; never backfill the historical base or issued invoices.
 
 After the technical review and external Finance/Billing scope and tax review,
 create the unpublished card with a write-authorized Billing connection:
@@ -197,16 +206,23 @@ create the unpublished card with a write-authorized Billing connection:
 DATABASE_URL="$WRITE_BILLING_DSN" go run ./cmd/ota-pricing-draft \
   --base-version "$CURRENT_TWD_VERSION_ID" \
   --effective-from "YYYY-MM-01T00:00:00Z" \
+  --candidate /protected/path/complete-rates.json \
+  --review-sha256 "$REVIEWED_RATE_SET_SHA256" \
   --created-by "$OPERATOR_ID"
 ```
 
-The command does not consume or trust a supplied rate array. In a serialized
-transaction it re-reads the current complete TWD card, requires the supplied
-base ID and a future UTC month start, rejects another published future card,
-copies every non-OTA row unchanged, adds only the four approved OTA rates,
-fixes invoice-total Taiwan tax at 5%, and writes the draft plus its immutable
-manifest digest. Compare the returned digest and full rate card with the
-approved review packet. Creation does **not** activate or publish prices.
+In a serialized transaction the command re-reads the current complete TWD
+card, requires the supplied base ID and a future UTC month start, rejects
+another published future card, checks the supplied full candidate against
+every base rate and the four approved OTA rates, and requires its digest to
+match the read-only review. It fixes invoice-total Taiwan tax at 5% and writes
+the draft plus its immutable manifest digest. The candidate can only fill
+missing legacy precision and tax category; all non-OTA monetary terms remain
+unchanged. Compare the returned digest and full rate card with the approved
+review packet. Creation does **not** activate or publish prices. The command
+also supports omitting `--candidate` and `--review-sha256` when the base card
+already has complete reviewed metadata; do not use that shortcut for a legacy
+base with null fields.
 
 Reject the candidate if any non-OTA row changes or disappears without its own
 commercial approval, an OTA row is missing/duplicated/altered, another future
