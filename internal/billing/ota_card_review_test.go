@@ -64,7 +64,20 @@ func TestReviewOTACandidateRatesRequiresCompleteUnchangedCard(t *testing.T) {
 	}
 	unknownBaseTax := slices.Clone(base)
 	unknownBaseTax[0].TaxCategory = nil
-	if _, err := ReviewOTACandidateRates("base-version", unknownBaseTax, candidate); !errors.Is(err, ErrOTACardReview) {
-		t.Fatalf("historical unknown tax cannot pass as approved: %v", err)
+	unknownBaseTax[0].QuantityScale = nil
+	filled, err := ReviewOTACandidateRates("base-version", unknownBaseTax, candidate)
+	if err != nil || filled.RateSetSHA256 != review.RateSetSHA256 {
+		t.Fatalf("explicitly completed legacy metadata must be reviewable: %+v %v", filled, err)
+	}
+	missing := slices.Clone(candidate)
+	missing[0].TaxCategory = nil
+	if _, err := ReviewOTACandidateRates("base-version", unknownBaseTax, missing); !errors.Is(err, ErrOTACardReview) {
+		t.Fatalf("unresolved candidate metadata must fail: %v", err)
+	}
+	changedKnown := slices.Clone(candidate)
+	otherScale := 1
+	changedKnown[1].QuantityScale = &otherScale
+	if _, err := ReviewOTACandidateRates("base-version", unknownBaseTax, changedKnown); !errors.Is(err, ErrOTACardReview) {
+		t.Fatalf("previously known precision cannot change: %v", err)
 	}
 }

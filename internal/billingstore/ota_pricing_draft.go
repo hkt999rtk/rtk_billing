@@ -2,6 +2,7 @@ package billingstore
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/hkt999rtk/rtk_billing/internal/billing"
@@ -10,9 +11,11 @@ import (
 )
 
 type CreateOTAPricingDraftInput struct {
-	BaseVersionID string
-	EffectiveFrom time.Time
-	CreatedBy     string
+	BaseVersionID         string
+	EffectiveFrom         time.Time
+	CreatedBy             string
+	CandidateRates        []billing.PricingRate
+	ReviewedRateSetSHA256 string
 }
 
 type OTAPricingDraft struct {
@@ -62,17 +65,27 @@ func (s *Store) CreateOTAPricingDraft(ctx context.Context, in CreateOTAPricingDr
 	}
 	rates := append([]billing.PricingRate(nil), base.Rates...)
 	standard := "standard"
-	for _, rate := range base.Rates {
+	if len(in.CandidateRates) > 0 {
+		if strings.TrimSpace(in.ReviewedRateSetSHA256) == "" {
+			return OTAPricingDraft{}, ErrConflict
+		}
+		rates = append([]billing.PricingRate(nil), in.CandidateRates...)
+	} else {
+		if in.ReviewedRateSetSHA256 != "" {
+			return OTAPricingDraft{}, ErrConflict
+		}
+		for _, rate := range billing.ProposedOTARates() {
+			rate.TaxCategory = &standard
+			rates = append(rates, rate)
+		}
+	}
+	for _, rate := range rates {
 		if rate.TaxCategory == nil || *rate.TaxCategory != standard {
 			return OTAPricingDraft{}, ErrConflict
 		}
 	}
-	for _, rate := range billing.ProposedOTARates() {
-		rate.TaxCategory = &standard
-		rates = append(rates, rate)
-	}
 	review, err := billing.ReviewOTACandidateRates(base.ID, base.Rates, rates)
-	if err != nil {
+	if err != nil || (in.ReviewedRateSetSHA256 != "" && review.RateSetSHA256 != in.ReviewedRateSetSHA256) {
 		return OTAPricingDraft{}, ErrConflict
 	}
 	taxRate := int64(500)

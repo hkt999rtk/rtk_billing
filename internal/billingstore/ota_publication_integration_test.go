@@ -43,8 +43,7 @@ func TestReviewedOTAPublicationRequiresExactCardTaxAndFutureUTCMonth(t *testing.
 	standard := "standard"
 	baseRate := billing.PricingRate{ServiceCode: "mqtt", MetricCode: "publish_count",
 		Description: "MQTT publishes", Unit: "requests", UnitPriceMinor: 32,
-		UnitPriceScale: 6, QuantityScale: &whole, RoundingMode: billing.RoundingHalfUp,
-		TaxCategory: &standard, TaxRateBasisPoints: 500}
+		UnitPriceScale: 6, RoundingMode: billing.RoundingHalfUp, TaxRateBasisPoints: 500}
 	base, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{PlanKey: "ota-reviewed-test", Version: 1,
 		Currency: billing.CurrencyTWD, EffectiveFrom: month.AddDate(0, -1, 0),
 		CreatedBy: "integration-test", Now: now, Rates: []billing.PricingRate{baseRate}})
@@ -55,6 +54,7 @@ func TestReviewedOTAPublicationRequiresExactCardTaxAndFutureUTCMonth(t *testing.
 		t.Fatal(err)
 	}
 	rates := append([]billing.PricingRate{baseRate}, billing.ProposedOTARates()...)
+	rates[0].QuantityScale = &whole
 	for i := range rates {
 		rates[i].TaxCategory = &standard
 	}
@@ -62,6 +62,15 @@ func TestReviewedOTAPublicationRequiresExactCardTaxAndFutureUTCMonth(t *testing.
 		BaseVersionID: base.ID, EffectiveFrom: cutover, Rates: rates})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := store.CreateOTAPricingDraft(ctx, CreateOTAPricingDraftInput{
+		BaseVersionID: base.ID, EffectiveFrom: cutover, CreatedBy: "integration-test"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("legacy base without reviewed metadata must fail: %v", err)
+	}
+	if _, err := store.CreateOTAPricingDraft(ctx, CreateOTAPricingDraftInput{
+		BaseVersionID: base.ID, EffectiveFrom: cutover, CreatedBy: "integration-test",
+		CandidateRates: rates, ReviewedRateSetSHA256: strings.Repeat("0", 64)}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("unreviewed candidate digest must fail: %v", err)
 	}
 	if _, err := store.CreateOTAPricingDraft(ctx, CreateOTAPricingDraftInput{
 		BaseVersionID: base.ID, EffectiveFrom: cutover.Add(time.Hour), CreatedBy: "integration-test"}); !errors.Is(err, ErrConflict) {
@@ -76,7 +85,8 @@ func TestReviewedOTAPublicationRequiresExactCardTaxAndFutureUTCMonth(t *testing.
 		t.Fatalf("failed validation left a draft: count=%d err=%v", draftCount, err)
 	}
 	created, err := store.CreateOTAPricingDraft(ctx, CreateOTAPricingDraftInput{
-		BaseVersionID: base.ID, EffectiveFrom: cutover, CreatedBy: "integration-test"})
+		BaseVersionID: base.ID, EffectiveFrom: cutover, CreatedBy: "integration-test",
+		CandidateRates: rates, ReviewedRateSetSHA256: review.Review.RateSetSHA256})
 	if err != nil {
 		t.Fatal(err)
 	}
