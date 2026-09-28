@@ -52,14 +52,16 @@ func TestOTAPeriodSealGatesInvoiceAndRejectsChangedReplay(t *testing.T) {
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is not set")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	db, err := database.Connect(ctx, dsn)
+	db, err := database.Connect(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
 	testutil.LockIntegrationDatabase(t, db)
+	// Package-level CI tests share this database. Waiting for the global test
+	// lock must not consume the time budget for this test's own SQL operations.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	if err := database.Migrate(ctx, db); err != nil {
 		t.Fatal(err)
 	}
