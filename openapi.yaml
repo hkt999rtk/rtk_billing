@@ -529,6 +529,9 @@ paths:
         '200': { description: Reviewed OTA card scheduled. }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PRICING-VERSION-001
   /v1/internal/billing/pricing-versions/{pricingVersionId}/cancel-reviewed-ota:
     post:
       tags:
@@ -559,6 +562,9 @@ paths:
         '200': { description: Future OTA card canceled; prior card restored. }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PRICING-VERSION-001
   /v1/internal/billing/usage-facts:
     post:
       tags:
