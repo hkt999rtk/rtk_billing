@@ -103,6 +103,19 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	} else if !errors.Is(err, ErrNotFound) {
 		return billing.Invoice{}, false, err
 	}
+	// The account lock serializes closes for this Brand Cloud and currency.
+	// Preserve reads of already issued historical invoices even if legacy
+	// periods overlap, but never create another invoice for overlapping time.
+	var overlapping bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM billing_periods
+		WHERE organization_id=$1 AND currency=$2 AND period_start<$4 AND period_end>$3
+		  AND NOT (period_start=$3 AND period_end=$4))`,
+		in.OrganizationID, in.Currency, in.PeriodStart.UTC(), in.PeriodEnd.UTC()).Scan(&overlapping); err != nil {
+		return billing.Invoice{}, false, err
+	}
+	if overlapping {
+		return billing.Invoice{}, false, ErrConflict
+	}
 	if periodState == "closed" {
 		return billing.Invoice{}, false, ErrIncomplete
 	}

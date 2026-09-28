@@ -264,3 +264,71 @@ func TestInvoiceCloseFailureRollsBackPeriodAndRejectsWrongAccount(t *testing.T) 
 		t.Fatal("retry", created, err)
 	}
 }
+
+func TestInvoiceCloseRejectsOverlappingCutoverPeriod(t *testing.T) {
+	ctx, db, store, current, fact := periodBarrierFixture(t)
+	overlap := current
+	overlap.PeriodStart = current.PeriodStart.Add(12 * time.Hour)
+	overlap.PeriodEnd = current.PeriodEnd.Add(12 * time.Hour)
+
+	if _, created, err := store.PrepareInvoice(ctx, current); !errors.Is(err, ErrIncomplete) || created {
+		t.Fatalf("initial period must remain incomplete without usage: created=%v err=%v", created, err)
+	}
+	if _, created, err := store.PrepareInvoice(ctx, overlap); !errors.Is(err, ErrConflict) || created {
+		t.Fatalf("overlap with incomplete period must conflict: created=%v err=%v", created, err)
+	}
+	if _, created, err := store.PutUsageFact(ctx, fact); err != nil || !created {
+		t.Fatalf("record current-period usage: created=%v err=%v", created, err)
+	}
+	issued, created, err := store.PrepareInvoice(ctx, current)
+	if err != nil || !created || issued.ID == "" {
+		t.Fatalf("exact incomplete-period retry must issue once: created=%v err=%v", created, err)
+	}
+	if _, created, err := store.PrepareInvoice(ctx, overlap); !errors.Is(err, ErrConflict) || created {
+		t.Fatalf("overlap with issued period must conflict: created=%v err=%v", created, err)
+	}
+	again, created, err := store.PrepareInvoice(ctx, current)
+	if err != nil || created || again.ID != issued.ID {
+		t.Fatalf("exact issued-period retry changed invoice: created=%v err=%v", created, err)
+	}
+	var periods, invoices int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM billing_periods WHERE organization_id=$1`, current.OrganizationID).Scan(&periods); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM billing_invoices WHERE organization_id=$1`, current.OrganizationID).Scan(&invoices); err != nil {
+		t.Fatal(err)
+	}
+	if periods != 1 || invoices != 1 {
+		t.Fatalf("overlapping close created financial rows: periods=%d invoices=%d", periods, invoices)
+	}
+}
+
+func TestInvoiceCloseReplaysIssuedLegacyPeriodDespiteHistoricalOverlap(t *testing.T) {
+	ctx, db, store, current, fact := periodBarrierFixture(t)
+	if _, created, err := store.PutUsageFact(ctx, fact); err != nil || !created {
+		t.Fatalf("record legacy-period usage: created=%v err=%v", created, err)
+	}
+	issued, created, err := store.PrepareInvoice(ctx, current)
+	if err != nil || !created {
+		t.Fatalf("issue legacy invoice: created=%v err=%v", created, err)
+	}
+	// Older databases only required exact period uniqueness. Simulate an
+	// overlapping legacy row without altering the already issued invoice.
+	if _, err := db.Exec(ctx, `INSERT INTO billing_periods
+		(organization_id,currency,period_start,period_end,state)
+		VALUES ($1,$2,$3,$4,'incomplete')`, current.OrganizationID, current.Currency,
+		current.PeriodStart.Add(12*time.Hour), current.PeriodEnd.Add(12*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	again, created, err := store.PrepareInvoice(ctx, current)
+	if err != nil || created || again.ID != issued.ID {
+		t.Fatalf("issued invoice replay changed historical state: created=%v err=%v", created, err)
+	}
+	var invoices int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM billing_invoices WHERE organization_id=$1`, current.OrganizationID).Scan(&invoices); err != nil {
+		t.Fatal(err)
+	}
+	if invoices != 1 {
+		t.Fatalf("issued invoice replay added a financial record: invoices=%d", invoices)
+	}
+}

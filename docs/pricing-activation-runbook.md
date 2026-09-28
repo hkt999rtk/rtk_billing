@@ -137,6 +137,13 @@ rate publication. Preserve the JSON digest with the environment inventory and
 resolve every gap, overlap, ownership exception, and existing target-month
 financial record before selecting a migration procedure.
 
+Invoice close rejects a proposed period that overlaps any different existing
+period for the same Brand Cloud and currency, including an incomplete period.
+The exact same period remains an idempotent retry. This prevents a local-month
+bridge and a UTC month from both creating financial records for the same time;
+it does not fill a gap or decide the bridge allocation. Resolve conflicts in
+the reviewed migration procedure rather than changing issued invoices.
+
 ## 2. Resolve commercial and data-model prerequisites
 
 Stop before constructing a publishable draft unless the decision record
