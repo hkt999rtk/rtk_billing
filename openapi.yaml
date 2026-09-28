@@ -499,6 +499,66 @@ paths:
       x-rtk-feature-id: FEAT-AM-INVOICE-001
       x-rtk-requirement-ids:
       - REQ-AM-PRICING-VERSION-001
+  /v1/internal/billing/pricing-versions/{pricingVersionId}/publish-reviewed-ota:
+    post:
+      tags:
+      - Internal Billing
+      summary: Publish a reviewed complete OTA card for a future UTC month
+      operationId: publishReviewedOTAPricingVersion
+      security:
+      - billingInternalAuth: []
+      parameters:
+      - name: pricingVersionId
+        in: path
+        required: true
+        schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_version_id, rate_set_sha256, first_reviewer, second_reviewer, approved_at]
+              properties:
+                base_version_id: { type: string }
+                rate_set_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+                first_reviewer: { type: string }
+                second_reviewer: { type: string }
+                approved_at: { type: string, format: date-time }
+      responses:
+        '200': { description: Reviewed OTA card scheduled. }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /v1/internal/billing/pricing-versions/{pricingVersionId}/cancel-reviewed-ota:
+    post:
+      tags:
+      - Internal Billing
+      summary: Cancel a reviewed OTA card before its UTC cutover
+      operationId: cancelReviewedOTAPricingVersion
+      security:
+      - billingInternalAuth: []
+      parameters:
+      - name: pricingVersionId
+        in: path
+        required: true
+        schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_version_id, first_reviewer, second_reviewer, reason, approved_at]
+              properties:
+                base_version_id: { type: string }
+                first_reviewer: { type: string }
+                second_reviewer: { type: string }
+                reason: { type: string }
+                approved_at: { type: string, format: date-time }
+      responses:
+        '200': { description: Future OTA card canceled; prior card restored. }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /v1/internal/billing/usage-facts:
     post:
       tags:

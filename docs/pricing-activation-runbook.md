@@ -329,9 +329,23 @@ data. Publish the report's location and immutable CI/run links in the handoff.
 | When a gate fails | Required response |
 | --- | --- |
 | Before draft/publication | Stop; retain the read-only inventory and failed diff. Correct the model or manifest, obtain fresh approval, and re-run qualification. Do not create a partial OTA-only card. |
-| After scheduling but before the cutover | Use a **future, audited cancellation/replacement transaction only after it exists and is tested**; verify the old card remains selected. The API can schedule a reviewed future OTA card, but it has no safe cancellation or replacement path; therefore require the final notice and cutover decision before publication. Never delete or edit a pricing row directly. |
+| After scheduling but before the cutover | The reviewed cancellation API below atomically marks the future card `canceled`, restores the prior card's open interval, and retains both approval records. Recheck current and upcoming price APIs. A replacement needs a fresh complete draft, review digest, and publication; never edit or delete the old rows. |
 | After the cutover, before invoice issue | Hold affected period close as incomplete and continue preserving receipts/outbox. Diagnose source, dual seals, CDN anomalies, scope/tax and rate selection. A corrective version may apply only from a later approved full UTC month. |
 | After invoice issue | Preserve the immutable invoice and its rate/fact snapshots. Use the approved adjustment/credit and customer-notice process when implemented; do not rewrite the invoice, move old facts to another month, or backdate a new OTA rate. |
+
+For a published card whose UTC cutover is still in the future, obtain a
+documented cancellation reason and two distinct reviewers, then call
+`POST /v1/internal/billing/pricing-versions/{id}/cancel-reviewed-ota` with
+`base_version_id`, `first_reviewer`, `second_reviewer`, `reason`, and
+`approved_at`. This internal-token endpoint rejects a cutover that has begun,
+a mismatched base, an already canceled card, or a financial period extending
+beyond the scheduled boundary. It shares the price-publication lock with invoice
+close, so the check and interval restoration cannot race a close. Preserve the
+`ota_pricing_cancellations` row with the original publication record, then
+verify that the prior version is selected on both sides of the former boundary
+and no upcoming OTA card appears. The audit fields record supplied reviewer
+identifiers; the external approval packet remains the authority for reviewer
+identity and authorization.
 
 Pricing selection uses the version interval at the invoice **period start**.
 Facts from a preactivation month remain audit evidence and are never later

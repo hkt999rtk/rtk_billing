@@ -167,4 +167,57 @@ func TestReviewedOTAPublicationRequiresExactCardTaxAndFutureUTCMonth(t *testing.
 	if _, err := store.PublishReviewedOTAPricingVersion(ctx, draft.ID, now, approval); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate publication accepted: %v", err)
 	}
+	cancel := ReviewedOTACancellation{BaseVersionID: base.ID, FirstReviewer: "finance-reviewer",
+		SecondReviewer: "billing-reviewer", Reason: "CDN qualification failed", ApprovedAt: now.Add(-time.Minute)}
+	if _, err := store.CancelReviewedOTAPricingVersion(ctx, draft.ID, cutover, cancel); !errors.Is(err, ErrConflict) {
+		t.Fatalf("cancellation at cutover accepted: %v", err)
+	}
+	badCancel := cancel
+	badCancel.SecondReviewer = badCancel.FirstReviewer
+	if _, err := store.CancelReviewedOTAPricingVersion(ctx, draft.ID, now, badCancel); !errors.Is(err, ErrConflict) {
+		t.Fatalf("single-reviewer cancellation accepted: %v", err)
+	}
+	badCancel = cancel
+	badCancel.BaseVersionID = unreviewedDraft.ID
+	if _, err := store.CancelReviewedOTAPricingVersion(ctx, draft.ID, now, badCancel); !errors.Is(err, ErrConflict) {
+		t.Fatalf("wrong-base cancellation accepted: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO billing_periods
+		(organization_id,currency,period_start,period_end,state)
+		VALUES ($1,'TWD',$2,$3,'incomplete')`, testutil.OrganizationID("future-period"),
+		cutover, cutover.AddDate(0, 1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CancelReviewedOTAPricingVersion(ctx, draft.ID, now, cancel); !errors.Is(err, ErrConflict) {
+		t.Fatalf("future financial period did not block cancellation: %v", err)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM billing_periods WHERE organization_id=$1`,
+		testutil.OrganizationID("future-period")); err != nil {
+		t.Fatal(err)
+	}
+	canceled, err := store.CancelReviewedOTAPricingVersion(ctx, draft.ID, now, cancel)
+	if err != nil || canceled.Status != "canceled" {
+		t.Fatalf("reviewed cancellation failed: %+v %v", canceled, err)
+	}
+	current, err = store.ActivePricingVersion(ctx, cutover, billing.CurrencyTWD)
+	if err != nil || current.ID != base.ID {
+		t.Fatalf("base card was not restored across cutover: %+v %v", current, err)
+	}
+	if _, err := store.UpcomingPricingVersion(ctx, now, billing.CurrencyTWD); !errors.Is(err, ErrPricingUnavailable) {
+		t.Fatalf("canceled card remained upcoming: %v", err)
+	}
+	var cancellationCount int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM ota_pricing_cancellations WHERE pricing_version_id=$1`,
+		draft.ID).Scan(&cancellationCount); err != nil || cancellationCount != 1 {
+		t.Fatalf("cancellation audit missing: count=%d err=%v", cancellationCount, err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE ota_pricing_cancellations SET reason='changed' WHERE pricing_version_id=$1`, draft.ID); err == nil {
+		t.Fatal("cancellation approval record was mutable")
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM ota_pricing_publications WHERE pricing_version_id=$1`, draft.ID); err == nil {
+		t.Fatal("publication approval record was deletable")
+	}
+	if _, err := store.CancelReviewedOTAPricingVersion(ctx, draft.ID, now, cancel); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate cancellation accepted: %v", err)
+	}
 }
