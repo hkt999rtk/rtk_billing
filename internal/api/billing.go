@@ -29,6 +29,7 @@ type billingPersistence interface {
 	CreatePricingVersion(context.Context, billingstore.CreatePricingVersionInput) (billing.PricingVersion, error)
 	ActivatePricingVersion(context.Context, string, time.Time) (billing.PricingVersion, error)
 	PublishReviewedOTAPricingVersion(context.Context, string, time.Time, billingstore.ReviewedOTAPublication) (billing.PricingVersion, error)
+	CancelReviewedOTAPricingVersion(context.Context, string, time.Time, billingstore.ReviewedOTACancellation) (billing.PricingVersion, error)
 	ActivePricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
 	UpcomingPricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
 	VerifyOTAFactGrants(context.Context, []billing.UsageFact) error
@@ -647,6 +648,22 @@ func (s *Server) publishReviewedOTAPricingVersion(c *gin.Context) {
 		return
 	}
 	version, err := s.billing.store.PublishReviewedOTAPricingVersion(c.Request.Context(), c.Param("pricingVersionId"), s.billing.now(), approval)
+	if err != nil {
+		writeBillingError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"pricing_version": version})
+}
+
+func (s *Server) cancelReviewedOTAPricingVersion(c *gin.Context) {
+	if !s.requireInternalBilling(c) {
+		return
+	}
+	var approval billingstore.ReviewedOTACancellation
+	if !bindPaymentStrict(c, &approval) {
+		return
+	}
+	version, err := s.billing.store.CancelReviewedOTAPricingVersion(c.Request.Context(), c.Param("pricingVersionId"), s.billing.now(), approval)
 	if err != nil {
 		writeBillingError(c, err)
 		return
