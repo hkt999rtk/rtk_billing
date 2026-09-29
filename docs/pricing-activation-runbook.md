@@ -144,6 +144,36 @@ bridge and a UTC month from both creating financial records for the same time;
 it does not fill a gap or decide the bridge allocation. Resolve conflicts in
 the reviewed migration procedure rather than changing issued invoices.
 
+After a reviewed OTA card has been published, close the final profile-local
+month with `cmd/ota-cutover-bridge`. It keeps that month's original local start,
+extends or truncates its end to the first OTA UTC month, and prices the entire
+old period with the preceding complete card and its original tax policy. OTA
+facts from this period remain as evidence without a charge. The ordinary close
+command holds an overlapping, not-yet-issued old period so that an operator
+cannot accidentally omit or duplicate the local/UTC boundary hours.
+
+```sh
+DATABASE_URL="$READ_ONLY_BILLING_DSN" go run ./cmd/ota-cutover-bridge \
+  --organization "$BRAND_CLOUD_ID" --pricing-version "$PUBLISHED_OTA_VERSION_ID" \
+  > reviewed-ota-bridge.json
+
+DATABASE_URL="$WRITE_BILLING_DSN" go run ./cmd/ota-cutover-bridge \
+  --organization "$BRAND_CLOUD_ID" --pricing-version "$PUBLISHED_OTA_VERSION_ID" \
+  --apply --review-sha256 "$REVIEW_SHA256" --created-by "$OPERATOR_ID"
+```
+
+The first command uses one read-only consistent snapshot and returns the old
+period, previous rate version, fact count, subtotal, tax, total and a digest.
+Review the actual account, owner, profile, pricing, facts and overlapping
+periods before applying. The second command rechecks that exact digest under
+the pricing/account transaction locks and records an immutable receipt with
+the invoice. It holds before the UTC boundary, when the owner/profile is
+incomplete, when a fact crosses the boundary, or when anything changed since
+review. Use a fresh read-only review after a hold. Repeating a successful
+apply with the same digest returns the original invoice. Do not run this
+against a live environment until its OTA source and pricing qualification has
+passed; a zero-fact old period remains held for review.
+
 ## 2. Resolve commercial and data-model prerequisites
 
 Stop before constructing a publishable draft unless the decision record
