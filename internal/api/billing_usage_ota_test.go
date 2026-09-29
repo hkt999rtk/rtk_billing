@@ -24,6 +24,7 @@ type otaUsagePreviewStore struct {
 	profile        billing.BillingProfile
 	grantErr       error
 	eligibilityErr error
+	bridge         *billingstore.OTABridgePeriod
 }
 
 func (s otaUsagePreviewStore) EnsureBillingProfile(context.Context, string, time.Time) (billing.BillingProfile, bool, error) {
@@ -36,6 +37,13 @@ func (s otaUsagePreviewStore) ActivePricingVersion(context.Context, time.Time, b
 
 func (s otaUsagePreviewStore) UpcomingPricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error) {
 	return billing.PricingVersion{}, billingstore.ErrPricingUnavailable
+}
+
+func (s otaUsagePreviewStore) CurrentOTABridgePeriod(context.Context, string, time.Time) (billingstore.OTABridgePeriod, bool, error) {
+	if s.bridge == nil {
+		return billingstore.OTABridgePeriod{}, false, nil
+	}
+	return *s.bridge, true, nil
 }
 
 func (s otaUsagePreviewStore) ListUsageFacts(context.Context, string, time.Time, time.Time) ([]billing.UsageFact, error) {
@@ -98,6 +106,25 @@ func TestCurrentBillingUsageUsesUTCMonthWhenOTAIsPriced(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	if err != nil || !usage.PeriodStart.Equal(start) || !usage.PeriodEnd.Equal(start.AddDate(0, 1, 0)) || usage.OTAEstimateStatus != "estimated" {
 		t.Fatalf("UTC OTA month usage=%+v err=%v", usage, err)
+	}
+}
+
+func TestCurrentBillingUsageIncludesFinalLocalMonthBridge(t *testing.T) {
+	bridge := billingstore.OTABridgePeriod{
+		PeriodStart:    time.Date(2026, 9, 30, 16, 0, 0, 0, time.UTC),
+		LocalPeriodEnd: time.Date(2026, 10, 31, 16, 0, 0, 0, time.UTC),
+		PeriodEnd:      time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+	}
+	now := bridge.LocalPeriodEnd.Add(time.Hour)
+	store := otaUsagePreviewStore{pricing: billing.PricingVersion{ID: "old", Rates: []billing.PricingRate{{
+		ServiceCode: "mqtt", MetricCode: "publish_count", Unit: "requests",
+		UnitPriceMinor: 32, UnitPriceScale: 6, RoundingMode: billing.RoundingHalfUp,
+	}}}, profile: billing.BillingProfile{Timezone: "Asia/Taipei"}, bridge: &bridge}
+	s := &Server{billing: &billingRuntime{store: store, now: func() time.Time { return now }}}
+	usage, err := s.currentBillingUsage(context.Background(), "cloud")
+	if err != nil || !usage.PeriodStart.Equal(bridge.PeriodStart) || !usage.PeriodEnd.Equal(bridge.PeriodEnd) ||
+		usage.OTAEstimateStatus != "not_effective" {
+		t.Fatalf("old-price bridge usage=%+v err=%v", usage, err)
 	}
 }
 

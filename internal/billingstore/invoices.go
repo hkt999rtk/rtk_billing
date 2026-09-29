@@ -66,6 +66,9 @@ func (s *Store) PrepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	}
 	view := *s
 	view.db = database.TransactionConnection{Tx: tx}
+	if err := view.requireOTABridgeCommand(ctx, in); err != nil {
+		return billing.Invoice{}, false, err
+	}
 	invoice, created, err := view.prepareInvoice(ctx, in)
 	if err != nil && !errors.Is(err, ErrPricingUnavailable) && !errors.Is(err, ErrIncomplete) && !errors.Is(err, billing.ErrProfileConfigurationRequired) {
 		return billing.Invoice{}, false, err

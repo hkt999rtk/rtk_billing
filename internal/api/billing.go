@@ -32,6 +32,7 @@ type billingPersistence interface {
 	CancelReviewedOTAPricingVersion(context.Context, string, time.Time, billingstore.ReviewedOTACancellation) (billing.PricingVersion, error)
 	ActivePricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
 	UpcomingPricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
+	CurrentOTABridgePeriod(context.Context, string, time.Time) (billingstore.OTABridgePeriod, bool, error)
 	VerifyOTAFactGrants(context.Context, []billing.UsageFact) error
 	VerifyOTAAccountEligibility(context.Context, string, string, time.Time, time.Time) error
 	PutUsageFact(context.Context, billing.UsageFact) (billing.UsageFact, bool, error)
@@ -194,6 +195,11 @@ func (s *Server) currentBillingUsage(ctx context.Context, organizationID string)
 		if enabled, _ := billing.OTAPricingState(utcPricing.Rates); enabled {
 			start, end = utcStart, utcStart.AddDate(0, 1, 0)
 		}
+	}
+	if bridge, found, err := s.billing.store.CurrentOTABridgePeriod(ctx, profile.Timezone, now); err != nil {
+		return billingUsageResponse{}, err
+	} else if found {
+		start, end = bridge.PeriodStart, bridge.PeriodEnd
 	}
 	if scope, ok := billingidentity.FromContext(ctx); ok && scope.CurrentPeriodStart.After(start) {
 		start = scope.CurrentPeriodStart
