@@ -118,9 +118,9 @@ source facts, units, Product scope and close checks are qualified. An installed
 rate alone never creates a usage fact or invoice. This approval is limited to
 development and does not approve production rates.
 
-Use `go run ./cmd/initial-pricing-review --candidate
+Use `GOWORK=off go run ./cmd/initial-pricing-review --candidate
 /absolute/workspace/cloud_env/dev/pricing-initial-rates.json` from the Billing
-repository to compute the deterministic complete-rate digest. Review every
+repository in a workspace checkout to compute the deterministic complete-rate digest. Review every
 identity, unit, precision and amount against the candidate and the dated
 research ledger; the command is offline and does not publish. Create a draft
 through the authenticated internal pricing API with this exact `rates` array,
