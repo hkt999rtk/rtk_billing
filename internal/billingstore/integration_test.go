@@ -160,6 +160,77 @@ func TestInvoiceTotalTaxDraftPersistsButCannotActivateWithoutReview(t *testing.T
 	}
 }
 
+func TestReviewedInitialInvoiceTotalCard(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	db, err := database.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	testutil.LockIntegrationDatabase(t, db)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `TRUNCATE pricing_plan_versions, billing_periods, billing_invoices RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	store := New(db)
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	whole := 0
+	category := "standard"
+	taxRate := int64(500)
+	rates := []billing.PricingRate{{ServiceCode: "mqtt", MetricCode: "publish_count", Description: "MQTT publishes",
+		Unit: "requests", UnitPriceMinor: 48, UnitPriceScale: 6, QuantityScale: &whole,
+		RoundingMode: billing.RoundingHalfUp, TaxCategory: &category}}
+	card, err := store.CreatePricingVersion(ctx, CreatePricingVersionInput{
+		PlanKey: "dev-initial", Version: 1, Currency: billing.CurrencyTWD,
+		EffectiveFrom: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), CreatedBy: "integration-test", Now: now,
+		TaxMode: billing.TaxModeInvoiceTotal, InvoiceTaxRateBasisPoints: &taxRate,
+		InvoiceTaxRoundingMode: billing.RoundingHalfUp, InvoiceTaxCategory: category, Rates: rates,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivatePricingVersion(ctx, card.ID, now); !errors.Is(err, ErrConflict) {
+		t.Fatalf("generic activation must not publish invoice-total card: %v", err)
+	}
+	digest, err := billing.ReviewInitialCandidateRates(card.Rates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := ReviewedInitialPublication{RateSetSHA256: digest, ApprovalReference: "reviewed-dev-card", ApprovedAt: now.Add(-time.Hour)}
+	wrong := approval
+	wrong.RateSetSHA256 = fmt.Sprintf("%064d", 0)
+	if _, err := store.PublishReviewedInitialPricingVersion(ctx, card.ID, now, wrong); !errors.Is(err, ErrConflict) {
+		t.Fatalf("wrong digest must not publish: %v", err)
+	}
+	published, err := store.PublishReviewedInitialPricingVersion(ctx, card.ID, now, approval)
+	if err != nil || published.Status != "active" || published.TaxMode != billing.TaxModeInvoiceTotal {
+		t.Fatalf("reviewed initial publication: %+v err=%v", published, err)
+	}
+	if _, err := store.ActivePricingVersion(ctx, now, billing.CurrencyTWD); !errors.Is(err, ErrPricingUnavailable) {
+		t.Fatalf("old month must remain unpriced: %v", err)
+	}
+	upcoming, err := store.UpcomingPricingVersion(ctx, now, billing.CurrencyTWD)
+	if err != nil || upcoming.ID != card.ID {
+		t.Fatalf("reviewed first card must be visible as upcoming: %+v err=%v", upcoming, err)
+	}
+	var recorded string
+	if err := db.QueryRow(ctx, `SELECT rate_set_sha256 FROM reviewed_initial_pricing_publications WHERE pricing_version_id=$1`, card.ID).Scan(&recorded); err != nil || recorded != digest {
+		t.Fatalf("publication audit digest=%q err=%v", recorded, err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE reviewed_initial_pricing_publications SET approval_reference='changed' WHERE pricing_version_id=$1`, card.ID); err == nil {
+		t.Fatal("publication approval must be immutable")
+	}
+	if _, err := store.PublishReviewedInitialPricingVersion(ctx, card.ID, now, approval); !errors.Is(err, ErrConflict) {
+		t.Fatalf("initial publication cannot repeat: %v", err)
+	}
+}
+
 func TestPricingHistoryKeepsOldPeriodsAndRejectsAmbiguity(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {

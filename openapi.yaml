@@ -499,6 +499,38 @@ paths:
       x-rtk-feature-id: FEAT-AM-INVOICE-001
       x-rtk-requirement-ids:
       - REQ-AM-PRICING-VERSION-001
+  /v1/internal/billing/pricing-versions/{pricingVersionId}/publish-reviewed-initial:
+    post:
+      tags:
+      - Internal Billing
+      summary: Publish the reviewed first TWD card with invoice-total tax
+      operationId: publishReviewedInitialPricingVersion
+      security:
+      - billingInternalAuth: []
+      parameters:
+      - name: pricingVersionId
+        in: path
+        required: true
+        schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rate_set_sha256, approval_reference, approved_at]
+              additionalProperties: false
+              properties:
+                rate_set_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+                approval_reference: { type: string, minLength: 1 }
+                approved_at: { type: string, format: date-time }
+      responses:
+        '200': { description: Reviewed initial card published. }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids:
+      - REQ-AM-PRICING-VERSION-001
   /v1/internal/billing/pricing-versions/{pricingVersionId}/publish-reviewed-ota:
     post:
       tags:
