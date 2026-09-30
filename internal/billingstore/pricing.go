@@ -121,17 +121,30 @@ type ReviewedOTAPublication struct {
 	ApprovedAt     time.Time `json:"approved_at"`
 }
 
+type ReviewedInitialPublication struct {
+	RateSetSHA256     string    `json:"rate_set_sha256"`
+	ApprovalReference string    `json:"approval_reference"`
+	ApprovedAt        time.Time `json:"approved_at"`
+}
+
 func (s *Store) ActivatePricingVersion(ctx context.Context, id string, now time.Time) (billing.PricingVersion, error) {
-	return s.activatePricingVersion(ctx, id, now, nil)
+	return s.activatePricingVersion(ctx, id, now, nil, nil)
+}
+
+// PublishReviewedInitialPricingVersion installs the first non-OTA card with
+// invoice-total tax after its exact rate set has been reviewed. It cannot
+// replace an existing card or price a previously started monthly period.
+func (s *Store) PublishReviewedInitialPricingVersion(ctx context.Context, id string, now time.Time, approval ReviewedInitialPublication) (billing.PricingVersion, error) {
+	return s.activatePricingVersion(ctx, id, now, nil, &approval)
 }
 
 // PublishReviewedOTAPricingVersion is the only OTA activation path. The
 // generic activation route remains blocked for OTA and invoice-total drafts.
 func (s *Store) PublishReviewedOTAPricingVersion(ctx context.Context, id string, now time.Time, approval ReviewedOTAPublication) (billing.PricingVersion, error) {
-	return s.activatePricingVersion(ctx, id, now, &approval)
+	return s.activatePricingVersion(ctx, id, now, &approval, nil)
 }
 
-func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.Time, approval *ReviewedOTAPublication) (billing.PricingVersion, error) {
+func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.Time, approval *ReviewedOTAPublication, initial *ReviewedInitialPublication) (billing.PricingVersion, error) {
 	if !required(id) {
 		return billing.PricingVersion{}, ErrConflict
 	}
@@ -160,7 +173,7 @@ func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.
 	if status != "draft" || !currency.CanSettle(code) {
 		return billing.PricingVersion{}, ErrConflict
 	}
-	if approval == nil && taxMode == billing.TaxModeInvoiceTotal {
+	if approval == nil && initial == nil && taxMode == billing.TaxModeInvoiceTotal {
 		// Invoice-total drafts are reviewable, but require a separate approved
 		// activation path with a complete tax and Product-eligibility manifest.
 		return billing.PricingVersion{}, ErrConflict
@@ -177,6 +190,32 @@ func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.
 	}
 	if approval == nil && otaEnabled {
 		return billing.PricingVersion{}, ErrConflict
+	}
+	if initial != nil {
+		if otaEnabled || code != billing.CurrencyTWD || taxMode != billing.TaxModeInvoiceTotal ||
+			taxRate == nil || *taxRate != 500 || taxRounding != billing.RoundingHalfUp || taxCategory != "standard" ||
+			!required(initial.ApprovalReference) || initial.ApprovedAt.IsZero() || initial.ApprovedAt.After(now.UTC()) ||
+			len(initial.RateSetSHA256) != 64 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		if _, err := hex.DecodeString(initial.RateSetSHA256); err != nil || strings.ToLower(initial.RateSetSHA256) != initial.RateSetSHA256 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		digest, err := billing.ReviewInitialCandidateRates(rates)
+		if err != nil || digest != initial.RateSetSHA256 {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		// The first card starts at the next complete UTC month. No prior
+		// month can be priced retroactively, and the UI can show it as upcoming.
+		monthStart := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+		if !effectiveFrom.Equal(monthStart.AddDate(0, 1, 0)) {
+			return billing.PricingVersion{}, ErrConflict
+		}
+		var existing bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pricing_plan_versions WHERE id<>$1 AND status IN ('active','retired'))
+			OR EXISTS (SELECT 1 FROM billing_periods) OR EXISTS (SELECT 1 FROM billing_invoices)`, id).Scan(&existing); err != nil || existing {
+			return billing.PricingVersion{}, ErrConflict
+		}
 	}
 	if approval != nil {
 		approval.FirstReviewer = strings.TrimSpace(approval.FirstReviewer)
@@ -261,7 +300,7 @@ func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.
 		return billing.PricingVersion{}, err
 	}
 	rows.Close()
-	if scheduled && previousID == "" {
+	if scheduled && previousID == "" && initial == nil {
 		// A scheduled card must extend the current, approved interval; it cannot
 		// create the first price book or bridge a historical gap.
 		return billing.PricingVersion{}, ErrConflict
@@ -302,6 +341,16 @@ func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.
 			VALUES ($1,$2,$3,'commercial_active_product_ota',$4,$5,$6,$7,$8,'invoice_total',500,'half_up','standard')`,
 			id, approval.BaseVersionID, approval.RateSetSHA256, approval.FirstReviewer,
 			approval.SecondReviewer, approval.ApprovedAt.UTC(), now.UTC(), effectiveFrom.UTC()); err != nil {
+			return billing.PricingVersion{}, err
+		}
+	}
+	if initial != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO reviewed_initial_pricing_publications
+			(pricing_version_id, rate_set_sha256, approval_reference, approved_at, published_at,
+			 effective_from, tax_mode, tax_rate_basis_points, tax_rounding_mode, tax_category)
+			VALUES ($1,$2,$3,$4,$5,$6,'invoice_total',500,'half_up','standard')`,
+			id, initial.RateSetSHA256, strings.TrimSpace(initial.ApprovalReference),
+			initial.ApprovedAt.UTC(), now.UTC(), effectiveFrom.UTC()); err != nil {
 			return billing.PricingVersion{}, err
 		}
 	}

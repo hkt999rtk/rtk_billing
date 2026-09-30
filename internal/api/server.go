@@ -73,6 +73,7 @@ func New(options Options) (*Server, error) {
 	internal := r.Group("/v1/internal", s.requireInternalToken())
 	internal.POST("/billing/pricing-versions", s.createBillingPricingVersion)
 	internal.POST("/billing/pricing-versions/:pricingVersionId/activate", s.activateBillingPricingVersion)
+	internal.POST("/billing/pricing-versions/:pricingVersionId/publish-reviewed-initial", s.publishReviewedInitialPricingVersion)
 	internal.POST("/billing/pricing-versions/:pricingVersionId/publish-reviewed-ota", s.publishReviewedOTAPricingVersion)
 	internal.POST("/billing/pricing-versions/:pricingVersionId/cancel-reviewed-ota", s.cancelReviewedOTAPricingVersion)
 	internal.POST("/billing/usage-facts", s.putBillingUsageFact)

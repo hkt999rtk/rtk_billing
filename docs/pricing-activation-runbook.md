@@ -1,6 +1,6 @@
 # OTA Pricing Activation Runbook
 
-Status: reviewed publication tooling exists in code; **do not publish an OTA rate card before environment qualification, migration review, CDN margin review and an approved future UTC month**.
+Status: reviewed publication tooling exists in code; **do not publish an OTA rate card before environment qualification, migration review, direct-object delivery cost review and an approved future UTC month**. CDN is a later expansion.
 
 Owner: Billing and Finance. Last reviewed: 2026-09-27.
 
@@ -104,6 +104,47 @@ and `quantity_scale` metadata; historical rows remain null until reviewed.
 A zero `tax_rate_basis_points` is a default, **not** evidence of an approved
 tax exemption. The inventory must expose unresolved values and scope gaps,
 not label the existing implementation a valid customer-specific preflight.
+
+### First TWD card in development
+
+Development had no price-book version or invoice on 2026-09-30. The owner
+approved using the highest researched non-OTA numbers as **development test
+rates**. The complete candidate is
+`cloud_env/dev/pricing-initial-rates.json` in the workspace: 11 priced meters
+plus MQTT publish/delivery bytes at zero because the bytes are diagnostic
+facts and carry no separate bandwidth fee. The two MQTT count meters have an
+operational source; the other nine priced meters remain dormant until their
+source facts, units, Product scope and close checks are qualified. An installed
+rate alone never creates a usage fact or invoice. This approval is limited to
+development and does not approve production rates.
+
+Use `go run ./cmd/initial-pricing-review --candidate
+/absolute/workspace/cloud_env/dev/pricing-initial-rates.json` from the Billing
+repository to compute the deterministic complete-rate digest. Review every
+identity, unit, precision and amount against the candidate and the dated
+research ledger; the command is offline and does not publish. Create a draft
+through the authenticated internal pricing API with this exact `rates` array,
+`currency=TWD`, `tax_mode=invoice_total`,
+`invoice_tax_rate_basis_points=500`, `invoice_tax_rounding_mode=half_up`, and
+`invoice_tax_category=standard`. Choose `effective_from` as the first instant
+of the **next** UTC month. Billing publishes the reviewed first card as
+upcoming; it becomes current at that boundary, and no prior month can be
+priced retroactively. Its per-rate
+`tax_rate_basis_points=0` is metadata for the invoice-total mode, not a tax
+exemption.
+
+The generic `/activate` route deliberately rejects invoice-total drafts.
+Publish the initial complete non-OTA card through
+`POST /v1/internal/billing/pricing-versions/{id}/publish-reviewed-initial`
+with the reviewed `rate_set_sha256`, a real `approval_reference`, and
+`approved_at`. In one serialized transaction Billing requires the fixed Taiwan
+5% invoice-total policy, complete standard-tax rate metadata, exact digest,
+no OTA rows, no prior active/retired card, and no existing billing period or
+invoice. The immutable `reviewed_initial_pricing_publications` row records
+the digest and approval. A failed preflight changes nothing. Do not use SQL to
+bypass this route. Recheck the saved card and the authenticated Cloud Admin
+effective-price view after publication. OTA remains absent from this first
+card and cannot be charged until its own future-month reviewed publication.
 `cmd/ota-pricing-review` now provides a **read-only technical comparison** of
 one complete candidate against the current TWD version in one repeatable-read
 snapshot. It does not collect every version, contract, invoice, source ledger

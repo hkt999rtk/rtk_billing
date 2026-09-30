@@ -28,6 +28,7 @@ type billingPersistence interface {
 	PutBillingProfile(context.Context, billingstore.PutProfileInput) (billing.BillingProfile, error)
 	CreatePricingVersion(context.Context, billingstore.CreatePricingVersionInput) (billing.PricingVersion, error)
 	ActivatePricingVersion(context.Context, string, time.Time) (billing.PricingVersion, error)
+	PublishReviewedInitialPricingVersion(context.Context, string, time.Time, billingstore.ReviewedInitialPublication) (billing.PricingVersion, error)
 	PublishReviewedOTAPricingVersion(context.Context, string, time.Time, billingstore.ReviewedOTAPublication) (billing.PricingVersion, error)
 	CancelReviewedOTAPricingVersion(context.Context, string, time.Time, billingstore.ReviewedOTACancellation) (billing.PricingVersion, error)
 	ActivePricingVersion(context.Context, time.Time, billing.Currency) (billing.PricingVersion, error)
@@ -638,6 +639,22 @@ func (s *Server) activateBillingPricingVersion(c *gin.Context) {
 		return
 	}
 	version, err := s.billing.store.ActivatePricingVersion(c.Request.Context(), c.Param("pricingVersionId"), s.billing.now())
+	if err != nil {
+		writeBillingError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"pricing_version": version})
+}
+
+func (s *Server) publishReviewedInitialPricingVersion(c *gin.Context) {
+	if !s.requireInternalBilling(c) {
+		return
+	}
+	var approval billingstore.ReviewedInitialPublication
+	if !bindPaymentStrict(c, &approval) {
+		return
+	}
+	version, err := s.billing.store.PublishReviewedInitialPricingVersion(c.Request.Context(), c.Param("pricingVersionId"), s.billing.now(), approval)
 	if err != nil {
 		writeBillingError(c, err)
 		return
