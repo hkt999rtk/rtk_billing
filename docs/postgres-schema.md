@@ -16,10 +16,16 @@ evidence-backed responsibility projection against the opaque Brand Cloud UUID.
 ## Current migration boundary
 
 A fresh database applies migrations through
-`061_twd_currency_policy_and_pricing_history.sql`. Existing databases must apply every forward
+`071_reviewed_initial_pricing.sql`. Migrations after 061 add OTA period seals,
+usage and storage evidence, pricing review/cutover records, invoice-total tax
+policy and the top-up email outbox. Existing databases must apply every forward
 migration in order. Resetting staging is useful for recovery rehearsal but is
 not a substitute for forward migration verification and is never the production
 upgrade strategy.
+In a protected deployment, run the one-shot migration command with the
+migration-owner database identity first. The Billing server and payment simulator
+then start with `BILLING_DB_MIGRATE_ON_STARTUP=false` and a DML-only runtime
+identity; neither process attempts schema changes on startup.
 
 The settlement collector adds no new table: it reads Billing's existing usage,
 period, invoice, ledger and provider-work tables, combines them with the
