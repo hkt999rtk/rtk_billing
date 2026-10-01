@@ -117,6 +117,8 @@ def main() -> None:
                 operation["security"] = [{"billingHandoffAuth": []}]
             elif path == "/v1/internal/billing/ota-period-seals":
                 operation["security"] = [{"billingOTAPlatformSealAuth": []}, {"billingOTAProducerSealAuth": []}]
+            elif path == "/v1/internal/billing/logger-period-seals":
+                operation["security"] = [{"billingLoggerProducerSealAuth": []}]
             elif path.startswith("/v1/internal/billing/"):
                 operation["security"] = [{"billingInternalAuth": []}]
             else:
@@ -151,6 +153,10 @@ def main() -> None:
         "billingOTAProducerSealAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "ota-producer-seal-token",
             "description": "Dedicated OTA source completeness credential, distinct from Billing internal and Platform credentials.",
+        },
+        "billingLoggerProducerSealAuth": {
+            "type": "http", "scheme": "bearer", "bearerFormat": "logger-producer-seal-token",
+            "description": "Dedicated shared Logger source completeness credential. Distinct from internal fact delivery, tenant, OTA seal and payment credentials. Not issued to a browser.",
         },
         "billingDebitAuth": {
             "type": "http", "scheme": "bearer", "bearerFormat": "debit-source-token",

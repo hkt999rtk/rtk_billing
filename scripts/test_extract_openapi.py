@@ -53,6 +53,9 @@ class ExtractOpenAPITests(unittest.TestCase):
         ota_seal_security = [{"billingOTAPlatformSealAuth": []}, {"billingOTAProducerSealAuth": []}]
         self.assertEqual(imported["paths"]["/v1/internal/billing/ota-period-seals"]["post"]["security"], ota_seal_security)
         self.assertEqual(checked_in["paths"]["/v1/internal/billing/ota-period-seals"]["post"]["security"], ota_seal_security)
+        logger_seal_security = [{"billingLoggerProducerSealAuth": []}]
+        self.assertEqual(imported["paths"]["/v1/internal/billing/logger-period-seals"]["post"]["security"], logger_seal_security)
+        self.assertEqual(checked_in["paths"]["/v1/internal/billing/logger-period-seals"]["post"]["security"], logger_seal_security)
         for suffix in ("billing/usage", "billing/invoices", "billing/invoices/{invoiceId}",
                        "billing/invoices/{invoiceId}/pdf", "billing/activity", "billing/ledger",
                        "billing/statements", "payment-methods", "payment-intents"):
