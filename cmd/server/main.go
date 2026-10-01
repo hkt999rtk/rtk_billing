@@ -113,6 +113,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	if cfg.LoggerProducerSealToken != "" {
+		if err := server.ConfigureLoggerPeriodSeals(api.LoggerPeriodSealAPIOptions{ProducerToken: cfg.LoggerProducerSealToken, Store: billingStore}); err != nil {
+			log.Fatal(err)
+		}
+	}
 	billingService, err := billingservice.New(billingservice.Options{Store: billingStore, PaymentStore: paymentStore})
 	if err != nil {
 		log.Fatal(err)

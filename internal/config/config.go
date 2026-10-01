@@ -20,6 +20,7 @@ type Config struct {
 	BillingDebitSource            string
 	OTAPlatformSealToken          string
 	OTAProducerSealToken          string
+	LoggerProducerSealToken       string
 	OTAGrantHistoryBaseURL        string
 	OTAGrantHistoryToken          string
 	PaymentReferenceEncryptionKey string
@@ -59,6 +60,7 @@ func Load() (Config, error) {
 		BillingDebitSource:            strings.TrimSpace(os.Getenv("BILLING_DEBIT_SOURCE")),
 		OTAPlatformSealToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_PLATFORM_SEAL_TOKEN")),
 		OTAProducerSealToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_PRODUCER_SEAL_TOKEN")),
+		LoggerProducerSealToken:       os.Getenv("LOGGER_PRODUCER_SEAL_TOKEN"),
 		OTAGrantHistoryBaseURL:        strings.TrimSpace(os.Getenv("BILLING_OTA_GRANT_HISTORY_BASE_URL")),
 		OTAGrantHistoryToken:          strings.TrimSpace(os.Getenv("BILLING_OTA_GRANT_HISTORY_TOKEN")),
 		PaymentReferenceEncryptionKey: strings.TrimSpace(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY")),
@@ -126,6 +128,12 @@ func Load() (Config, error) {
 	}
 	if (cfg.OTAGrantHistoryBaseURL == "") != (cfg.OTAGrantHistoryToken == "") {
 		return Config{}, errors.New("BILLING_OTA_GRANT_HISTORY_BASE_URL and BILLING_OTA_GRANT_HISTORY_TOKEN must be configured together")
+	}
+	if cfg.LoggerProducerSealToken != "" && (len(cfg.LoggerProducerSealToken) < 32 || strings.TrimSpace(cfg.LoggerProducerSealToken) != cfg.LoggerProducerSealToken ||
+		strings.ContainsAny(cfg.LoggerProducerSealToken, " \t\r\n") || credentialReuse(cfg.LoggerProducerSealToken, cfg.ServiceToken, cfg.InternalToken,
+		cfg.HandoffToken, cfg.CloudCreationToken, cfg.BillingDebitToken, cfg.OTAPlatformSealToken, cfg.OTAProducerSealToken, cfg.OTAGrantHistoryToken,
+		cfg.SimulatorSharedSecret, cfg.SimulatorCallbackSecret, cfg.NewebPayHashKey, cfg.PayPalClientSecret, cfg.PaymentReferenceEncryptionKey)) {
+		return Config{}, errors.New("LOGGER_PRODUCER_SEAL_TOKEN must be a distinct 32+ character producer credential")
 	}
 	if cfg.OTAGrantHistoryToken != "" && (len(cfg.OTAGrantHistoryToken) < 32 ||
 		strings.ContainsAny(cfg.OTAGrantHistoryToken, " \t\r\n") ||

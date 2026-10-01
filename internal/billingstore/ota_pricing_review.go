@@ -11,9 +11,10 @@ import (
 )
 
 type ReviewOTACandidateInput struct {
-	BaseVersionID string
-	EffectiveFrom time.Time
-	Rates         []billing.PricingRate
+	BaseVersionID           string
+	EffectiveFrom           time.Time
+	Rates                   []billing.PricingRate
+	LoggerApprovalReference string
 }
 
 type OTACandidateSnapshot struct {
@@ -60,7 +61,7 @@ func (s *Store) ReviewOTACandidate(ctx context.Context, in ReviewOTACandidateInp
 	if pending {
 		return OTACandidateSnapshot{}, ErrConflict
 	}
-	review, err := billing.ReviewOTACandidateRates(current.ID, current.Rates, in.Rates)
+	review, err := billing.ReviewOTACandidateRatesWithLogger(current.ID, current.Rates, in.Rates, in.LoggerApprovalReference)
 	if err != nil {
 		return OTACandidateSnapshot{}, err
 	}

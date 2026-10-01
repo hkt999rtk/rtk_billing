@@ -40,6 +40,8 @@ type Server struct {
 	handoff            *handoffRuntime
 	cloudCreationToken string
 	otaSealConfigured  bool
+	otaSealTokens      []string
+	loggerSealToken    string
 }
 
 type Options struct {

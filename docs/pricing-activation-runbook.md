@@ -38,7 +38,9 @@ invoice-total tax, Product/account scope and a future UTC month boundary in
 one serialized transaction. It requires a complete draft assembled by
 `cmd/ota-pricing-draft` with its digest in `ota_pricing_drafts`, then records
 the publication in `ota_pricing_publications`. Do not bypass these checks
-through SQL. No OTA
+through SQL. The sole permitted non-OTA addition in this full-card path is
+the explicitly approved canonical Logger ingest/retention pair described
+below; this is not a general reference-price activation route. No OTA
 retail version has been activated by this runbook.
 For paid Managed Cloud, a Product with the `ota` option and a qualifying source
 receipt is the OTA charge boundary; there is no separate OTA contract opt-in.
@@ -241,11 +243,12 @@ behavior, retry/Range ratio, exchange rate and tax in the margin record.
 Sort rate identities deterministically by
 `(service_code, metric_code, unit)` and produce a machine-readable full-card
 diff and digest. The candidate must copy **every** applicable non-OTA row
-unchanged, then add exactly the four OTA rows above. Review description,
+unchanged, then add exactly the four OTA rows above, plus the two canonical
+Logger rows only when separately approved as described below. Review description,
 price minor/scale, expected fact scale, rounding, invoice tax mode/category/rate, scope,
 currency TWD and UTC interval. A per-Product OTA grant is not a substitute
-for paid Managed Cloud account eligibility. Do not promote Cloud Admin reference prices
-or the other unapproved service benchmarks into this card.
+for paid Managed Cloud account eligibility. Cloud Admin reference prices and
+unapproved service benchmarks do not authorize additions or changes to this card.
 
 The first technical check is available from the Billing repository. Provide a
 protected JSON file containing the **complete** candidate `pricing_rates`
@@ -277,6 +280,34 @@ precision and the approved tax treatment for **each** service, including test
 or qualification services, before signing off. The candidate and digest are
 the approval artifact; never backfill the historical base or issued invoices.
 
+### Explicitly approved Logger pair additions
+
+An environment that already has a published base and issued invoices cannot
+use the first-card publication route to introduce Logger. The reviewed OTA
+full-card path now permits exactly `logger/ingest_gib` (`GiB`) and
+`logger/retained_gib_month` (`GiB-month`) **together**, only when the base has
+no Logger rows and Finance/Billing have explicitly approved their fixed
+reference terms. Both quantities use scale 9; both rows use `half_up`,
+`standard`, and row tax basis points 0. The version continues to apply Taiwan
+5% tax once to the combined invoice subtotal. Existing base rows, including
+their recorded tax values, remain unchanged. A partial pair, legacy retention
+alias, altered fixed terms, additional service, or changed base is rejected.
+
+For that candidate, add `--logger-approval-reference "$LOGGER_APPROVAL_REFERENCE"`
+to the read-only review command. Its output includes `added_logger_rates`,
+`logger_approval_reference`, and a deterministic `logger_rate_set_sha256`
+that binds both canonical rows, including their descriptions and tax metadata.
+The reference identifies the external approval evidence; technical review
+does not grant approval. The old OTA-only review remains strict.
+
+Add both `--logger-approval-reference "$LOGGER_APPROVAL_REFERENCE"` and
+`--logger-rate-set-sha256 "$REVIEWED_LOGGER_RATE_SET_SHA256"` to the complete
+candidate draft command below. A Logger addition requires the candidate,
+full-card digest, approval reference and exact pair digest. Draft creation
+recomputes both digests and records the Logger reference/digest in the immutable
+`ota_pricing_drafts` manifest. This exception does not change or rename any
+historical pricing row, usage fact or invoice.
+
 After the technical review and external Finance/Billing scope and tax review,
 create the unpublished card with a write-authorized Billing connection:
 
@@ -292,18 +323,19 @@ DATABASE_URL="$WRITE_BILLING_DSN" go run ./cmd/ota-pricing-draft \
 In a serialized transaction the command re-reads the current complete TWD
 card, requires the supplied base ID and a future UTC month start, rejects
 another published future card, checks the supplied full candidate against
-every base rate and the four approved OTA rates, and requires its digest to
+every base rate, the four approved OTA rates and any explicitly approved
+Logger pair, and requires its digest to
 match the read-only review. It fixes invoice-total Taiwan tax at 5% and writes
 the draft plus its immutable manifest digest. The candidate can only fill
-missing legacy precision and tax category; all non-OTA monetary terms remain
+missing legacy precision and tax category; all existing non-OTA monetary terms remain
 unchanged. Compare the returned digest and full rate card with the approved
 review packet. Creation does **not** activate or publish prices. The command
 also supports omitting `--candidate` and `--review-sha256` when the base card
 already has complete reviewed metadata; do not use that shortcut for a legacy
 base with null fields.
 
-Reject the candidate if any non-OTA row changes or disappears without its own
-commercial approval, an OTA row is missing/duplicated/altered, another future
+Reject the candidate if any existing non-OTA row changes or disappears,
+Logger additions lack their explicit paired approval, an OTA row is missing/duplicated/altered, another future
 version conflicts, tax/scope is unresolved, the base has drifted, or an
 issued/closing period intersects the proposed cutover. The reviewed publication
 transaction revalidates the atomic draft against the live base. The generic
@@ -372,7 +404,10 @@ It is not permission to activate a card in an unqualified environment.
    the publication before any write.
 3. Use `POST /v1/internal/billing/pricing-versions/{id}/publish-reviewed-ota`
    with the approved base ID, rate-set SHA-256, two distinct reviewers and
-   approval time. The transactional publisher rechecks the full draft, stores
+   approval time. If the draft adds Logger, also supply
+   `logger_approval_reference` and `logger_rate_set_sha256` explicitly, exactly
+   matching the immutable draft. Omitting or changing either rejects publication.
+   They are not accepted for a card without Logger additions. The transactional publisher rechecks the full draft, stores
    the audit row and schedules its effective interval. Re-read the
    database and tenant current/upcoming API: **before** the boundary the old
    version must still price the month; the new version must be merely

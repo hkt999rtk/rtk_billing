@@ -41,6 +41,13 @@ Pricing, usage, period-close, and access-control routes use
 `BILLING_DEBIT_TOKEN`. The service refuses credential reuse across these
 boundaries.
 
+`LOGGER_PRODUCER_SEAL_TOKEN` optionally enables the dedicated immutable Logger
+month-seal API, distinct from fact delivery and other credentials. Logger-priced
+invoice close requires its reconciled source seal even when this token is unset.
+Apply migration `072_logger_period_seals.sql` before rolling out the API. See
+[Logger source completeness](docs/logger-period-seals.md) for the producer
+freeze, exact two-meter reconciliation, UTC month and ownership gates.
+
 `BILLING_HANDOFF_TOKEN` optionally enables the dedicated Account Manager
 coordinator routes below `/v1/internal/billing/clouds/{orgId}/ownership-handoffs/{operationId}`.
 It must be at least 32 characters and distinct from every tenant, internal, debit

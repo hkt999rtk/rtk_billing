@@ -149,3 +149,23 @@ func TestOTAPeriodSealCredentialsRequireTwoDistinctSources(t *testing.T) {
 		}
 	}
 }
+
+func TestLoggerSealCredentialIsOptionalDedicatedAndStrict(t *testing.T) {
+	setValidEnvironment(t)
+	t.Setenv("BILLING_OTA_PLATFORM_SEAL_TOKEN", strings.Repeat("p", 32))
+	t.Setenv("BILLING_OTA_PRODUCER_SEAL_TOKEN", strings.Repeat("o", 32))
+	for _, token := range []string{"short", strings.Repeat("l", 32) + " ", strings.Repeat("s", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), strings.Repeat("p", 32), strings.Repeat("o", 32), strings.Repeat("h", 32), strings.Repeat("c", 32)} {
+		t.Setenv("LOGGER_PRODUCER_SEAL_TOKEN", token)
+		if _, err := Load(); err == nil {
+			t.Fatal("weak or reused Logger credential accepted")
+		}
+	}
+	t.Setenv("LOGGER_PRODUCER_SEAL_TOKEN", strings.Repeat("l", 32))
+	if cfg, err := Load(); err != nil || cfg.LoggerProducerSealToken != strings.Repeat("l", 32) {
+		t.Fatal("dedicated Logger credential", err)
+	}
+	t.Setenv("LOGGER_PRODUCER_SEAL_TOKEN", "")
+	if _, err := Load(); err != nil {
+		t.Fatal("optional Logger credential", err)
+	}
+}
