@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -24,8 +25,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	if err := database.Migrate(context.Background(), db); err != nil {
+	migrateOnStartup, err := shouldMigrateOnStartup(os.Getenv("BILLING_DB_MIGRATE_ON_STARTUP"))
+	if err != nil {
 		log.Fatal(err)
+	}
+	if migrateOnStartup {
+		if err := database.Migrate(context.Background(), db); err != nil {
+			log.Fatal(err)
+		}
 	}
 	server, err := paymentsimulator.New(db, paymentsimulator.Config{
 		Environment: env("ENVIRONMENT", "development"), PublicBaseURL: strings.TrimSpace(os.Getenv("PAYMENT_SIMULATOR_PUBLIC_BASE_URL")),
@@ -51,4 +58,15 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func shouldMigrateOnStartup(raw string) (bool, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("BILLING_DB_MIGRATE_ON_STARTUP must be true or false")
+	}
 }
