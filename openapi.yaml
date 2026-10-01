@@ -536,6 +536,7 @@ paths:
       tags:
       - Internal Billing
       summary: Publish a reviewed complete OTA card for a future UTC month
+      description: Preserves all existing non-OTA rates. The fixed canonical Logger ingest and retention pair may be added together only with its explicit approval reference and matching pair digest from the immutable draft. OTA rates and invoice-total Taiwan business tax remain fixed.
       operationId: publishReviewedOTAPricingVersion
       security:
       - billingInternalAuth: []
@@ -551,12 +552,21 @@ paths:
             schema:
               type: object
               required: [base_version_id, rate_set_sha256, first_reviewer, second_reviewer, approved_at]
+              additionalProperties: false
               properties:
                 base_version_id: { type: string }
                 rate_set_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
                 first_reviewer: { type: string }
                 second_reviewer: { type: string }
                 approved_at: { type: string, format: date-time }
+                logger_approval_reference:
+                  type: string
+                  minLength: 1
+                  description: Required together with logger_rate_set_sha256 only when adding the reviewed canonical Logger pair; must equal the immutable draft reference.
+                logger_rate_set_sha256:
+                  type: string
+                  pattern: '^[0-9a-f]{64}$'
+                  description: Digest of the two canonical Logger additions from the read-only review; must equal the immutable draft digest.
       responses:
         '200': { description: Reviewed OTA card scheduled. }
         '404': { $ref: '#/components/responses/Error' }
@@ -681,6 +691,45 @@ paths:
       x-rtk-requirement-ids:
       - REQ-AM-INVOICE-LIFECYCLE-001
       - REQ-BILL-USAGE-DELIVERY-001
+  /v1/internal/billing/logger-period-seals:
+    post:
+      tags: [Internal Billing]
+      operationId: putBillingLoggerPeriodSeal
+      summary: Authenticate and reconcile a frozen Logger UTC-month source ledger
+      description: >-
+        Dedicated Logger producer credential only. Sender freezes the shared
+        source ledger and receives exact acknowledgments for both monthly facts
+        per Product before submitting this seal. Billing requires typed durable
+        coverage, no pending source receipts, matching complete fact tuples and
+        at least 24 hours after month end. Zero Products is legitimate only with
+        authenticated source coverage and the SHA-256 of the empty fact array.
+        Exact seal replay returns 200; changed immutable evidence returns 409.
+        Missing or mismatched facts return 503 and remain retryable. Accepted
+        seals prevent additional Logger facts for that month while preserving
+        exact fact replay. Responses are no-store; JSON is bounded to 1 MiB.
+      security: [{ billingLoggerProducerSealAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoggerPeriodSeal' }
+      responses:
+        '200':
+          description: Exact replay of an already reconciled seal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoggerPeriodSealResponse' }
+        '201':
+          description: Reconciled source seal stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoggerPeriodSealResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+      x-rtk-feature-id: FEAT-AM-INVOICE-001
+      x-rtk-requirement-ids: [REQ-BILL-USAGE-DELIVERY-001, REQ-AM-INVOICE-LIFECYCLE-001]
   /v1/internal/billing/periods/close:
     post:
       tags:
@@ -755,6 +804,8 @@ paths:
                     properties:
                       ota_estimate_status: { type: string, enum: [unavailable, not_effective, estimated, held_for_review] }
                       ota_estimate_reason: { type: string, enum: [owner_month_incomplete, period_not_utc_month] }
+                      logger_estimate_status: { type: string, enum: [unavailable, not_effective, estimated, held_for_review] }
+                      logger_estimate_reason: { type: string, enum: [pricing_incomplete, owner_month_incomplete, period_not_utc_month] }
         '403':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
@@ -790,6 +841,8 @@ paths:
                   usage_through: { type: string, format: date-time, nullable: true, description: Latest source time among facts included in priced usage lines. }
                   ota_estimate_status: { type: string, enum: [unavailable, not_effective, estimated, held_for_review] }
                   ota_estimate_reason: { type: string, enum: [owner_month_incomplete, period_not_utc_month] }
+                  logger_estimate_status: { type: string, enum: [unavailable, not_effective, estimated, held_for_review] }
+                  logger_estimate_reason: { type: string, enum: [pricing_incomplete, owner_month_incomplete, period_not_utc_month] }
         '403':
           $ref: '#/components/responses/Error'
       x-rtk-feature-id: FEAT-AM-INVOICE-001
@@ -1774,12 +1827,63 @@ components:
       scheme: bearer
       bearerFormat: ota-producer-seal-token
       description: Dedicated OTA source completeness credential, distinct from Billing internal and Platform credentials.
+    billingLoggerProducerSealAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: logger-producer-seal-token
+      description: Dedicated shared Logger source completeness credential. Distinct from internal fact delivery, tenant, OTA seal and payment credentials. Not issued to a browser.
     billingDebitAuth:
       type: http
       scheme: bearer
       bearerFormat: debit-source-token
       description: Dedicated debit producer credential, distinct from tenant and other internal credentials.
   schemas:
+    LoggerPeriodSealResponse:
+      type: object
+      additionalProperties: false
+      required: [logger_period_seal, duplicate]
+      properties:
+        logger_period_seal: { $ref: '#/components/schemas/LoggerPeriodSeal' }
+        duplicate: { type: boolean }
+    LoggerPeriodSeal:
+      type: object
+      additionalProperties: false
+      required: [organization_id, period_start, period_end, issuer_kind, seal_id, source_high_water, product_ids, metric_counts, fact_set_sha256, source_sha256, sealed_at]
+      properties:
+        organization_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time, description: Exact UTC month start }
+        period_end: { type: string, format: date-time, description: Exclusive next UTC month start }
+        issuer_kind: { type: string, const: logger_producer }
+        seal_id: { type: string, format: uuid }
+        source_high_water:
+          type: object
+          additionalProperties: false
+          required: [schema_version, source_id, ledger, coverage_from, cutoff, max_receipt_sequence, receipt_count, pending_count]
+          properties:
+            schema_version: { type: integer, const: 1 }
+            source_id: { type: string, format: uuid }
+            ledger: { type: string, const: device_logger_receipts }
+            coverage_from: { type: string, format: date-time, description: Durable source coverage begins no later than this month start }
+            cutoff: { type: string, format: date-time, description: Exact period_end }
+            max_receipt_sequence: { type: integer, minimum: 0 }
+            receipt_count: { type: integer, minimum: 0 }
+            pending_count: { type: integer, const: 0 }
+        product_ids:
+          type: array
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: Sorted canonical Product IDs; two facts per Product, including zero ingestion for retained-only Products.
+        metric_counts:
+          type: object
+          additionalProperties: false
+          required: [ingest_gib, retained_gib_month]
+          properties:
+            ingest_gib: { type: integer, minimum: 0 }
+            retained_gib_month: { type: integer, minimum: 0 }
+          description: Each count equals product_ids length.
+        fact_set_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: SHA-256 of usage-ID-ordered nine-field Logger fact tuples }
+        source_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        sealed_at: { type: string, format: date-time, description: At least 24 hours after period_end, never in the future }
     OTAPeriodSealResponse:
       type: object
       additionalProperties: false

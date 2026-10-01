@@ -32,6 +32,8 @@ func run(args []string, output io.Writer) error {
 	createdBy := flags.String("created-by", "", "operator identity recorded on the draft")
 	candidateFile := flags.String("candidate", "", "reviewed complete rate-card JSON, required for legacy base metadata")
 	reviewedDigest := flags.String("review-sha256", "", "rate-set SHA-256 from the read-only review")
+	loggerApproval := flags.String("logger-approval-reference", "", "explicit approval record from the Logger pair review")
+	loggerDigest := flags.String("logger-rate-set-sha256", "", "Logger pair SHA-256 from the read-only review")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -40,6 +42,9 @@ func run(args []string, output io.Writer) error {
 	}
 	if (*candidateFile == "") != (*reviewedDigest == "") {
 		return errors.New("--candidate and --review-sha256 must be supplied together")
+	}
+	if (*loggerApproval == "") != (*loggerDigest == "") || (*loggerApproval != "" && *candidateFile == "") {
+		return errors.New("Logger additions require --candidate, --logger-approval-reference and --logger-rate-set-sha256 together")
 	}
 	cutover, err := time.Parse(time.RFC3339, *effective)
 	if err != nil {
@@ -75,6 +80,7 @@ func run(args []string, output io.Writer) error {
 	draft, err := billingstore.New(db).CreateOTAPricingDraft(ctx, billingstore.CreateOTAPricingDraftInput{
 		BaseVersionID: strings.TrimSpace(*baseID), EffectiveFrom: cutover, CreatedBy: strings.TrimSpace(*createdBy),
 		CandidateRates: rates, ReviewedRateSetSHA256: *reviewedDigest,
+		LoggerApprovalReference: strings.TrimSpace(*loggerApproval), LoggerRateSetSHA256: *loggerDigest,
 	})
 	if err != nil {
 		return fmt.Errorf("OTA draft creation failed: %w", err)

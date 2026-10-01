@@ -95,8 +95,10 @@ type billingUsageResponse struct {
 	UsageThrough *time.Time `json:"usage_through,omitempty"`
 	// OTA estimates are held when a requested window cannot be billed as one
 	// complete UTC month for the current owner. Other services remain visible.
-	OTAEstimateStatus string `json:"ota_estimate_status"`
-	OTAEstimateReason string `json:"ota_estimate_reason,omitempty"`
+	OTAEstimateStatus    string `json:"ota_estimate_status"`
+	OTAEstimateReason    string `json:"ota_estimate_reason,omitempty"`
+	LoggerEstimateStatus string `json:"logger_estimate_status"`
+	LoggerEstimateReason string `json:"logger_estimate_reason,omitempty"`
 }
 
 // billingPriceBook reports effective intervals, never an unreviewed draft.
@@ -193,7 +195,9 @@ func (s *Server) currentBillingUsage(ctx context.Context, organizationID string)
 		return billingUsageResponse{}, pricingErr
 	}
 	if pricingErr == nil {
-		if enabled, _ := billing.OTAPricingState(utcPricing.Rates); enabled {
+		otaEnabled, _ := billing.OTAPricingState(utcPricing.Rates)
+		loggerEnabled, _ := billing.LoggerPricingState(utcPricing.Rates)
+		if otaEnabled || loggerEnabled {
 			start, end = utcStart, utcStart.AddDate(0, 1, 0)
 		}
 	}
@@ -215,7 +219,7 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	pricing, err := s.billing.store.ActivePricingVersion(ctx, start, currency.Settlement)
 	if errors.Is(err, billingstore.ErrPricingUnavailable) {
 		return billingUsageResponse{PeriodStart: start, PeriodEnd: end, Currency: currency.Settlement,
-			Lines: []billing.InvoiceLine{}, Estimated: true, OTAEstimateStatus: "unavailable"}, nil
+			Lines: []billing.InvoiceLine{}, Estimated: true, OTAEstimateStatus: "unavailable", LoggerEstimateStatus: "unavailable"}, nil
 	}
 	if err != nil {
 		return billingUsageResponse{}, err
@@ -223,6 +227,18 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	otaEnabled, otaComplete := billing.OTAPricingState(pricing.Rates)
 	if !otaComplete {
 		return billingUsageResponse{}, billing.ErrInvalidInvoice
+	}
+	loggerEnabled, loggerComplete := billing.LoggerPricingState(pricing.Rates)
+	loggerStatus, loggerReason := "not_effective", ""
+	if loggerEnabled {
+		loggerStatus = "estimated"
+		if !loggerComplete {
+			loggerStatus, loggerReason = "held_for_review", "pricing_incomplete"
+		} else if scope, ok := billingidentity.FromContext(ctx); ok && scope.CurrentPeriodStart.After(billingUTCMonthStart(start)) {
+			loggerStatus, loggerReason = "held_for_review", "owner_month_incomplete"
+		} else if !billingUTCMonth(start, end) {
+			loggerStatus, loggerReason = "held_for_review", "period_not_utc_month"
+		}
 	}
 	otaStatus, otaReason := "not_effective", ""
 	if otaEnabled {
@@ -246,10 +262,10 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	if err != nil {
 		return billingUsageResponse{}, err
 	}
-	if otaStatus == "held_for_review" {
+	if otaStatus == "held_for_review" || loggerStatus == "held_for_review" {
 		visible := make([]billing.UsageFact, 0, len(facts))
 		for _, fact := range facts {
-			if fact.ServiceCode != billing.ServiceOTA {
+			if (fact.ServiceCode != billing.ServiceOTA || otaStatus != "held_for_review") && (fact.ServiceCode != billing.ServiceLogger || loggerStatus != "held_for_review") {
 				visible = append(visible, fact)
 			}
 		}
@@ -290,7 +306,8 @@ func (s *Server) billingUsageForPeriod(ctx context.Context, organizationID strin
 	return billingUsageResponse{PeriodStart: start, PeriodEnd: end, Currency: draft.Currency,
 		Subtotal: draft.SubtotalMinor, Tax: draft.TaxMinor, Total: draft.TotalMinor, Lines: draft.Lines, Estimated: true,
 		FactCount: len(billableFacts), UsageThrough: usageThrough,
-		OTAEstimateStatus: otaStatus, OTAEstimateReason: otaReason}, nil
+		OTAEstimateStatus: otaStatus, OTAEstimateReason: otaReason,
+		LoggerEstimateStatus: loggerStatus, LoggerEstimateReason: loggerReason}, nil
 }
 
 func billingUTCMonth(start, end time.Time) bool {
@@ -305,7 +322,7 @@ func billingUTCMonthStart(value time.Time) time.Time {
 
 func forecastBillingUsage(usage billingUsageResponse, calculatedAt time.Time) billingForecast {
 	out := billingForecast{State: "unavailable", UsageThrough: usage.UsageThrough, Confidence: "low", CalculatedAt: calculatedAt.UTC()}
-	if usage.OTAEstimateStatus == "held_for_review" || usage.UsageThrough == nil || usage.FactCount == 0 || usage.Total <= 0 || usage.UsageThrough.After(calculatedAt) {
+	if usage.OTAEstimateStatus == "held_for_review" || usage.LoggerEstimateStatus == "held_for_review" || usage.UsageThrough == nil || usage.FactCount == 0 || usage.Total <= 0 || usage.UsageThrough.After(calculatedAt) {
 		return out
 	}
 	elapsed := usage.UsageThrough.Sub(usage.PeriodStart)
@@ -383,7 +400,8 @@ func (s *Server) getBillingSummary(c *gin.Context) {
 		return
 	}
 	currentPeriod := gin.H{"period_start": usage.PeriodStart, "period_end": usage.PeriodEnd, "estimated_cost_minor": usage.Total, "amount_due_minor": 0, "next_invoice_at": usage.PeriodEnd, "currency": usage.Currency, "total_minor": usage.Total, "lines": usage.Lines, "estimated": true,
-		"ota_estimate_status": usage.OTAEstimateStatus, "ota_estimate_reason": usage.OTAEstimateReason}
+		"ota_estimate_status": usage.OTAEstimateStatus, "ota_estimate_reason": usage.OTAEstimateReason,
+		"logger_estimate_status": usage.LoggerEstimateStatus, "logger_estimate_reason": usage.LoggerEstimateReason}
 	c.JSON(http.StatusOK, gin.H{"account": account, "current_period": currentPeriod, "forecast": forecast, "auto_topup": autoTopUp, "runway": runway, "latest_invoice": latest, "generated_at": generatedAt, "calculated_at": generatedAt})
 }
 
@@ -424,7 +442,8 @@ func (s *Server) getBillingUsage(c *gin.Context) {
 		pricingVersionID = pricing.ID
 	}
 	c.JSON(http.StatusOK, gin.H{"usage": billingUsageContractLines(usage, pricingVersionID), "period_start": usage.PeriodStart, "period_end": usage.PeriodEnd, "currency": usage.Currency, "subtotal_minor": usage.Subtotal, "tax_minor": usage.Tax, "total_minor": usage.Total, "lines": usage.Lines, "estimated": usage.Estimated, "fact_count": usage.FactCount, "usage_through": usage.UsageThrough,
-		"ota_estimate_status": usage.OTAEstimateStatus, "ota_estimate_reason": usage.OTAEstimateReason})
+		"ota_estimate_status": usage.OTAEstimateStatus, "ota_estimate_reason": usage.OTAEstimateReason,
+		"logger_estimate_status": usage.LoggerEstimateStatus, "logger_estimate_reason": usage.LoggerEstimateReason})
 }
 
 func (s *Server) listBillingInvoices(c *gin.Context) {

@@ -33,11 +33,13 @@ func (s *Server) ConfigureOTAPeriodSeals(in OTAPeriodSealAPIOptions) error {
 		in.PlatformToken == in.ProducerToken || in.PlatformToken == s.serviceToken || in.ProducerToken == s.serviceToken ||
 		in.PlatformToken == s.internalToken || in.ProducerToken == s.internalToken ||
 		in.PlatformToken == s.cloudCreationToken || in.ProducerToken == s.cloudCreationToken ||
+		in.PlatformToken == s.loggerSealToken || in.ProducerToken == s.loggerSealToken ||
 		s.handoff != nil && (in.PlatformToken == s.handoff.token || in.ProducerToken == s.handoff.token) ||
 		s.payments != nil && (in.PlatformToken == s.payments.billingDebitToken || in.ProducerToken == s.payments.billingDebitToken) {
 		return fmt.Errorf("OTA period seals require distinct Platform and producer credentials and a store")
 	}
 	s.otaSealConfigured = true
+	s.otaSealTokens = []string{in.PlatformToken, in.ProducerToken}
 	s.router.POST("/v1/internal/billing/ota-period-seals", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		provided := strings.TrimSpace(c.GetHeader("Authorization"))

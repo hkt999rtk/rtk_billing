@@ -114,11 +114,13 @@ func (s *Store) CreatePricingVersion(ctx context.Context, in CreatePricingVersio
 }
 
 type ReviewedOTAPublication struct {
-	BaseVersionID  string    `json:"base_version_id"`
-	RateSetSHA256  string    `json:"rate_set_sha256"`
-	FirstReviewer  string    `json:"first_reviewer"`
-	SecondReviewer string    `json:"second_reviewer"`
-	ApprovedAt     time.Time `json:"approved_at"`
+	BaseVersionID           string    `json:"base_version_id"`
+	RateSetSHA256           string    `json:"rate_set_sha256"`
+	FirstReviewer           string    `json:"first_reviewer"`
+	SecondReviewer          string    `json:"second_reviewer"`
+	ApprovedAt              time.Time `json:"approved_at"`
+	LoggerApprovalReference string    `json:"logger_approval_reference,omitempty"`
+	LoggerRateSetSHA256     string    `json:"logger_rate_set_sha256,omitempty"`
 }
 
 type ReviewedInitialPublication struct {
@@ -239,16 +241,18 @@ func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.
 		if err != nil || base.ID != approval.BaseVersionID {
 			return billing.PricingVersion{}, ErrConflict
 		}
-		review, err := billing.ReviewOTACandidateRates(base.ID, base.Rates, rates)
-		if err != nil || review.RateSetSHA256 != approval.RateSetSHA256 {
+		review, err := billing.ReviewOTACandidateRatesWithLogger(base.ID, base.Rates, rates, approval.LoggerApprovalReference)
+		if err != nil || review.RateSetSHA256 != approval.RateSetSHA256 || review.LoggerRateSetSHA256 != approval.LoggerRateSetSHA256 {
 			return billing.PricingVersion{}, ErrConflict
 		}
-		var draftBase, draftDigest, draftScope string
+		var draftBase, draftDigest, draftScope, draftLoggerReference, draftLoggerDigest string
 		var draftEffective time.Time
-		if err := tx.QueryRow(ctx, `SELECT base_version_id::text, rate_set_sha256, scope_code, effective_from
+		if err := tx.QueryRow(ctx, `SELECT base_version_id::text, rate_set_sha256, scope_code, effective_from,
+			COALESCE(logger_approval_reference,''), COALESCE(logger_rate_set_sha256,'')
 			FROM ota_pricing_drafts WHERE pricing_version_id=$1 FOR SHARE`, id).Scan(
-			&draftBase, &draftDigest, &draftScope, &draftEffective); err != nil ||
+			&draftBase, &draftDigest, &draftScope, &draftEffective, &draftLoggerReference, &draftLoggerDigest); err != nil ||
 			draftBase != approval.BaseVersionID || draftDigest != approval.RateSetSHA256 ||
+			draftLoggerReference != approval.LoggerApprovalReference || draftLoggerDigest != approval.LoggerRateSetSHA256 ||
 			draftScope != "commercial_active_product_ota" || !draftEffective.Equal(effectiveFrom) {
 			return billing.PricingVersion{}, ErrConflict
 		}
@@ -337,10 +341,11 @@ func (s *Store) activatePricingVersion(ctx context.Context, id string, now time.
 		if _, err := tx.Exec(ctx, `INSERT INTO ota_pricing_publications
 			(pricing_version_id, base_version_id, rate_set_sha256, scope_code, first_reviewer,
 			 second_reviewer, approved_at, published_at, effective_from, tax_mode,
-			 tax_rate_basis_points, tax_rounding_mode, tax_category)
-			VALUES ($1,$2,$3,'commercial_active_product_ota',$4,$5,$6,$7,$8,'invoice_total',500,'half_up','standard')`,
+			 tax_rate_basis_points, tax_rounding_mode, tax_category, logger_approval_reference, logger_rate_set_sha256)
+			VALUES ($1,$2,$3,'commercial_active_product_ota',$4,$5,$6,$7,$8,'invoice_total',500,'half_up','standard',NULLIF($9,''),NULLIF($10,''))`,
 			id, approval.BaseVersionID, approval.RateSetSHA256, approval.FirstReviewer,
-			approval.SecondReviewer, approval.ApprovedAt.UTC(), now.UTC(), effectiveFrom.UTC()); err != nil {
+			approval.SecondReviewer, approval.ApprovedAt.UTC(), now.UTC(), effectiveFrom.UTC(),
+			approval.LoggerApprovalReference, approval.LoggerRateSetSHA256); err != nil {
 			return billing.PricingVersion{}, err
 		}
 	}
@@ -600,7 +605,7 @@ func (s *Store) PutUsageFact(ctx context.Context, fact billing.UsageFact) (billi
 	created := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		var constraint *pgconn.PgError
-		if errors.As(err, &constraint) && constraint.ConstraintName == "billing_usage_period_barrier" {
+		if errors.As(err, &constraint) && (constraint.ConstraintName == "billing_usage_period_barrier" || constraint.ConstraintName == "billing_logger_sealed_fact_barrier") {
 			return billing.UsageFact{}, false, ErrInvoiceImmutable
 		}
 		return billing.UsageFact{}, false, err

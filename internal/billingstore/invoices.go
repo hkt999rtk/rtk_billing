@@ -164,6 +164,39 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		}
 		otaSealsVerified = true
 	}
+	loggerPriced, loggerPricingComplete := billing.LoggerPricingState(pricing.Rates)
+	var loggerFactsPresent bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM billing_usage_facts WHERE organization_id=$1 AND service_code='logger'
+		AND tstzrange(window_start,window_end,'[)') && tstzrange($2::timestamptz,$3::timestamptz,'[)'))`, in.OrganizationID, in.PeriodStart, in.PeriodEnd).Scan(&loggerFactsPresent); err != nil {
+		return billing.Invoice{}, false, err
+	}
+	loggerSealVerified := false
+	var loggerOwnerVersion int64
+	if loggerPriced || loggerFactsPresent {
+		if !loggerPriced || !loggerPricingComplete {
+			_ = s.markPeriodIncomplete(ctx, periodID, "logger_pricing_incomplete", in.Now)
+			return billing.Invoice{}, false, ErrPricingUnavailable
+		}
+		if !otaUTCMonth(in.PeriodStart.UTC(), in.PeriodEnd.UTC()) {
+			_ = s.markPeriodIncomplete(ctx, periodID, "logger_period_not_utc_month", in.Now)
+			return billing.Invoice{}, false, ErrIncomplete
+		}
+		if err := s.db.QueryRow(ctx, `SELECT ownership_version FROM billing_responsibility_periods
+			WHERE account_id=$1 AND effective_until IS NULL AND effective_from<=$2`, in.AccountID, in.PeriodStart).Scan(&loggerOwnerVersion); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				_ = s.markPeriodIncomplete(ctx, periodID, "logger_ownership_month_incomplete", in.Now)
+				return billing.Invoice{}, false, ErrIncomplete
+			}
+			return billing.Invoice{}, false, err
+		}
+		if err := s.verifyLoggerPeriodSeal(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd); err != nil {
+			if errors.Is(err, ErrIncomplete) {
+				_ = s.markPeriodIncomplete(ctx, periodID, "logger_source_incomplete", in.Now)
+			}
+			return billing.Invoice{}, false, err
+		}
+		loggerSealVerified = true
+	}
 	facts, err := s.ListUsageFacts(ctx, in.OrganizationID, in.PeriodStart, in.PeriodEnd)
 	if err != nil {
 		return billing.Invoice{}, false, err
@@ -180,16 +213,17 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 		}
 	}
 	if len(billableFacts) == 0 {
-		// OTA seals prove only OTA source completeness. Mixed pricing retains
-		// the existing nonempty usage-fact requirement before closing.
-		completeEmptyOTAMonth := otaSealsVerified
+		// A verified empty month is valid only when every priced service has its
+		// own source seal. MQTT and other services retain their existing usage
+		// requirement; a Logger or OTA seal cannot certify their zero usage.
+		completeEmptyMonth := otaSealsVerified || loggerSealVerified
 		for _, rate := range pricing.Rates {
-			if rate.ServiceCode != billing.ServiceOTA {
-				completeEmptyOTAMonth = false
+			if rate.ServiceCode != billing.ServiceOTA && rate.ServiceCode != billing.ServiceLogger {
+				completeEmptyMonth = false
 				break
 			}
 		}
-		if !completeEmptyOTAMonth {
+		if !completeEmptyMonth {
 			_ = s.markPeriodIncomplete(ctx, periodID, "usage_missing", in.Now)
 			return billing.Invoice{}, false, ErrIncomplete
 		}
@@ -201,6 +235,10 @@ func (s *Store) prepareInvoice(ctx context.Context, in PrepareInvoiceInput) (bil
 	}
 	if otaSealsVerified && (profile.OwnershipVersion == nil || *profile.OwnershipVersion != otaOwnerVersion) {
 		_ = s.markPeriodIncomplete(ctx, periodID, "ota_ownership_profile_mismatch", in.Now)
+		return billing.Invoice{}, false, ErrIncomplete
+	}
+	if loggerSealVerified && (profile.OwnershipVersion == nil || *profile.OwnershipVersion != loggerOwnerVersion) {
+		_ = s.markPeriodIncomplete(ctx, periodID, "logger_ownership_profile_mismatch", in.Now)
 		return billing.Invoice{}, false, ErrIncomplete
 	}
 	if profile.RequiresConfiguration {

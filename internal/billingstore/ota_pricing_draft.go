@@ -11,22 +11,27 @@ import (
 )
 
 type CreateOTAPricingDraftInput struct {
-	BaseVersionID         string
-	EffectiveFrom         time.Time
-	CreatedBy             string
-	CandidateRates        []billing.PricingRate
-	ReviewedRateSetSHA256 string
+	BaseVersionID           string
+	EffectiveFrom           time.Time
+	CreatedBy               string
+	CandidateRates          []billing.PricingRate
+	ReviewedRateSetSHA256   string
+	LoggerApprovalReference string
+	LoggerRateSetSHA256     string
 }
 
 type OTAPricingDraft struct {
-	PricingVersion billing.PricingVersion `json:"pricing_version"`
-	BaseVersionID  string                 `json:"base_version_id"`
-	RateSetSHA256  string                 `json:"rate_set_sha256"`
-	ScopeCode      string                 `json:"scope_code"`
+	PricingVersion          billing.PricingVersion `json:"pricing_version"`
+	BaseVersionID           string                 `json:"base_version_id"`
+	RateSetSHA256           string                 `json:"rate_set_sha256"`
+	ScopeCode               string                 `json:"scope_code"`
+	LoggerApprovalReference string                 `json:"logger_approval_reference,omitempty"`
+	LoggerRateSetSHA256     string                 `json:"logger_rate_set_sha256,omitempty"`
 }
 
 // CreateOTAPricingDraft copies the current complete TWD card, adds only the
-// four approved OTA rates, and records the technical manifest atomically.
+// four approved OTA rates and, with explicit approval, the fixed Logger pair.
+// It records the full-card and optional Logger manifests atomically.
 // Publication remains a separate two-reviewer operation.
 func (s *Store) CreateOTAPricingDraft(ctx context.Context, in CreateOTAPricingDraftInput) (OTAPricingDraft, error) {
 	if !required(in.BaseVersionID) || !required(in.CreatedBy) || in.EffectiveFrom.IsZero() {
@@ -71,7 +76,7 @@ func (s *Store) CreateOTAPricingDraft(ctx context.Context, in CreateOTAPricingDr
 		}
 		rates = append([]billing.PricingRate(nil), in.CandidateRates...)
 	} else {
-		if in.ReviewedRateSetSHA256 != "" {
+		if in.ReviewedRateSetSHA256 != "" || in.LoggerApprovalReference != "" || in.LoggerRateSetSHA256 != "" {
 			return OTAPricingDraft{}, ErrConflict
 		}
 		for _, rate := range billing.ProposedOTARates() {
@@ -84,8 +89,9 @@ func (s *Store) CreateOTAPricingDraft(ctx context.Context, in CreateOTAPricingDr
 			return OTAPricingDraft{}, ErrConflict
 		}
 	}
-	review, err := billing.ReviewOTACandidateRates(base.ID, base.Rates, rates)
-	if err != nil || (in.ReviewedRateSetSHA256 != "" && review.RateSetSHA256 != in.ReviewedRateSetSHA256) {
+	review, err := billing.ReviewOTACandidateRatesWithLogger(base.ID, base.Rates, rates, in.LoggerApprovalReference)
+	if err != nil || (in.ReviewedRateSetSHA256 != "" && review.RateSetSHA256 != in.ReviewedRateSetSHA256) ||
+		review.LoggerRateSetSHA256 != in.LoggerRateSetSHA256 {
 		return OTAPricingDraft{}, ErrConflict
 	}
 	taxRate := int64(500)
@@ -101,14 +107,17 @@ func (s *Store) CreateOTAPricingDraft(ctx context.Context, in CreateOTAPricingDr
 	const scope = "commercial_active_product_ota"
 	if _, err := tx.Exec(ctx, `INSERT INTO ota_pricing_drafts
 		(pricing_version_id, base_version_id, rate_set_sha256, scope_code, effective_from,
-		 created_by, created_at, tax_mode, tax_rate_basis_points, tax_rounding_mode, tax_category)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'invoice_total',500,'half_up','standard')`,
-		version.ID, base.ID, review.RateSetSHA256, scope, cutover, in.CreatedBy, now.UTC()); err != nil {
+		 created_by, created_at, tax_mode, tax_rate_basis_points, tax_rounding_mode, tax_category,
+		 logger_approval_reference, logger_rate_set_sha256)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'invoice_total',500,'half_up','standard',NULLIF($8,''),NULLIF($9,''))`,
+		version.ID, base.ID, review.RateSetSHA256, scope, cutover, in.CreatedBy, now.UTC(),
+		review.LoggerApprovalReference, review.LoggerRateSetSHA256); err != nil {
 		return OTAPricingDraft{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return OTAPricingDraft{}, err
 	}
 	return OTAPricingDraft{PricingVersion: version, BaseVersionID: base.ID,
-		RateSetSHA256: review.RateSetSHA256, ScopeCode: scope}, nil
+		RateSetSHA256: review.RateSetSHA256, ScopeCode: scope,
+		LoggerApprovalReference: review.LoggerApprovalReference, LoggerRateSetSHA256: review.LoggerRateSetSHA256}, nil
 }

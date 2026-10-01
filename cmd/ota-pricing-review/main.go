@@ -30,6 +30,7 @@ func run(args []string, output io.Writer) error {
 	baseID := flags.String("base-version", "", "current TWD pricing version ID")
 	effective := flags.String("effective-from", "", "future UTC month start, RFC3339")
 	candidateFile := flags.String("candidate", "", "JSON file containing the complete rates array")
+	loggerApproval := flags.String("logger-approval-reference", "", "explicit approval record for the fixed canonical Logger pair additions")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -67,6 +68,7 @@ func run(args []string, output io.Writer) error {
 	defer db.Close()
 	review, err := billingstore.New(db).ReviewOTACandidate(ctx, billingstore.ReviewOTACandidateInput{
 		BaseVersionID: strings.TrimSpace(*baseID), EffectiveFrom: cutover, Rates: rates,
+		LoggerApprovalReference: strings.TrimSpace(*loggerApproval),
 	})
 	if err != nil {
 		return fmt.Errorf("technical OTA card review failed: %w", err)
