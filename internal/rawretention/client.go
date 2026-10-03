@@ -145,7 +145,7 @@ func (c *EvidenceClient) Terminal(ctx context.Context, op Operation) (TerminalRe
 	if receipt.OperationID != op.OperationID || receipt.Scope != op.Scope || receipt.FromSequence != op.FromSequence ||
 		receipt.ThroughSequence != op.ThroughSequence || receipt.PlanSHA256 != op.PlanSHA256 || receipt.SetID != op.SetID ||
 		(receipt.Status != "completed" && receipt.Status != "aborted") || !digestPattern.MatchString(receipt.ReceiptSHA256) ||
-		receipt.Status == "completed" && receipt.RetiredThrough < receipt.ThroughSequence ||
+		receipt.Status == "completed" && receipt.RetiredThrough != receipt.ThroughSequence ||
 		receipt.CompletedAt.IsZero() || receipt.CompletedAt.After(time.Now().Add(30*time.Second)) {
 		return receipt, ErrBlocked
 	}

@@ -144,3 +144,39 @@ func TestDirectEvidenceBindsConsumerAndLoggerOutcome(t *testing.T) {
 		t.Fatal("pending Logger outcome released a fence", err)
 	}
 }
+
+func TestCompletedTerminalReceiptRequiresExactRetirementFrontier(t *testing.T) {
+	_, plan, _, _, _, _ := evidenceFixture(t)
+	for _, test := range []struct {
+		name     string
+		frontier uint64
+		blocked  bool
+	}{
+		{"under-retirement", plan.ThroughSequence - 1, true},
+		{"exact-retirement", plan.ThroughSequence, false},
+		{"over-retirement", plan.ThroughSequence + 1, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			receipt := TerminalReceipt{OperationID: plan.OperationID, Scope: plan.Scope, FromSequence: plan.FromSequence, ThroughSequence: plan.ThroughSequence, PlanSHA256: plan.PlanSHA256, Status: "completed", CompletedAt: time.Now().UTC(), RetiredThrough: test.frontier, SetID: plan.SetID}
+			// Re-seal each response so refusal proves range validation, not a
+			// checksum mismatch or failed authenticated HTTP transport.
+			receipt.ReceiptSHA256 = digest(receipt)
+			token := strings.Repeat("l", 32)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/internal/billing-lifecycle/retire/"+plan.OperationID || r.Header.Get("Authorization") != "Bearer "+token {
+					t.Error("terminal receipt was not requested through the authenticated status route")
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Cache-Control", "no-store")
+				_ = json.NewEncoder(w).Encode(receipt)
+			}))
+			defer server.Close()
+			client := &EvidenceClient{LoggerBaseURL: server.URL, LoggerToken: token}
+			_, err := client.Terminal(context.Background(), Operation{Plan: plan})
+			if test.blocked && !errors.Is(err, ErrBlocked) || !test.blocked && err != nil {
+				t.Fatalf("completed frontier %d for authorized range through %d: %v", test.frontier, plan.ThroughSequence, err)
+			}
+		})
+	}
+}

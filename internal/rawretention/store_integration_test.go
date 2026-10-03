@@ -226,6 +226,50 @@ func TestAuthorityHoldsAndExactResolutionFence(t *testing.T) {
 	}
 }
 
+func TestAuthorityOverRetirementPreservesFenceAndQueuedHold(t *testing.T) {
+	f := newAuthorityFixture(t)
+	f.clear(t)
+	ctx := context.Background()
+	op, err := f.store.RequestOperation(ctx, f.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold := Hold{HoldID: "hold-overrun", Scope: op.Scope, FromSequence: op.FromSequence, ThroughSequence: op.ThroughSequence, Reason: "dispute", FinancialApprovalRef: "approved-case"}
+	if queued, err := f.store.PutHold(ctx, hold); err != nil || queued.Status != "PENDING_FENCED" {
+		t.Fatalf("late hold was not queued behind accepted operation: %+v %v", queued, err)
+	}
+	f.setTerminal(op, "completed")
+	f.mu.Lock()
+	f.terminal.RetiredThrough = op.ThroughSequence + 1
+	f.terminal.ReceiptSHA256 = ""
+	f.terminal.ReceiptSHA256 = digest(*f.terminal)
+	f.mu.Unlock()
+	if _, err := f.store.Resolve(ctx, op.OperationID); !errors.Is(err, ErrBlocked) {
+		t.Fatalf("authenticated re-sealed over-retirement report released fence: %v", err)
+	}
+	persisted, err := f.store.Operation(ctx, op.OperationID)
+	if err != nil || persisted.Status != "ACTIVE" || persisted.TerminalReceipt != nil || persisted.ResolvedAt != nil {
+		t.Fatalf("blocked overrun became a durable terminal decision: %+v %v", persisted, err)
+	}
+	pending, err := f.store.Operations(ctx, op.Scope)
+	if err != nil || len(pending) != 1 || pending[0].OperationID != op.OperationID {
+		t.Fatalf("overrun lost one-per-store fence: %+v %v", pending, err)
+	}
+	queued, err := f.store.Hold(ctx, hold.HoldID)
+	if err != nil || queued.Status != "PENDING_FENCED" || !queued.ProtectArchiveAndKeys {
+		t.Fatalf("overrun finalized queued hold or dropped cloud/key protection: %+v %v", queued, err)
+	}
+	// A later exact authenticated response may resolve the same operation; an
+	// invalid report itself cannot release the fence or invent a new frontier.
+	f.setTerminal(op, "completed")
+	if resolved, err := f.store.Resolve(ctx, op.OperationID); err != nil || resolved.Status != "COMPLETED" {
+		t.Fatalf("valid exact retirement outcome cannot resolve retained fence: %+v %v", resolved, err)
+	}
+	if finalized, err := f.store.Hold(ctx, hold.HoldID); err != nil || finalized.Status != "ACTIVE" || !finalized.ProtectArchiveAndKeys {
+		t.Fatalf("exact outcome did not finalize protected hold: %+v %v", finalized, err)
+	}
+}
+
 func TestAuthorityAbortPermanentAndReleasePendingHold(t *testing.T) {
 	f := newAuthorityFixture(t)
 	f.clear(t)
