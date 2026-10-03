@@ -46,6 +46,7 @@ type Config struct {
 	PayPalCancelURL               string
 	PayPalAfterReturnURL          string
 	RequestTimeout                time.Duration
+	RawRetention                  RawRetentionConfig
 }
 
 func Load() (Config, error) {
@@ -166,6 +167,9 @@ func Load() (Config, error) {
 		if credentialReuse(cfg.PayPalClientSecret, cfg.ServiceToken, cfg.InternalToken, cfg.BillingDebitToken, cfg.HandoffToken, cfg.CloudCreationToken) {
 			return Config{}, errors.New("PayPal secret must be distinct from service credentials")
 		}
+	}
+	if err := loadRawRetention(&cfg); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
 }

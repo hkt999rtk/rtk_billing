@@ -16,7 +16,7 @@ evidence-backed responsibility projection against the opaque Brand Cloud UUID.
 ## Current migration boundary
 
 A fresh database applies migrations through
-`061_twd_currency_policy_and_pricing_history.sql`. Existing databases must apply every forward
+`071_raw_retention_unaccepted_cancellation.sql`. Existing databases must apply every forward
 migration in order. Resetting staging is useful for recovery rehearsal but is
 not a substitute for forward migration verification and is never the production
 upgrade strategy.
@@ -98,6 +98,33 @@ intent, job, attempt, setup, webhook or unallocated reversal remains.
 cannot pass an earlier application precheck after waiting on a period close.
 Corrections are new auditable facts, not row updates. The producer checkpoint
 adds upstream delivery completeness; it does not weaken these local constraints.
+
+## Raw-data retention authority
+
+Migrations 070 and 071 add five Billing-owned control-plane tables. They do not
+delete usage facts, invoices, ledger entries or financial audit history:
+
+- `billing_raw_retention_policies` stores immutable versioned specifications,
+  independent recovery approval and financial activation.
+- `billing_raw_retention_clearances` records explicit source-complete and
+  reconciled period attestations. A closed period alone is not clearance.
+- `billing_raw_retention_operations` binds one immutable retirement plan to its
+  archive and independently authenticated consumer evidence. At most one
+  `ACTIVE` or `ABORT_REQUESTED` fence exists per environment/store; neither a
+  timeout nor policy deactivation releases it. Accepted operations become
+  terminal only with the exact authenticated Logger receipt.
+- `billing_raw_retention_holds` records active or fence-pending protection.
+  Holds arriving after admission protect the archive/key immediately and become
+  active when the already-authorized local operation reaches a proven outcome.
+- `billing_raw_retention_audit` stores append-only authority decisions.
+
+Migration 071 distinguishes an accepted operation from a controller's durable
+`cancelled-before-acceptance` tombstone. The latter is written under the same
+store lock only when no operation row exists, remains permanently `ABORTED`,
+and has no invented Logger receipt or consumer evidence. Delayed admission of
+that immutable operation ID cannot resurrect it. See
+[Raw-retention authority](raw-retention-authority.md) for protocol, credentials,
+maintenance draining and recovery limits.
 
 ## Reset and upgrade verification
 
