@@ -16,10 +16,14 @@ evidence-backed responsibility projection against the opaque Brand Cloud UUID.
 ## Current migration boundary
 
 A fresh database applies migrations through
-`071_raw_retention_unaccepted_cancellation.sql`. Existing databases must apply every forward
+`072_raw_retention_schema_metadata.sql`. Existing databases must apply every forward
 migration in order. Resetting staging is useful for recovery rehearsal but is
 not a substitute for forward migration verification and is never the production
 upgrade strategy.
+
+Migration 072 is metadata-only: it declares the raw-retention ER group, table
+purposes and scenarios, and PK/FK/state descriptions without rewriting the
+applied 070/071 migrations or changing their physical constraints.
 
 The settlement collector adds no new table: it reads Billing's existing usage,
 period, invoice, ledger and provider-work tables, combines them with the
