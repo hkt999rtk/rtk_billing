@@ -63,6 +63,13 @@ internal pricing/access and debit routes use their separate credentials.
 Provider webhook and simulator callback routes authenticate their signed
 payloads instead of accepting a bearer token.
 
+The [raw billing retention authority](docs/raw-retention-authority.md) is
+separately guarded and disabled by default. It records approved automatic
+retirement policies, explicit source-complete period clearances, holds and
+crash-safe Logger cleanup fences; it never expires financial facts or cloud
+archives. Logger receives read-only decision authority, not a policy/controller
+credential.
+
 The settlement collector is a separate process in the same image. It consumes
 the authenticated Video Cloud usage horizon and independently reconciles local
 usage, invoice and provider work before writing short-lived preflight or handoff

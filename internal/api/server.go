@@ -29,17 +29,19 @@ type accessPersistence interface {
 }
 
 type Server struct {
-	router             *gin.Engine
-	serviceToken       string
-	internalToken      string
-	audit              auditPersistence
-	access             accessPersistence
-	ownership          ownerAuthorizer
-	payments           *paymentRuntime
-	billing            *billingRuntime
-	handoff            *handoffRuntime
-	cloudCreationToken string
-	otaSealConfigured  bool
+	router                 *gin.Engine
+	serviceToken           string
+	internalToken          string
+	audit                  auditPersistence
+	access                 accessPersistence
+	ownership              ownerAuthorizer
+	payments               *paymentRuntime
+	billing                *billingRuntime
+	handoff                *handoffRuntime
+	cloudCreationToken     string
+	otaSealConfigured      bool
+	rawRetentionConfigured bool
+	rawRetentionRouter     *gin.Engine
 }
 
 type Options struct {

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/hkt999rtk/rtk_billing/internal/accessstore"
 	"github.com/hkt999rtk/rtk_billing/internal/api"
@@ -23,6 +27,7 @@ import (
 	"github.com/hkt999rtk/rtk_billing/internal/paymentprovider/paypal"
 	paymentSimulator "github.com/hkt999rtk/rtk_billing/internal/paymentprovider/simulator"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentstore"
+	"github.com/hkt999rtk/rtk_billing/internal/rawretention"
 )
 
 func main() {
@@ -30,7 +35,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal(err)
@@ -120,9 +126,30 @@ func main() {
 	if err := server.ConfigureBilling(api.BillingAPIOptions{Store: billingStore, Service: billingService}); err != nil {
 		log.Fatal(err)
 	}
+	if cfg.RawRetention.Enabled {
+		r := cfg.RawRetention
+		evidence := &rawretention.EvidenceClient{
+			Consumers:     map[string]rawretention.Consumer{r.ConsumerID: {ID: r.ConsumerID, BaseURL: r.ConsumerBaseURL, Token: r.ConsumerToken}},
+			LoggerBaseURL: r.LoggerBaseURL, LoggerToken: r.LoggerToken,
+		}
+		authority, err := rawretention.New(db, evidence, map[string]ed25519.PublicKey{r.VerifierKeyID: r.VerifierPublicKey}, r.Environment)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := server.ConfigureRawRetention(api.RawRetentionAPIOptions{FinancialToken: r.FinancialToken, RecoveryToken: r.RecoveryToken,
+			ControllerToken: r.ControllerToken, AuthorityReadToken: r.AuthorityReadToken, Store: authority}); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	log.Printf("rtk_billing listening on :%s", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, server.Router()); err != nil {
+	servers := []*http.Server{{Addr: ":" + cfg.Port, Handler: server.Router(), ReadHeaderTimeout: 10 * time.Second}}
+	if cfg.RawRetention.Enabled {
+		log.Printf("rtk_billing raw retention private listener on %s", cfg.RawRetention.ListenAddr)
+		servers = append(servers, &http.Server{Addr: cfg.RawRetention.ListenAddr, Handler: server.RawRetentionRouter(),
+			ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 65 * time.Second, WriteTimeout: 75 * time.Second, IdleTimeout: 60 * time.Second})
+	}
+	if err := serveHTTPServers(ctx, servers...); err != nil {
 		log.Print(err)
 		os.Exit(1)
 	}
