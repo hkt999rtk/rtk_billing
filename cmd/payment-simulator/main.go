@@ -72,7 +72,9 @@ func migrateOnStartup(ctx context.Context, db *pgxpool.Pool, raw string, migrate
 		return err
 	}
 	if enabled {
+		log.Print("payment simulator startup migration enabled")
 		return migrate(ctx, db)
 	}
+	log.Print("payment simulator startup migration disabled")
 	return nil
 }
