@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hkt999rtk/rtk_billing/internal/database"
 	"github.com/hkt999rtk/rtk_billing/internal/paymentsimulator"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -24,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	if err := database.Migrate(context.Background(), db); err != nil {
+	if err := migrateOnStartup(context.Background(), db, os.Getenv("BILLING_DB_MIGRATE_ON_STARTUP"), database.Migrate); err != nil {
 		log.Fatal(err)
 	}
 	server, err := paymentsimulator.New(db, paymentsimulator.Config{
@@ -51,4 +53,28 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func shouldMigrateOnStartup(raw string) (bool, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("BILLING_DB_MIGRATE_ON_STARTUP must be true or false")
+	}
+}
+
+func migrateOnStartup(ctx context.Context, db *pgxpool.Pool, raw string, migrate func(context.Context, *pgxpool.Pool) error) error {
+	enabled, err := shouldMigrateOnStartup(raw)
+	if err != nil {
+		return err
+	}
+	if enabled {
+		log.Print("payment simulator startup migration enabled")
+		return migrate(ctx, db)
+	}
+	log.Print("payment simulator startup migration disabled")
+	return nil
 }
