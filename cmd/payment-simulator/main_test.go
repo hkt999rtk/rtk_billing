@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestMigrationStartupGate(t *testing.T) {

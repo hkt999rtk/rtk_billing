@@ -30,8 +30,8 @@ For a protected-environment upgrade, run the CI image's
 `/rtk-billing-migrate` binary as a one-shot Job with a migration-owner
 `DATABASE_URL`. Wait for the Job to complete and verify the expected
 `schema_migrations` version before updating the API and workers. Set
-`BILLING_DB_MIGRATE_ON_STARTUP=false` on the API and payment simulator workloads so their runtime
-database identity does not attempt schema changes. The default remains
+`BILLING_DB_MIGRATE_ON_STARTUP=false` on the API and payment simulator workloads
+so their runtime database identities do not attempt schema changes. The default remains
 `true` for existing development deployments. Invalid flag values stop API or simulator
 startup. Keep migration credentials out of API, simulator and worker Secrets.
 
