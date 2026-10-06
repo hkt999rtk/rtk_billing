@@ -193,6 +193,48 @@ func TestRunRejectsInvalidIntervalAndStopsOnCancellation(t *testing.T) {
 	}
 }
 
+func TestWorkerPollingReturnsClaimFailureAndStopsBeforeClaimWhenCancelled(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "closed-database", true: "already-cancelled"}[cancelled], func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			clock := &testClock{now: time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)}
+			service := newIntegrationService(t, env, fake.New("fixture-webhook"), clock, false)
+			closed, err := pgxpool.NewWithConfig(context.Background(), env.db.Config().Copy())
+			if err != nil {
+				t.Fatal(err)
+			}
+			closed.Close()
+			service.store = paymentstore.New(closed)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if cancelled {
+				cancel()
+			}
+			err = service.Run(ctx, time.Millisecond)
+			if (err == nil) != cancelled {
+				t.Fatalf("claim failure or cancellation was lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestWorkerPollsEmptyQueueWithoutCreatingMoneyOrJobs(t *testing.T) {
+	env := newIntegrationEnv(t)
+	clock := &testClock{now: time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)}
+	service := newIntegrationService(t, env, fake.New("fixture-webhook"), clock, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if err := service.Run(ctx, time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"payment_reconciliation_jobs", "payment_intents", "balance_ledger_entries"} {
+		var count int
+		if err := env.db.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("empty polling changed %s: count=%d err=%v", table, count, err)
+		}
+	}
+}
+
 func TestSuccessfulChargeCreditsExactlyOnceWithoutQuery(t *testing.T) {
 	env := newIntegrationEnv(t)
 	clock := &testClock{now: time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC)}
